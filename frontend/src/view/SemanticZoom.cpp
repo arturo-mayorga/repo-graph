@@ -42,10 +42,42 @@ Vec2 disc_half(float zoom, float world_radius, float min_px) {
     return Vec2{r, r};
 }
 
+float disc_morph(const NodeDetail& detail, const DiscShape& disc, const Vec2& layout_half) {
+    const float need = std::max(layout_half.x, 1.0f);
+    const float room = std::clamp((disc.room - need * 0.6f) / (need * 0.4f), 0.0f, 1.0f);
+
+    // Expressed in on-screen text size rather than raw zoom, so it tracks the user's
+    // text-size preference instead of ignoring it.
+    const float x    = std::clamp((detail.font_px - 18.0f) / 12.0f, 0.0f, 1.0f);
+    const float near = x * x * (3.0f - 2.0f * x);
+    return room * near;
+}
+
 Vec2 node_half(float zoom, const NodeDetail& detail, const Vec2& layout_half,
-               const float* disc_radius, float dot_px) {
-    if (disc_radius) return disc_half(zoom, *disc_radius);
-    return render_half(zoom, detail, layout_half, dot_px);
+               const DiscShape* disc, float dot_px) {
+    if (!disc) return render_half(zoom, detail, layout_half, dot_px);
+
+    // A disc morphs toward its label box on the way in, the same way a dot does in the
+    // other views -- but only if it has the room. Two gates, multiplied:
+    //
+    //   room  -- is there space between this node and its neighbours for a box? In a
+    //            radial layout the answer is yes for the repository and its packages,
+    //            and no for files on an orbit, which sit ~18 units apart while a
+    //            filename box is ~120 wide. Those stay circles at every zoom, and are
+    //            named from outside instead.
+    //   zoom  -- has the user zoomed past an overview? This is the part they drive.
+    //
+    // The zoom gate is deliberately later than the one the box views use. That curve
+    // saturates around the default fit, so reusing it turns the whole graph into
+    // squashed boxes the moment it opens -- the overview has to stay a constellation
+    // of circles, and boxes are what you zoom in to get.
+    const Vec2 base = disc_half(zoom, disc->radius);
+    const Vec2 target{std::max(base.x, layout_half.x), std::max(base.y, layout_half.y)};
+    return lerp(base, target, disc_morph(detail, *disc, layout_half));
+}
+
+bool label_fits_inside(const Vec2& drawn_half, const Vec2& text_half) {
+    return drawn_half.x >= text_half.x * 0.92f && drawn_half.y >= text_half.y * 0.85f;
 }
 
 Vec2 text_extent(NodeKind kind, const std::string& name, const std::string& sub,

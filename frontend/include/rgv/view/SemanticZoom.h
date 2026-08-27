@@ -44,8 +44,24 @@ Vec2 disc_half(float zoom, float world_radius, float min_px = 1.6f);
 
 // The drawn half-extent of a node, whichever shape the view uses. Rendering and
 // picking both call this, so a click can never land on something that is not drawn.
+// `room` caps how far a disc may grow toward its label box. Where the packing is dense
+// -- files on an orbit are ~18 units apart while a filename box is ~120 wide -- the node
+// stays a disc and its name is drawn outside instead.
+struct DiscShape {
+    float radius = 6.0f;
+    float room   = 1e9f;
+};
+
 Vec2 node_half(float zoom, const NodeDetail& detail, const Vec2& layout_half,
-               const float* disc_radius, float dot_px);
+               const DiscShape* disc, float dot_px);
+
+// How far a disc has morphed toward its label box, in [0, 1]. Rendering needs it for
+// the corner radius -- a circle is just a box whose corners are its own radius -- and
+// using the plain zoom curve there draws rounded squares where circles belong.
+float disc_morph(const NodeDetail& detail, const DiscShape& disc, const Vec2& layout_half);
+
+// True when the node has grown enough to hold its own label.
+bool label_fits_inside(const Vec2& drawn_half, const Vec2& text_half);
 
 // The box a node needs to hold its label at this text scale.
 Vec2 text_extent(NodeKind kind, const std::string& name, const std::string& sub,

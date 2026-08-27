@@ -803,3 +803,93 @@ TEST(node_sizes_step_by_the_golden_ratio) {
     CHECK(std::abs(empty / file - phi) < 0.02f);
     CHECK(std::abs(full / file - phi * phi) < 0.05f);
 }
+
+// -- dragging -----------------------------------------------------------------
+
+// The bug this fixes: dragging a directory moved the single node under the cursor and
+// left every file it owns behind. In a containment view that is the one thing a drag
+// must not do.
+TEST(dragging_a_directory_takes_its_files_with_it) {
+    auto h = make_filesystem();
+    view::fit_camera(h.world, {});
+
+    const entt::entity dir  = h.node("dir:a");
+    const entt::entity file = h.node("file:a/x.ts");
+    const Vec2 before_dir   = h.registry().get<ecs::Position>(dir).p;
+    const Vec2 before_file  = h.registry().get<ecs::Position>(file).p;
+
+    h.begin_drag(h.camera().world_to_screen(before_dir));
+    for (int i = 0; i < 10; ++i) h.drag_by(Vec2{6.0f, 0.0f});
+    h.end_drag();
+
+    const Vec2 moved_dir  = h.registry().get<ecs::Position>(dir).p - before_dir;
+    const Vec2 moved_file = h.registry().get<ecs::Position>(file).p - before_file;
+
+    CHECK(length(moved_dir) > 10.0f);
+    // The file travelled with its directory, keeping its place on the orbit.
+    CHECK(std::abs(moved_file.x - moved_dir.x) < 1.0f);
+    CHECK(std::abs(moved_file.y - moved_dir.y) < 1.0f);
+}
+
+// A dragged node stays where it was put rather than easing back to its layout slot.
+TEST(a_dragged_node_stays_where_it_is_dropped) {
+    auto h = make_filesystem();
+    view::fit_camera(h.world, {});
+
+    const entt::entity dir = h.node("dir:a");
+    const Vec2 start = h.registry().get<ecs::Position>(dir).p;
+
+    h.begin_drag(h.camera().world_to_screen(start));
+    for (int i = 0; i < 10; ++i) h.drag_by(Vec2{8.0f, 0.0f});
+    h.end_drag();
+
+    const Vec2 dropped = h.registry().get<ecs::Position>(dir).p;
+    h.settle();
+    const Vec2 after = h.registry().get<ecs::Position>(dir).p;
+
+    CHECK(length(after - dropped) < 1.0f);
+    CHECK(length(after - start) > 10.0f);
+}
+
+// The dependency views have no containment edges, so a drag there moves one node --
+// which is correct, and worth pinning down so the filesystem fix does not leak.
+TEST(dragging_in_a_dependency_view_moves_only_the_dragged_node) {
+    auto h = make();
+    h.settle();
+    view::fit_camera(h.world, {});
+
+    const entt::entity b = h.node("pkg:b");
+    const entt::entity a = h.node("pkg:a");
+    const Vec2 before_a  = h.registry().get<ecs::Position>(a).p;
+
+    h.begin_drag(h.camera().world_to_screen(h.registry().get<ecs::Position>(b).p));
+    for (int i = 0; i < 8; ++i) h.drag_by(Vec2{5.0f, 0.0f});
+    h.end_drag();
+
+    // pkg:a may be nudged aside, but it must not have travelled with pkg:b.
+    CHECK(length(h.registry().get<ecs::Position>(a).p - before_a) < 30.0f);
+}
+
+// Neighbours are pushed on Position only, never on LayoutTarget, so the ordinary ease
+// keeps pulling them home. They move aside while the drag passes and settle back --
+// nothing can drift permanently.
+TEST(neighbours_pushed_aside_by_a_drag_return_afterwards) {
+    auto h = make_filesystem();
+    view::fit_camera(h.world, {});
+
+    const entt::entity dir      = h.node("dir:a");
+    const entt::entity neighbour = h.node("pkg:b");
+    const Vec2 home = h.registry().get<ecs::LayoutTarget>(neighbour).p;
+
+    // Drag the directory right through where the neighbour sits.
+    h.begin_drag(h.camera().world_to_screen(h.registry().get<ecs::Position>(dir).p));
+    const Vec2 toward = (home - h.registry().get<ecs::Position>(dir).p) / 10.0f;
+    for (int i = 0; i < 10; ++i) h.drag_by(toward * h.camera().zoom);
+    h.end_drag();
+    h.settle();
+
+    // Its layout slot was never touched, and it eased back onto it.
+    CHECK_EQ(h.registry().get<ecs::LayoutTarget>(neighbour).p.x, home.x);
+    CHECK(length(h.registry().get<ecs::Position>(neighbour).p - home) < 1.0f);
+}
+

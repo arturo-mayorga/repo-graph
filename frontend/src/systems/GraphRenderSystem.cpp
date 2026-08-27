@@ -22,18 +22,9 @@ void GraphRenderSystem::teardown(ecs::World&) { renderer_.shutdown(); }
 
 void GraphRenderSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
     auto&       registry = world.registry;
-    auto&       camera   = world.resource<Camera>();
-    const auto& viewport = world.resource<ecs::Viewport>();
+    const auto& camera   = world.resource<Camera>();
     const auto& view     = world.resource<ecs::ViewSettings>();
     const auto& theme    = ui::theme();
-
-    // The camera is anchored on the area the panels leave, not the framebuffer, so
-    // fitting frames the graph in the space the user can actually see.
-    camera.vw     = viewport.framebuffer_w;
-    camera.vh     = viewport.framebuffer_h;
-    camera.anchor = viewport.free_size.x > 1.0f
-                        ? viewport.free_origin + viewport.free_size * 0.5f
-                        : Vec2{-1.0f, -1.0f};
 
     renderer_.begin(camera, theme.background);
 
@@ -46,8 +37,9 @@ void GraphRenderSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
         const bool emphasised = registry.all_of<ecs::Selected>(e) ||
                                 registry.all_of<ecs::Hovered>(e) ||
                                 registry.all_of<ecs::OnExplainedPath>(e);
-        const auto* disc = registry.try_get<ecs::Disc>(e);
-        return view::node_half(camera.zoom, detail, ext->half, disc ? &disc->radius : nullptr,
+        const auto*           d = registry.try_get<ecs::Disc>(e);
+        const view::DiscShape shape{d ? d->radius : 0.0f, d ? d->room : 1e9f};
+        return view::node_half(camera.zoom, detail, ext->half, d ? &shape : nullptr,
                                view::dot_px_for(registry.all_of<ecs::Changed>(e),
                                                 registry.all_of<ecs::Impacted>(e), emphasised));
     };
@@ -98,11 +90,14 @@ void GraphRenderSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
          registry.view<const ecs::NodeRef, const ecs::Position, const ecs::Extent,
                        const ecs::Style>().each()) {
         const Vec2  half = half_of(ent);
-        const bool  disc = registry.all_of<ecs::Disc>(ent);
-        // A disc is a circle at every zoom; a box only rounds off as it collapses.
-        const float radius =
-            disc ? std::min(half.x, half.y)
-                 : 5.0f * detail.t + std::min(half.x, half.y) * (1.0f - detail.t);
+        const auto* d = registry.try_get<ecs::Disc>(ent);
+        // A circle is a box whose corners are its own radius, so the corner follows the
+        // same morph the size does. Using the plain zoom curve here rounds a circle into
+        // a square the moment the graph opens.
+        const float shape_t =
+            d ? view::disc_morph(detail, view::DiscShape{d->radius, d->room}, ext.half)
+              : detail.t;
+        const float radius = 5.0f * shape_t + std::min(half.x, half.y) * (1.0f - shape_t);
 
         // A seed gets a halo: "the agent touched this" must be findable without reading
         // a label, which is the only cue left at dot scale.
@@ -132,13 +127,13 @@ void GraphRenderSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
 
         Vec4 fill = style.fill;
         // A dot is mostly outline; without a lift in fill it reads as a hollow ring.
-        if (!disc && detail.t < 0.5f) {
+        if (!d && detail.t < 0.5f) {
             fill = mix(style.stroke, fill, 0.35f + 0.65f * detail.t * 2.0f);
         }
 
         // Directories get a soft halo, the way Gource blooms them. It is what makes a
         // dense tree read as structure rather than as scattered dots.
-        if (disc && ref.kind != NodeKind::File) {
+        if (d && ref.kind != NodeKind::File) {
             Vec4 bloom = style.stroke;
             bloom.a    = 0.13f;
             renderer_.add_node(pos.p, half * 1.55f, bloom, Vec4{0, 0, 0, 0}, 0.0f, 0.0f,

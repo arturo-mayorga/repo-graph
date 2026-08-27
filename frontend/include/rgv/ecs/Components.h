@@ -73,6 +73,10 @@ struct Disc {
     // label has to clear this, not just the disc, or a directory's own name lands on
     // top of its files.
     float halo = 6.0f;
+    // Distance to the nearest neighbouring node. A node may only morph into a labelled
+    // box as far as this allows: dense radial packing and full text boxes are in direct
+    // conflict, and letting every node grow to its label produces an unreadable stack.
+    float room = 1e9f;
     // Unit vector pointing away from whatever this node orbits. Labels are placed
     // along it, so the names around a ring fan outward instead of stacking on top of
     // one another. Zero for a node with no parent.

@@ -57,6 +57,7 @@ void install_resources(ecs::World& world, const app::Options& options) {
     world.add_resource<ecs::FrameInput>();
     world.add_resource<ecs::PointerTarget>();
     world.add_resource<ecs::CameraControl>();
+    world.add_resource<ecs::DragState>();
     world.add_resource<ecs::DerivedState>();
     world.add_resource<ecs::EntityIndex>();
     world.add_resource<ecs::SceneStats>();
@@ -151,6 +152,12 @@ void apply_startup_state(ecs::World& world, app::Options& options) {
         selection.hovered    = options.hover;
         selection.hover_time = 10.0f;   // past the dwell delay, fully faded in
         options.hover.clear();
+    }
+    if (options.zoom > 0.0f) {
+        // Held rather than fitted, so a screenshot of a particular zoom is repeatable.
+        world.resource<Camera>().zoom                  = options.zoom;
+        world.resource<ecs::CameraControl>().auto_fit  = false;
+        options.zoom                                   = -1.0f;
     }
     if (options.text_settings) {
         world.resource<ecs::ViewSettings>().show_text_settings = true;

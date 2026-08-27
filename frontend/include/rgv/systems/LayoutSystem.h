@@ -69,6 +69,7 @@ private:
     void assign_depths(ecs::World& world);
     void order_and_place(ecs::World& world);
     void radial_tree(ecs::World& world);
+    void apply_drag(ecs::World& world);
 
     LayoutParams params_;
     float        energy_     = 1e9f;

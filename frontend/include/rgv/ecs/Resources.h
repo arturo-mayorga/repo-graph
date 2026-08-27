@@ -134,6 +134,15 @@ struct PointerTarget {
     bool         over_graph = false;   // inside the free rect and not captured by a panel
 };
 
+// A drag in progress. Navigation records it; layout applies it, because moving a node
+// is a layout question: a directory has to take its files with it, and its neighbours
+// have to get out of the way.
+struct DragState {
+    entt::entity node   = entt::null;
+    Vec2         delta{0.0f, 0.0f};
+    bool         active = false;
+};
+
 // While true the camera keeps framing the graph. Any manual pan, zoom, or drag clears
 // it: once the user has placed the view, layout stops moving it.
 struct CameraControl {

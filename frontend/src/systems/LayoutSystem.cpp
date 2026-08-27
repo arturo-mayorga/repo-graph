@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace rgv::systems {
@@ -437,7 +438,7 @@ void LayoutSystem::radial_tree(ecs::World& world) {
             auto        dir    = outward.find(to_raw(e));
             auto        h      = halo.find(to_raw(e));
             reg.emplace_or_replace<ecs::Disc>(
-                e, ecs::Disc{radius, h == halo.end() ? radius : h->second,
+                e, ecs::Disc{radius, h == halo.end() ? radius : h->second, 1e9f,
                              dir == outward.end() ? Vec2{0.0f, 1.0f} : dir->second});
         }
     };
@@ -465,6 +466,40 @@ void LayoutSystem::radial_tree(ecs::World& world) {
         }
     }
 
+    // How much room each node has before it meets a neighbour. Measured after
+    // placement, on a uniform grid so it stays linear, and used to cap how far a node
+    // may morph toward its label box.
+    {
+        constexpr float kCell = 90.0f;
+        std::unordered_map<std::int64_t, std::vector<entt::entity>> bins;
+        auto key = [](int x, int y) {
+            return (static_cast<std::int64_t>(x) << 32) ^ static_cast<std::uint32_t>(y);
+        };
+        for (auto [e, t] : reg.view<const ecs::LayoutTarget>().each()) {
+            bins[key(static_cast<int>(std::floor(t.p.x / kCell)),
+                     static_cast<int>(std::floor(t.p.y / kCell)))]
+                .push_back(e);
+        }
+        for (auto [e, t, disc] : reg.view<const ecs::LayoutTarget, ecs::Disc>().each()) {
+            const int cx = static_cast<int>(std::floor(t.p.x / kCell));
+            const int cy = static_cast<int>(std::floor(t.p.y / kCell));
+            float     best = kCell * 2.0f;
+            for (int dy = -1; dy <= 1; ++dy) {
+                for (int dx = -1; dx <= 1; ++dx) {
+                    auto it = bins.find(key(cx + dx, cy + dy));
+                    if (it == bins.end()) continue;
+                    for (auto other : it->second) {
+                        if (other == e) continue;
+                        const auto* ot = reg.try_get<ecs::LayoutTarget>(other);
+                        if (!ot) continue;
+                        best = std::min(best, length(ot->p - t.p));
+                    }
+                }
+            }
+            disc.room = best * 0.5f;
+        }
+    }
+
     // Depth, for anything that wants it.
     for (auto [ent, ref] : reg.view<const ecs::NodeRef>().each()) {
         int           d   = 0;
@@ -482,6 +517,56 @@ void LayoutSystem::reset(ecs::World& world) {
     } else {
         assign_depths(world);
         order_and_place(world);
+    }
+}
+
+// Moving a node moves everything it contains, and nudges everything it runs into.
+//
+// Dragging used to move the single node under the cursor, so pulling a directory out of
+// its place left all of its files behind -- the one thing a containment view must not
+// do. The subtree now travels with it.
+//
+// Neighbours are pushed on Position only, never on LayoutTarget, so the ordinary ease
+// keeps pulling them home. They get out of the way while the drag passes and settle
+// back afterwards, and nothing can drift permanently.
+void LayoutSystem::apply_drag(ecs::World& world) {
+    auto&       reg  = world.registry;
+    const auto& drag = world.resource<ecs::DragState>();
+    if (!drag.active || !reg.valid(drag.node)) return;
+
+    // Everything contained by the dragged node, via the containment edges the
+    // filesystem view synthesises. Other views have none, so a drag moves one node.
+    std::unordered_map<std::uint32_t, std::vector<entt::entity>> kids;
+    for (auto [e, ref, ends] : reg.view<const ecs::EdgeRef, const ecs::Endpoints>().each()) {
+        if (ref.kind == EdgeKind::Contains) kids[to_raw(ends.to)].push_back(ends.from);
+    }
+
+    std::vector<entt::entity> moving{drag.node};
+    for (std::size_t i = 0; i < moving.size() && moving.size() < 20000; ++i) {
+        for (auto c : kids[to_raw(moving[i])]) moving.push_back(c);
+    }
+
+    for (auto e : moving) {
+        if (auto* pos = reg.try_get<ecs::Position>(e)) pos->p += drag.delta;
+        if (auto* t = reg.try_get<ecs::LayoutTarget>(e)) t->p += drag.delta;
+    }
+
+    // Push whatever the moving cluster runs into out of the way.
+    const auto* centre = reg.try_get<ecs::Position>(drag.node);
+    const auto* disc   = reg.try_get<ecs::Disc>(drag.node);
+    if (!centre) return;
+    const float reach = disc ? disc->halo : 60.0f;
+
+    std::unordered_set<std::uint32_t> inside;
+    for (auto e : moving) inside.insert(to_raw(e));
+
+    for (auto [e, pos, d] : reg.view<ecs::Position, const ecs::Disc>().each()) {
+        if (inside.count(to_raw(e)) || reg.all_of<ecs::Pinned>(e)) continue;
+        const Vec2  away = pos.p - centre->p;
+        const float dist = length(away);
+        const float want = reach + d.radius;
+        if (dist >= want || dist < 1e-3f) continue;
+        pos.p += normalize(away) * (want - dist) * 0.35f;
     }
 }
 
@@ -504,6 +589,8 @@ void LayoutSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
     const float t   = params_.ease <= 0.0f
                           ? 1.0f
                           : std::clamp(frame.dt * params_.ease, 0.0f, 1.0f);
+
+    apply_drag(world);
 
     float worst = 0.0f;
     for (auto [ent, pos, target] :

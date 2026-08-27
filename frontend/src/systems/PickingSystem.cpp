@@ -29,9 +29,10 @@ entt::entity pick(ecs::World& world, Vec2 screen) {
          registry.view<const ecs::NodeRef, const ecs::Position, const ecs::Extent>().each()) {
         const bool  changed  = registry.all_of<ecs::Changed>(ent);
         const bool  impacted = registry.all_of<ecs::Impacted>(ent);
-        const auto* disc     = registry.try_get<ecs::Disc>(ent);
+        const auto* d        = registry.try_get<ecs::Disc>(ent);
+        const view::DiscShape shape{d ? d->radius : 0.0f, d ? d->room : 1e9f};
         Vec2        half     = view::node_half(camera.zoom, detail, ext.half,
-                                               disc ? &disc->radius : nullptr,
+                                               d ? &shape : nullptr,
                                                view::dot_px_for(changed, impacted, false));
 
         // A dot must stay clickable even when it is a few pixels across, so the hit

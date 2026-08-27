@@ -41,6 +41,7 @@ struct Harness {
         world.add_resource<FrameInput>();
         world.add_resource<PointerTarget>();
         world.add_resource<CameraControl>();
+        world.add_resource<DragState>();
         world.add_resource<DerivedState>();
         world.add_resource<EntityIndex>();
         world.add_resource<SceneStats>();
@@ -117,6 +118,27 @@ struct Harness {
     }
 
     rgv::ecs::PointerTarget& pointer() { return world.resource<rgv::ecs::PointerTarget>(); }
+
+    // Drives a drag through the real input path, so NavigationSystem and LayoutSystem
+    // are exercised rather than DragState being written by hand.
+    void begin_drag(rgv::Vec2 screen) {
+        point_at(screen);
+        point_at(screen, /*press=*/true);
+    }
+    void drag_by(rgv::Vec2 delta) {
+        auto& in       = input();
+        in.mouse_down    = true;
+        in.mouse_pressed = false;
+        in.mouse_delta   = delta;
+        in.mouse += delta;
+        tick();
+    }
+    void end_drag() {
+        auto& in       = input();
+        in.mouse_down  = false;
+        in.mouse_delta = rgv::Vec2{0.0f, 0.0f};
+        tick();
+    }
 
 private:
     std::uint64_t frame_index_ = 0;

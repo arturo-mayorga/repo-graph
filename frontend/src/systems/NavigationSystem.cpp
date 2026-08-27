@@ -11,13 +11,24 @@
 namespace rgv::systems {
 
 void NavigationSystem::run(ecs::World& world, const ecs::FrameContext&) {
-    const auto& input   = world.resource<ecs::FrameInput>();
+    const auto& viewport = world.resource<ecs::Viewport>();
+    const auto& input    = world.resource<ecs::FrameInput>();
     const auto& target  = world.resource<ecs::PointerTarget>();
     const auto& stats   = world.resource<ecs::SceneStats>();
     auto&       camera  = world.resource<Camera>();
     auto&       control = world.resource<ecs::CameraControl>();
     auto&       queue   = world.resource<ecs::CommandQueue>();
     auto&       registry = world.registry;
+
+    // The camera belongs to this system, not to the renderer. It is anchored on the
+    // area the panels leave rather than the whole framebuffer, so fitting frames the
+    // graph in the space the user can actually see -- and so anything that reasons in
+    // screen coordinates, picking included, agrees with what is drawn.
+    camera.vw     = viewport.framebuffer_w;
+    camera.vh     = viewport.framebuffer_h;
+    camera.anchor = viewport.free_size.x > 1.0f
+                        ? viewport.free_origin + viewport.free_size * 0.5f
+                        : Vec2{-1.0f, -1.0f};
 
     // -- zoom about the cursor, so the thing under the pointer stays under it
     if (target.over_graph && input.wheel != 0.0f) {
@@ -39,15 +50,20 @@ void NavigationSystem::run(ecs::World& world, const ecs::FrameContext&) {
         panning_  = false;
     }
 
+    // Recorded, not applied. Moving a node is a layout question -- a directory takes
+    // its files with it -- so LayoutSystem owns the actual movement.
+    auto& drag  = world.resource<ecs::DragState>();
+    drag.active = false;
+    drag.delta  = Vec2{0.0f, 0.0f};
+
     if (input.mouse_down && length_sq(input.mouse_delta) > 0.0f) {
         if (dragging_ != entt::null && registry.valid(dragging_)) {
-            if (auto* pos = registry.try_get<ecs::Position>(dragging_)) {
-                pos->p += input.mouse_delta / camera.zoom;
-                // Dragging pins: the user has said where this one goes.
-                registry.emplace_or_replace<ecs::Pinned>(dragging_);
-                if (auto* t = registry.try_get<ecs::LayoutTarget>(dragging_)) t->p = pos->p;
-                control.auto_fit = false;
-            }
+            drag.node   = dragging_;
+            drag.delta  = input.mouse_delta / camera.zoom;
+            drag.active = true;
+            // Dragging pins: the user has said where this one goes.
+            registry.emplace_or_replace<ecs::Pinned>(dragging_);
+            control.auto_fit = false;
         } else if (panning_) {
             camera.center -= input.mouse_delta / camera.zoom;
             control.auto_fit = false;

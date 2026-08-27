@@ -137,6 +137,23 @@ into an annulus with a void in the middle once there are hundreds.
 Impact colouring still wins over the extension palette. The repository looks like
 Gource; the blast radius lights up on top of it.
 
+**Zooming in morphs circles into labelled boxes**, but only where there is room for
+one. That caveat is not a shortcut — dense radial packing and full text boxes are in
+direct conflict. Files on an orbit sit ~18 world units apart while a filename box is
+~120 wide, so letting every node grow to its label produces an unreadable stack. The
+morph is gated on room × zoom: the repository and its packages become proper boxes with
+the name inside; files and cramped directories stay circles and are named from outside.
+
+File names appear as you zoom in. That works because labels drawn *beside* a node hold
+a constant screen size while the graph spreads out beneath them — world-scaled text
+grows in step with the spacing and never uncrowds, however far you zoom. A label
+*inside* a box scales with the box, so it always fits. Gource makes the same split.
+
+**Dragging a directory takes its files with it**, and pushes whatever it runs into out
+of the way. Neighbours are displaced on position only, never on their layout target, so
+the ordinary easing keeps pulling them home: they move aside while the drag passes and
+settle back afterwards, and nothing can drift permanently.
+
 ### Semantic zoom
 
 Nodes are labelled boxes when you are close enough to read them and collapse to small

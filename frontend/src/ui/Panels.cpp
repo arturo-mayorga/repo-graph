@@ -1044,27 +1044,32 @@ void draw_graph_overlay(ecs::World& world, ImDrawList* dl) {
             const auto* imp      = reg.try_get<ecs::Impacted>(ent);
             const auto* disc     = reg.try_get<ecs::Disc>(ent);
 
-            // In a disc view there are far too many files to label them all -- Gource
-            // names directories and stays quiet about the rest.
-            //
-            // Changed files are deliberately NOT an exception. Six adjacent icons in a
-            // sweep produce six overlapping names and nothing readable, and the graph
-            // already says where they are: red dots with a halo. The session panel says
-            // which. Only what the user is actually pointing at gets named.
+            // What the user is pointing at is always named, however crowded it is.
             const bool asked_for = reg.all_of<ecs::Selected>(ent) ||
                                    reg.all_of<ecs::Hovered>(ent) ||
                                    reg.all_of<ecs::OnExplainedPath>(ent);
-            if (disc && ref.kind == NodeKind::File && !asked_for) continue;
 
             Vec4 col = t.node_text;
             if (changed) col = t.changed;
             else if (imp) col = impact_color(imp->distance);
             col.a *= alpha;
 
-            const Vec2 half = disc ? rgv::view::disc_half(cam.zoom, disc->radius)
-                                   : rgv::view::render_half(
-                                         ui.camera.zoom, detail, ext.half,
-                                         rgv::view::dot_px_for(changed, imp != nullptr, false));
+            const rgv::view::DiscShape shape{disc ? disc->radius : 0.0f,
+                                             disc ? disc->room : 1e9f};
+            const Vec2 half = rgv::view::node_half(
+                cam.zoom, detail, ext.half, disc ? &shape : nullptr,
+                rgv::view::dot_px_for(changed, imp != nullptr, false));
+            const bool inside = rgv::view::label_fits_inside(half, ext.half);
+
+            // A label inside a box scales with the box, so it always fits. A label
+            // floating beside a node is chrome and holds a constant screen size.
+            //
+            // That distinction is what makes zooming reveal names. World-scaled text
+            // grows in step with the space between nodes, so crowding never eases
+            // however far you zoom; screen-space text stays put while the dots spread
+            // apart beneath it, which is how Gource does it.
+            const float px = inside ? font_size
+                                    : rgv::view::kBaseFontPx * ui.view.graph_text_scale;
 
             // A disc's label sits outside it, along the direction it orbits away from,
             // so the names around a ring fan outward instead of stacking. Text inside
@@ -1074,23 +1079,39 @@ void draw_graph_overlay(ecs::World& world, ImDrawList* dl) {
             const float line_h    = font_size;
 
             Vec2 anchor{s.x, 0.0f};
-            if (disc) {
+            // Inside once the node has actually grown to hold it; outside otherwise --
+            // which, where the packing is dense, is always.
+            if (disc && inside) {
+                anchor.y = s.y - line_h * 0.5f;
+            } else if (disc) {
                 // Alternate the distance so neighbours on the same orbit do not collide.
                 std::uint32_t hash = 2166136261u;
                 for (unsigned char ch : ref.id) { hash ^= ch; hash *= 16777619u; }
-                const float stagger = (hash & 1u) ? font_size * 1.05f : 0.0f;
+                const float stagger = (hash & 1u) ? px * 1.05f : 0.0f;
                 // Clear the whole cluster, not just the disc: a directory's files
                 // orbit it, so its own name has to sit outside the outermost orbit.
                 const float reach = std::max(half.y, disc->halo);
-                const float away  = reach * cam.zoom + font_size * 0.55f + stagger;
+                const float away  = reach * cam.zoom + px * 0.55f + stagger;
                 anchor = Vec2{s.x + disc->outward.x * away, s.y + disc->outward.y * away};
-                anchor.y -= font_size * 0.5f;
+                anchor.y -= px * 0.5f;
             } else {
                 anchor.y = s.y - (two_lines ? line_h * 0.98f : line_h * 0.5f);
             }
 
-            const ImVec2 sz = font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, label.text.c_str());
-            dl->AddText(font, font_size, ImVec2(anchor.x - sz.x * 0.5f, anchor.y), to_u32(col),
+            const ImVec2 sz = font->CalcTextSizeA(px, FLT_MAX, 0.0f, label.text.c_str());
+
+            // Too crowded to name -- files only. `room` is the distance to the nearest
+            // neighbour, which eases as the user zooms in and the dots spread apart.
+            //
+            // Directories are exempt: their nearest neighbour is usually a file they
+            // own, so `room` understates the empty space their label actually goes
+            // into, and applying the test to them hides the structure.
+            if (disc && !inside && !asked_for && ref.kind == NodeKind::File &&
+                disc->room * cam.zoom < sz.x * 0.55f) {
+                continue;
+            }
+
+            dl->AddText(font, px, ImVec2(anchor.x - sz.x * 0.5f, anchor.y), to_u32(col),
                         label.text.c_str());
 
             if (two_lines) {
