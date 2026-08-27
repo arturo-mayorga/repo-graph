@@ -50,6 +50,16 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
+// Where a provider command is looked up.
+//
+// Providers ship in the same directory as the frontend, so a bare name is resolved
+// against our own executable's directory before falling back to PATH. Without that,
+// `./build/bin/rgv --watch .` fails unless the user happens to have put the build
+// directory on PATH -- which is a thing only the developer of the tool ever does.
+//
+// A name containing a slash is a path and is returned untouched.
+std::string resolve_provider(const std::string& name);
+
 // Splits a buffer into complete lines, leaving any trailing partial line in `carry` for
 // the next read. Exposed because it is the one piece of the transport worth testing
 // without a process: a message must never be parsed until its terminator has arrived.

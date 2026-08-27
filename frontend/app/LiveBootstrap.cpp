@@ -22,7 +22,7 @@ bool attach_live_source(ecs::World& world, const std::string& provider,
     auto& owner = world.add_resource<LiveOwner>();
     try {
         owner.source = std::make_unique<live::LiveSource>(
-            std::vector<std::string>{provider, "--root", root});
+            std::vector<std::string>{live::resolve_provider(provider), "--root", root});
     } catch (const std::exception& ex) {
         std::fprintf(stderr,
                      "could not attach live source: %s\n"

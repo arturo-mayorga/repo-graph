@@ -79,9 +79,12 @@ Useful options:
 
 ```sh
 ./build/bin/rgv --watch .                          # watch this repo, live
-./build/bin/rgv --watch ~/code/some-project --view filesystem
-./build/bin/rgv --watch . --provider ./build/bin/rgv-watch   # explicit provider path
+./build/bin/rgv --watch ~/code/some-project
+./build/bin/rgv --watch . --provider /path/to/other-provider
 ```
+
+`rgv-watch` is found next to the `rgv` binary, so nothing needs to be on `PATH`. Pass
+`--provider` to point at a different one; a name with a slash in it is used as given.
 
 `--watch` swaps the fixture player for `rgv-watch`, a provider process that walks the
 directory, emits it as a contract snapshot, and then streams deltas as files are created,
@@ -99,8 +102,9 @@ watch what it produces without a UI at all:
 That seam is why this is language-neutral: `rgv-watch` understands the filesystem and
 nothing else, and a dependency extractor for any given language is a *different* process
 speaking the same protocol. It reports containment only, so the dependency views stay
-empty on a live repo until such an extractor exists — the Filesystem view is the one to
-use for now.
+empty on a live repo until such an extractor exists. Startup picks a view that has
+something in it — a baseline with no dependency edges opens on Filesystem — so you land
+somewhere useful without passing `--view`.
 
 `--scenario N --at MS --select NODE --hover NODE --text-settings` reproduce an exact
 on-screen state,

@@ -232,3 +232,30 @@ TEST(a_file_created_on_disk_arrives_as_a_new_node) {
     CHECK_EQ(store.nodes().size(), before + 1);
     CHECK(store.node("file:b.py") != nullptr);
 }
+
+// `./build/bin/rgv --watch .` failed with "could not start 'rgv-watch': No such file or
+// directory" unless the build directory happened to be on PATH. Every test and every
+// manual check had put it there, so the one command the README documents was the one
+// path nothing exercised.
+TEST(a_bare_provider_name_resolves_next_to_the_frontend) {
+    // The test binary lives beside rgv-watch, exactly as the app does.
+    const std::string resolved = live::resolve_provider("rgv-watch");
+    CHECK(resolved != "rgv-watch");
+    CHECK(std::filesystem::exists(resolved));
+
+    // Attaching by bare name must work with no PATH help at all.
+    ::unsetenv("PATH");
+    const std::string root = std::string(RGV_TEST_TMP) + "/provider-resolve";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+    { std::ofstream(root + "/a.py") << "x = 1\n"; }
+
+    live::LiveSource src({live::resolve_provider("rgv-watch"), "--root", root}, 5000.0);
+    CHECK(src.baseline().nodes.size() >= 2u);
+}
+
+// A path is a path. Resolution must not rewrite what the user spelled out.
+TEST(an_explicit_provider_path_is_used_as_given) {
+    CHECK_EQ(live::resolve_provider("./build/bin/rgv-watch"), std::string("./build/bin/rgv-watch"));
+    CHECK_EQ(live::resolve_provider(RGV_WATCH_BIN), std::string(RGV_WATCH_BIN));
+}

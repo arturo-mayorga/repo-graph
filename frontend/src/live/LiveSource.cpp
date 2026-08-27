@@ -3,6 +3,7 @@
 #include "rgv/fixture/Json.h"
 
 #include <cerrno>
+#include <filesystem>
 #include <csignal>
 #include <cstring>
 #include <fcntl.h>
@@ -40,6 +41,22 @@ void set_nonblocking(int fd) {
 }
 
 } // namespace
+
+std::string resolve_provider(const std::string& name) {
+    if (name.find('/') != std::string::npos) return name;
+
+    std::error_code ec;
+    const auto      self = std::filesystem::read_symlink("/proc/self/exe", ec);
+    if (ec) return name;
+
+    const auto sibling = self.parent_path() / name;
+    if (std::filesystem::exists(sibling, ec) &&
+        (std::filesystem::status(sibling, ec).permissions() & std::filesystem::perms::owner_exec) !=
+            std::filesystem::perms::none) {
+        return sibling.string();
+    }
+    return name;   // let PATH have a go, and let the spawn error name it
+}
 
 std::vector<std::string> take_lines(std::string& carry, std::string_view chunk) {
     carry.append(chunk);
@@ -141,7 +158,8 @@ LiveSource::LiveSource(std::vector<std::string> argv, double startup_timeout_ms)
     if (rc != 0) {
         ::close(out[0]);
         ::close(err[0]);
-        throw SpawnError("could not start '" + argv[0] + "': " + std::strerror(rc));
+        throw SpawnError("could not start '" + argv[0] + "': " + std::strerror(rc) +
+                         "\n  (looked next to the frontend, then on PATH)");
     }
 
     impl_->pid    = pid;

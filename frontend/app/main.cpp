@@ -96,6 +96,30 @@ void install_resources(ecs::World& world, const app::Options& options) {
     }
 }
 
+// Open a view that can actually show what was attached.
+//
+// Not a test of which source is attached -- the contract forbids that, and it would be
+// the wrong question anyway. It is a test of the GRAPH: the dependency views draw
+// dependency edges, and a baseline with none of them renders as an empty screen no
+// matter what produced it. The filesystem provider reports containment only, so
+// `rgv --watch .` used to open on Architecture and show nothing at all.
+//
+// Only when the user did not say. An explicit --view is never overridden.
+void open_a_view_with_something_in_it(ecs::World& world, const app::Options& options) {
+    if (!options.view.empty()) return;
+
+    const auto& handle = world.resource<ecs::SourceHandle>();
+    if (!handle.source) return;
+
+    for (const auto& e : handle.source->baseline().edges) {
+        if (is_dependency_edge(e.kind)) return;
+    }
+
+    auto& view = world.resource<ecs::ViewSettings>();
+    view.mode  = ecs::ViewMode::Filesystem;
+    view.level = Level::File;
+}
+
 // The frame, in order. Six phases; insertion order within each.
 void install_systems(ecs::Schedule& schedule, const app::Options& options) {
     using namespace rgv::systems;
@@ -193,6 +217,8 @@ int main(int argc, char** argv) {
             ? app::attach_fixture_source(world, options.root, options.fixture, options.scenario)
             : app::attach_live_source(world, options.provider, options.watch);
     if (!attached) return 1;
+
+    open_a_view_with_something_in_it(world, options);
 
     try {
         schedule.setup(world);
