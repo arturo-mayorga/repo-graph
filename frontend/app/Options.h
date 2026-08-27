@@ -11,6 +11,7 @@ struct Options {
     std::string fixture;         // fixture set to start on
     std::string select;          // node selected on startup
     std::string hover;           // node whose hover card is shown on startup
+    std::string view;            // architecture | filesystem | file-graph
     int         scenario      = 0;
     double      at            = -1.0;   // seek here and pause
     float       relevance     = -1.0f;

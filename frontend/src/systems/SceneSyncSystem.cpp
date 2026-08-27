@@ -78,8 +78,10 @@ bool SceneSyncSystem::node_visible(const ecs::World& world, const Node& n) const
             if (n.kind != NodeKind::Package && n.kind != NodeKind::BuildTarget) return false;
             break;
         case ecs::ViewMode::Filesystem:
-            if (n.kind != NodeKind::Directory && n.kind != NodeKind::File &&
-                n.kind != NodeKind::Package) return false;
+            // The repository is included so the tree has one centre to grow from.
+            // Without it every package is a root and the layout is a ring with a hole.
+            if (n.kind != NodeKind::Repository && n.kind != NodeKind::Directory &&
+                n.kind != NodeKind::File && n.kind != NodeKind::Package) return false;
             break;
         case ecs::ViewMode::FileGraph:
             if (n.kind != NodeKind::File) return false;

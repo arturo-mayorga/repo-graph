@@ -77,6 +77,14 @@ void install_resources(ecs::World& world, const app::Options& options) {
     view.ui_text_scale    = settings.values.ui_text_scale;
     view.graph_text_scale = settings.values.graph_text_scale;
 
+    if (options.view == "filesystem") {
+        view.mode  = ecs::ViewMode::Filesystem;
+        view.level = Level::File;
+    } else if (options.view == "file-graph") {
+        view.mode  = ecs::ViewMode::FileGraph;
+        view.level = Level::File;
+    }
+
     if (options.relevance >= 0.0f) {
         world.resource<ecs::Filters>().min_relevance = std::clamp(options.relevance, 0.0f, 1.0f);
     }

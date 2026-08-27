@@ -66,9 +66,13 @@ that is genuinely superlinear in the graph, is gated on its inputs changing.
 
 ### Layout and rendering
 
-Layout is layered, not force-directed: dependency depth fixes the row, barycentre
-sweeps order within it. A spring simulation was tried first and produced a hairball
-that never stopped drifting. Rows run so a package depending on nothing sits at the
+Layout has two strategies. The filesystem view is radial and Gource-inspired: discs
+sized by file count, files on the rim, children packed into shells inside their
+parent's wedge. The dependency views are layered: dependency depth fixes the row,
+barycentre sweeps order within it. Neither relaxes into place; both are computed. A spring
+simulation was tried first for the dependency views and produced a hairball that never
+stopped drifting, and Gource's own force-based spreading was replaced with structural
+packing for the same reason. Rows run so a package depending on nothing sits at the
 bottom and its dependents stack above — impact rises, the way the spec draws it.
 
 Text is drawn through ImGui's draw list rather than the GL renderer: a glyph atlas is a

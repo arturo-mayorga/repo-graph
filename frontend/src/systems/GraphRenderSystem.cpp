@@ -46,9 +46,10 @@ void GraphRenderSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
         const bool emphasised = registry.all_of<ecs::Selected>(e) ||
                                 registry.all_of<ecs::Hovered>(e) ||
                                 registry.all_of<ecs::OnExplainedPath>(e);
-        return view::render_half(camera.zoom, detail, ext->half,
-                                 view::dot_px_for(registry.all_of<ecs::Changed>(e),
-                                                  registry.all_of<ecs::Impacted>(e), emphasised));
+        const auto* disc = registry.try_get<ecs::Disc>(e);
+        return view::node_half(camera.zoom, detail, ext->half, disc ? &disc->radius : nullptr,
+                               view::dot_px_for(registry.all_of<ecs::Changed>(e),
+                                                registry.all_of<ecs::Impacted>(e), emphasised));
     };
 
     auto emit_edge = [&](entt::entity ent, const ecs::Endpoints& ends, const ecs::Style& style) {
@@ -96,8 +97,12 @@ void GraphRenderSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
     for (auto [ent, ref, pos, ext, style] :
          registry.view<const ecs::NodeRef, const ecs::Position, const ecs::Extent,
                        const ecs::Style>().each()) {
-        const Vec2  half   = half_of(ent);
-        const float radius = 5.0f * detail.t + std::min(half.x, half.y) * (1.0f - detail.t);
+        const Vec2  half = half_of(ent);
+        const bool  disc = registry.all_of<ecs::Disc>(ent);
+        // A disc is a circle at every zoom; a box only rounds off as it collapses.
+        const float radius =
+            disc ? std::min(half.x, half.y)
+                 : 5.0f * detail.t + std::min(half.x, half.y) * (1.0f - detail.t);
 
         // A seed gets a halo: "the agent touched this" must be findable without reading
         // a label, which is the only cue left at dot scale.
@@ -127,7 +132,18 @@ void GraphRenderSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
 
         Vec4 fill = style.fill;
         // A dot is mostly outline; without a lift in fill it reads as a hollow ring.
-        if (detail.t < 0.5f) fill = mix(style.stroke, fill, 0.35f + 0.65f * detail.t * 2.0f);
+        if (!disc && detail.t < 0.5f) {
+            fill = mix(style.stroke, fill, 0.35f + 0.65f * detail.t * 2.0f);
+        }
+
+        // Directories get a soft halo, the way Gource blooms them. It is what makes a
+        // dense tree read as structure rather than as scattered dots.
+        if (disc && ref.kind != NodeKind::File) {
+            Vec4 bloom = style.stroke;
+            bloom.a    = 0.13f;
+            renderer_.add_node(pos.p, half * 1.55f, bloom, Vec4{0, 0, 0, 0}, 0.0f, 0.0f,
+                               radius * 1.55f);
+        }
 
         renderer_.add_node(pos.p, half, fill, style.stroke, style.stroke_w, style.dash, radius);
     }

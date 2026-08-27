@@ -6,6 +6,8 @@
 
 #include "rgv/render/Math.h"
 
+#include <string_view>
+
 namespace rgv::ui {
 
 struct Theme {
@@ -43,6 +45,11 @@ struct Theme {
 };
 
 const Theme& theme();
+
+// Gource's signature: files coloured by extension, so a repository acquires a
+// recognisable palette and you can read its composition at a glance. Curated for the
+// common ones, hashed to a stable hue for everything else.
+Vec4 extension_color(std::string_view name);
 
 // Colour for a node at `distance` in the blast radius. distance < 0 => not impacted.
 Vec4 impact_color(int distance);

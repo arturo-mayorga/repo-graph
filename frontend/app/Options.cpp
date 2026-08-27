@@ -18,6 +18,7 @@ bool parse_options(int argc, char** argv, const char* default_root, Options& o) 
                          "  --at MS          seek to this point in the scenario and pause\n"
                          "  --select NODE    select this node id on startup\n"
                          "  --hover NODE     show this node's hover card on startup\n"
+                         "  --view MODE      architecture | filesystem | file-graph\n"
                          "  --relevance F    start with the relevance filter at F (0..1)\n"
                          "  --text-settings  open the text size window on startup\n"
                          "  --schedule       print the system schedule and exit\n";
@@ -31,6 +32,7 @@ bool parse_options(int argc, char** argv, const char* default_root, Options& o) 
         else if (a == "--at" && i + 1 < argc) o.at = std::atof(argv[++i]);
         else if (a == "--select" && i + 1 < argc) o.select = argv[++i];
         else if (a == "--hover" && i + 1 < argc) o.hover = argv[++i];
+        else if (a == "--view" && i + 1 < argc) o.view = argv[++i];
         else if (a == "--relevance" && i + 1 < argc) o.relevance = std::atof(argv[++i]);
         else o.root = a;
     }

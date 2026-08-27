@@ -63,6 +63,17 @@ struct Extent { Vec2 half{54.0f, 17.0f}; };
 // Dependency depth: 0 = depends on nothing else in view. Owner: LayoutSystem.
 struct Depth { int value = 0; };
 
+// Present only where the view lays nodes out as circles rather than boxes -- the
+// filesystem view. `radius` is the world-space radius of the disc itself; for a
+// directory it is the ring its files sit on, so a directory's size IS its file count.
+// Owner: LayoutSystem.
+struct Disc {
+    float radius = 6.0f;
+    // How far this node's whole subtree reaches from its centre. Layout uses it to
+    // keep siblings from colliding; nothing else needs it.
+    float extent = 6.0f;
+};
+
 // The user dragged this node. Layout leaves it alone. Owner: DragSystem.
 struct Pinned {};
 

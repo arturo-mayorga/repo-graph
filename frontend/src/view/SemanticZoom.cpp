@@ -36,6 +36,18 @@ Vec2 render_half(float zoom, const NodeDetail& detail, const Vec2& layout_half, 
     return lerp(dot, layout_half, detail.t);
 }
 
+Vec2 disc_half(float zoom, float world_radius, float min_px) {
+    const float z = std::max(zoom, 1e-4f);
+    const float r = std::max(world_radius, min_px / z);
+    return Vec2{r, r};
+}
+
+Vec2 node_half(float zoom, const NodeDetail& detail, const Vec2& layout_half,
+               const float* disc_radius, float dot_px) {
+    if (disc_radius) return disc_half(zoom, *disc_radius);
+    return render_half(zoom, detail, layout_half, dot_px);
+}
+
 Vec2 text_extent(NodeKind kind, const std::string& name, const std::string& sub,
                  float graph_text_scale) {
     // ImGui's default font is a fixed-advance bitmap face, so a character-count

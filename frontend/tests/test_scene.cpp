@@ -107,7 +107,9 @@ TEST(view_mode_selects_which_nodes_exist_on_screen) {
 
     h.view().mode = ecs::ViewMode::Filesystem;
     h.tick();
-    CHECK_EQ(count_nodes(h), 6);   // 3 packages + 1 directory + 2 files, no repo root
+    // repo + 3 packages + 1 directory + 2 files. The repository is included here and
+    // nowhere else: it is the centre the radial layout grows from.
+    CHECK_EQ(count_nodes(h), 7);
 }
 
 // Structural edges are drawn as hierarchy there, and dependency arrows must not leak in.
@@ -579,4 +581,131 @@ TEST(scrolling_over_a_panel_does_not_zoom_the_graph) {
     h.tick();
 
     CHECK_EQ(h.camera().zoom, before);
+}
+
+// -- the radial filesystem layout --------------------------------------------
+
+namespace {
+
+// The filesystem view, laid out and settled.
+rgvtest::Harness make_filesystem() {
+    rgvtest::Harness h;
+    h.store().reset(chain());
+    h.view().mode  = ecs::ViewMode::Filesystem;
+    h.view().level = Level::File;
+    h.request_rebuild();
+    h.settle();
+    return h;
+}
+
+} // namespace
+
+// Discs are how the view says "this is laid out radially". They must not leak into the
+// box-based views, or picking and rendering would use the wrong shape there.
+TEST(discs_exist_only_in_the_filesystem_view) {
+    auto h = make_filesystem();
+    int  discs = 0;
+    for ([[maybe_unused]] auto&& row : h.registry().view<const ecs::Disc>().each()) ++discs;
+    CHECK(discs > 0);
+
+    h.view().mode = ecs::ViewMode::Architecture;
+    h.request_rebuild();
+    h.settle();
+    discs = 0;
+    for ([[maybe_unused]] auto&& row : h.registry().view<const ecs::Disc>().each()) ++discs;
+    CHECK_EQ(discs, 0);
+}
+
+// The repository anchors the tree. Without it every package is a root and the layout
+// becomes a ring with a hole in the middle.
+TEST(the_filesystem_view_grows_from_the_repository) {
+    auto h = make_filesystem();
+    const entt::entity repo = h.node("repo");
+    CHECK(repo != entt::null);
+
+    const Vec2 at = h.registry().get<ecs::LayoutTarget>(repo).p;
+    CHECK(std::abs(at.x) < 0.01f);
+    CHECK(std::abs(at.y) < 0.01f);
+}
+
+// A directory's radius is its file count made visible -- the reason the view reads at
+// a glance without labels.
+TEST(a_directory_disc_grows_with_the_files_it_holds) {
+    Snapshot s = chain();
+    for (int i = 0; i < 20; ++i) {
+        s.nodes.push_back(mk_node("file:a/extra" + std::to_string(i) + ".ts", NodeKind::File,
+                                  "dir:a"));
+    }
+    rgvtest::Harness h;
+    h.store().reset(s);
+    h.view().mode  = ecs::ViewMode::Filesystem;
+    h.view().level = Level::File;
+    h.request_rebuild();
+    h.settle();
+
+    // dir:a now holds 21 files; pkg:b holds one and should stay at the floor.
+    CHECK(h.registry().get<ecs::Disc>(h.node("dir:a")).radius >
+          h.registry().get<ecs::Disc>(h.node("pkg:b")).radius);
+}
+
+// Files orbit the directory that owns them, at exactly its rim.
+TEST(files_sit_on_the_rim_of_their_directory) {
+    auto h = make_filesystem();
+
+    const Vec2  dir  = h.registry().get<ecs::LayoutTarget>(h.node("dir:a")).p;
+    const float ring = h.registry().get<ecs::Disc>(h.node("dir:a")).radius;
+    const Vec2  file = h.registry().get<ecs::LayoutTarget>(h.node("file:a/x.ts")).p;
+
+    CHECK(std::abs(length(file - dir) - ring) < 0.5f);
+}
+
+// The claim the whole layout rests on: collisions are prevented by construction, not
+// by relaxation. Nothing overlaps except a file touching its own parent's rim, which
+// is where files are meant to be.
+TEST(no_two_discs_overlap) {
+    Snapshot s = chain();
+    // A lopsided tree: one fat directory and one deep chain, so the packing is tested
+    // rather than a symmetric best case.
+    for (int i = 0; i < 14; ++i) {
+        s.nodes.push_back(mk_node("file:a/f" + std::to_string(i) + ".ts", NodeKind::File,
+                                  "dir:a"));
+    }
+    s.nodes.push_back(mk_node("dir:b/deep", NodeKind::Directory, "pkg:b"));
+    s.nodes.push_back(mk_node("dir:b/deep/deeper", NodeKind::Directory, "dir:b/deep"));
+    s.nodes.push_back(mk_node("file:b/deep/deeper/z.ts", NodeKind::File, "dir:b/deep/deeper"));
+
+    rgvtest::Harness h;
+    h.store().reset(s);
+    h.view().mode  = ecs::ViewMode::Filesystem;
+    h.view().level = Level::File;
+    h.request_rebuild();
+    h.settle();
+
+    // Parent of each node, so a file resting on its own directory's rim is allowed.
+    std::unordered_map<std::uint32_t, std::uint32_t> parent;
+    for (auto [e, ref, ends] : h.registry().view<const ecs::EdgeRef, const ecs::Endpoints>().each()) {
+        if (ref.kind == EdgeKind::Contains) {
+            parent[static_cast<std::uint32_t>(ends.from)] = static_cast<std::uint32_t>(ends.to);
+        }
+    }
+
+    std::vector<std::tuple<entt::entity, Vec2, float>> discs;
+    for (auto [e, t, d] : h.registry().view<const ecs::LayoutTarget, const ecs::Disc>().each()) {
+        discs.emplace_back(e, t.p, d.radius);
+    }
+    CHECK(discs.size() > 10);
+
+    int overlaps = 0;
+    for (std::size_t i = 0; i < discs.size(); ++i) {
+        for (std::size_t j = i + 1; j < discs.size(); ++j) {
+            const auto [ea, pa, ra] = discs[i];
+            const auto [eb, pb, rb] = discs[j];
+            const auto ia = static_cast<std::uint32_t>(ea);
+            const auto ib = static_cast<std::uint32_t>(eb);
+            if (parent.count(ia) && parent[ia] == ib) continue;   // a file on its rim
+            if (parent.count(ib) && parent[ib] == ia) continue;
+            if (length(pa - pb) + 0.5f < ra + rb) ++overlaps;
+        }
+    }
+    CHECK_EQ(overlaps, 0);
 }

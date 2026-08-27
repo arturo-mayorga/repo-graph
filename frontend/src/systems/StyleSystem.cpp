@@ -18,6 +18,9 @@ void StyleSystem::run(ecs::World& world, const ecs::FrameContext&) {
          registry.view<const ecs::NodeRef, const ecs::FreshnessState, ecs::Style>().each()) {
         const auto* impacted = registry.try_get<ecs::Impacted>(ent);
         const bool  changed  = registry.all_of<ecs::Changed>(ent);
+        // A Disc means the view draws circles rather than boxes -- the filesystem
+        // view. Nothing else needs to know which mode is active.
+        const bool  disc     = registry.all_of<ecs::Disc>(ent);
 
         // A muted result falls back to context: still on screen, still true, no longer
         // competing for attention.
@@ -33,6 +36,25 @@ void StyleSystem::run(ecs::World& world, const ecs::FrameContext&) {
         style.stroke   = distance >= 0 ? ui::impact_color(distance) : t.node_stroke;
         style.stroke_w = distance == 0 ? 3.0f : (distance == 1 ? 2.4f : 1.6f);
         style.dash     = 0.0f;
+
+        if (disc && distance < 0) {
+            // Untouched files carry their language's colour, which is what makes a
+            // repository recognisable at a glance. Impact still wins where it applies:
+            // the blast radius has to be readable on top of the palette, not lost in it.
+            if (ref.kind == NodeKind::File) {
+                const auto* label = registry.try_get<ecs::Label>(ent);
+                const Vec4  hue   = ui::extension_color(label ? label->text : std::string{});
+                style.fill        = mix(hue, t.node_fill, 0.42f);
+                style.stroke      = hue;
+                style.stroke_w    = 1.0f;
+            } else {
+                // Directories recede: they are structure, not content.
+                style.fill     = mix(t.node_fill, t.background, 0.35f);
+                style.stroke   = mix(t.node_stroke, t.background, 0.25f);
+                style.stroke_w = 1.4f;
+            }
+            style.emphasis = 0.55f;
+        }
 
         switch (effective) {
             case Freshness::Stale:

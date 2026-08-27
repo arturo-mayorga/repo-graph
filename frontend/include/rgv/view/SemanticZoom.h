@@ -36,6 +36,17 @@ float dot_px_for(bool changed, bool impacted, bool emphasised);
 // changes with zoom; the drawn size collapses toward a dot of `dot_px` screen pixels.
 Vec2 render_half(float zoom, const NodeDetail& detail, const Vec2& layout_half, float dot_px);
 
+// Half-extent for a disc. Unlike a box, a disc keeps its relative size at every zoom:
+// the difference between a directory holding forty files and one holding two is
+// information, and collapsing both to a uniform dot would throw it away. Only the
+// floor is in screen space, so nothing vanishes when zoomed out.
+Vec2 disc_half(float zoom, float world_radius, float min_px = 1.6f);
+
+// The drawn half-extent of a node, whichever shape the view uses. Rendering and
+// picking both call this, so a click can never land on something that is not drawn.
+Vec2 node_half(float zoom, const NodeDetail& detail, const Vec2& layout_half,
+               const float* disc_radius, float dot_px);
+
 // The box a node needs to hold its label at this text scale.
 Vec2 text_extent(NodeKind kind, const std::string& name, const std::string& sub,
                  float graph_text_scale);

@@ -812,8 +812,6 @@ void draw_inspector(ecs::World& world) {
                  ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings);
 
-    const auto& vs = ui.view;
-
     if (!ui.selection.edge.empty()) {
         if (const Edge* e = ui.store.edge(ui.selection.edge)) {
             if (ImGui::SmallButton("< back to node")) ui.selection.edge.clear();
@@ -1044,19 +1042,33 @@ void draw_graph_overlay(ecs::World& world, ImDrawList* dl) {
 
             const bool  changed  = reg.all_of<ecs::Changed>(ent);
             const auto* imp      = reg.try_get<ecs::Impacted>(ent);
+            const auto* disc     = reg.try_get<ecs::Disc>(ent);
+
+            // In a disc view there are far too many files to label them all -- Gource
+            // names directories and stays quiet about the rest. The exceptions are the
+            // ones the user is asking about: what changed, and what they are pointing at.
+            const bool notable = changed || reg.all_of<ecs::Selected>(ent) ||
+                                 reg.all_of<ecs::Hovered>(ent) ||
+                                 reg.all_of<ecs::OnExplainedPath>(ent);
+            if (disc && ref.kind == NodeKind::File && !notable) continue;
 
             Vec4 col = t.node_text;
             if (changed) col = t.changed;
             else if (imp) col = impact_color(imp->distance);
             col.a *= alpha;
 
-            const Vec2 half = rgv::view::render_half(ui.camera.zoom, detail, ext.half,
-                                               rgv::view::dot_px_for(changed, imp != nullptr, false));
+            const Vec2 half = disc ? rgv::view::disc_half(cam.zoom, disc->radius)
+                                   : rgv::view::render_half(
+                                         ui.camera.zoom, detail, ext.half,
+                                         rgv::view::dot_px_for(changed, imp != nullptr, false));
 
-            // Two lines only when the box is tall enough to hold both.
-            const bool  two_lines = !label.sub.empty() && half.y * cam.zoom > font_size * 1.15f;
+            // A disc's label sits below it rather than inside: the rim is where the
+            // files are, and text over them is unreadable.
+            const bool  two_lines = !disc && !label.sub.empty() &&
+                                   half.y * cam.zoom > font_size * 1.15f;
             const float line_h    = font_size;
-            const float top       = s.y - (two_lines ? line_h * 0.98f : line_h * 0.5f);
+            const float top       = disc ? s.y + half.y * cam.zoom + font_size * 0.35f
+                                         : s.y - (two_lines ? line_h * 0.98f : line_h * 0.5f);
 
             const ImVec2 sz = font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, label.text.c_str());
             dl->AddText(font, font_size, ImVec2(s.x - sz.x * 0.5f, top), to_u32(col),

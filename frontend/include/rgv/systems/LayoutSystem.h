@@ -8,7 +8,11 @@
 //     legible at 240 packages. A spring simulation was tried first and produced a
 //     hairball that never stopped drifting.
 //
-//   * Filesystem -- deterministic tidy tree.
+//   * Filesystem -- a radial tree, inspired by Gource. Directories are discs whose
+//     radius is set by how many files they hold, files ring the directory that owns
+//     them, and subtrees splay outward into angular sectors. Collisions are prevented
+//     by construction rather than by relaxation: each child gets a disjoint wedge and
+//     is pushed far enough out that its whole subtree fits inside it.
 //
 // Rows run so that a package depending on nothing sits at the BOTTOM and its dependents
 // stack above it: impact rises, the way the spec draws a blast radius.
@@ -26,6 +30,12 @@ struct LayoutParams {
     float node_gap  = 34.0f;    // horizontal gap between neighbours in a row
     float ease      = 7.0f;     // higher converges faster; 0 disables animation
     int   sweeps    = 6;        // barycentre passes; more = fewer edge crossings
+
+    // Radial (filesystem) layout.
+    float file_radius   = 5.5f;    // a file dot
+    float file_gap      = 11.0f;   // arc gap between files on a directory's ring
+    float min_dir_ring  = 24.0f;   // smallest directory disc
+    float dir_gap       = 20.0f;   // clearance between a ring and a child subtree
 };
 
 class LayoutSystem final : public ecs::System {
@@ -39,7 +49,7 @@ private:
     void reset(ecs::World& world);
     void assign_depths(ecs::World& world);
     void order_and_place(ecs::World& world);
-    void tidy_tree(ecs::World& world);
+    void radial_tree(ecs::World& world);
 
     LayoutParams params_;
     float        energy_     = 1e9f;
