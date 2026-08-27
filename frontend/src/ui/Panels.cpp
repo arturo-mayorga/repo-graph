@@ -1026,101 +1026,107 @@ void draw_graph_overlay(ecs::World& world, ImDrawList* dl) {
     // an honest dot, and the hover card covers what the label would have said.
     const rgv::view::NodeDetail detail = rgv::view::node_detail(ui.camera.zoom, vs.graph_text_scale);
 
-    if (vs.show_labels && detail.labels) {
-        ImFont*     font      = ImGui::GetFont();
-        const float font_size = detail.font_px;
-        const float alpha     = detail.t;
+    // One label model for every view.
+    //
+    //   inside  -- the node has grown into a box, so the name goes in it, scaled down
+    //              to fit whatever the box currently is.
+    //   outside -- the node is still collapsed, so the name sits beside it at a
+    //              constant screen size and is dropped when there is no room for it.
+    //
+    // The screen-space part is what makes zooming reveal names. World-scaled text grows
+    // in step with the space between nodes, so crowding never eases however far you
+    // zoom; screen-space text stays put while the nodes spread apart beneath it.
+    if (vs.show_labels) {
+        ImFont*     font    = ImGui::GetFont();
+        const float outside_px = rgv::view::kBaseFontPx * vs.graph_text_scale;
 
         for (auto [ent, pos, ext, ref, label] :
              reg.view<const ecs::Position, const ecs::Extent, const ecs::NodeRef,
                       const ecs::Label>().each()) {
             const Vec2 s = cam.world_to_screen(pos.p);
-            if (s.x < ui.viewport.free_origin.x - 240 || s.x > ui.viewport.free_origin.x + ui.viewport.free_size.x + 240 ||
-                s.y < ui.viewport.free_origin.y - 90 || s.y > ui.viewport.free_origin.y + ui.viewport.free_size.y + 90) {
+            if (s.x < ui.viewport.free_origin.x - 240 ||
+                s.x > ui.viewport.free_origin.x + ui.viewport.free_size.x + 240 ||
+                s.y < ui.viewport.free_origin.y - 90 ||
+                s.y > ui.viewport.free_origin.y + ui.viewport.free_size.y + 90) {
                 continue;
             }
 
-            const bool  changed  = reg.all_of<ecs::Changed>(ent);
-            const auto* imp      = reg.try_get<ecs::Impacted>(ent);
-            const auto* disc     = reg.try_get<ecs::Disc>(ent);
+            const bool  changed = reg.all_of<ecs::Changed>(ent);
+            const auto* imp     = reg.try_get<ecs::Impacted>(ent);
+            const auto* disc    = reg.try_get<ecs::Disc>(ent);
+            const auto* space   = reg.try_get<ecs::Spacing>(ent);
 
             // What the user is pointing at is always named, however crowded it is.
             const bool asked_for = reg.all_of<ecs::Selected>(ent) ||
                                    reg.all_of<ecs::Hovered>(ent) ||
                                    reg.all_of<ecs::OnExplainedPath>(ent);
 
+            const rgv::view::DiscShape shape{disc ? disc->radius : 0.0f,
+                                             space ? space->room : 1e9f};
+            const Vec2  half = rgv::view::node_half(
+                cam.zoom, detail, ext.half, shape,
+                rgv::view::dot_px_for(changed, imp != nullptr, false));
+            const float morph  = rgv::view::disc_morph(detail, shape, ext.half);
+            const bool  inside = rgv::view::label_belongs_inside(morph);
+
             Vec4 col = t.node_text;
             if (changed) col = t.changed;
             else if (imp) col = impact_color(imp->distance);
-            col.a *= alpha;
 
-            const rgv::view::DiscShape shape{disc ? disc->radius : 0.0f,
-                                             disc ? disc->room : 1e9f};
-            const Vec2 half = rgv::view::node_half(
-                cam.zoom, detail, ext.half, disc ? &shape : nullptr,
-                rgv::view::dot_px_for(changed, imp != nullptr, false));
-            const float morph  = disc ? rgv::view::disc_morph(detail, shape, ext.half) : 0.0f;
-            const bool  inside = disc && rgv::view::label_belongs_inside(morph);
+            float px    = inside ? detail.font_px : outside_px;
+            float alpha = 1.0f;
 
-            // A label inside a box scales with the box, so it always fits. A label
-            // floating beside a node is chrome and holds a constant screen size.
-            //
-            // That distinction is what makes zooming reveal names. World-scaled text
-            // grows in step with the space between nodes, so crowding never eases
-            // however far you zoom; screen-space text stays put while the dots spread
-            // apart beneath it, which is how Gource does it.
-            float px = inside ? font_size : rgv::view::kBaseFontPx * ui.view.graph_text_scale;
-
-            // A name inside a box is shrunk to fit that box. Half-morphed, the box is
-            // narrower than the text wants, and drawing at full size spills the name
-            // out of the rectangle that is supposed to contain it.
             if (inside) {
-                const ImVec2 want = font->CalcTextSizeA(px, FLT_MAX, 0.0f, label.text.c_str());
+                // Shrunk to fit. Half-morphed the box is narrower than the text wants,
+                // and drawing at full size spills the name out of the rectangle that is
+                // supposed to contain it.
+                const ImVec2 want   = font->CalcTextSizeA(px, FLT_MAX, 0.0f, label.text.c_str());
                 const float  room_x = half.x * cam.zoom * 1.80f;
                 const float  room_y = half.y * cam.zoom * 1.70f;
                 if (want.x > room_x && want.x > 0.0f) px *= room_x / want.x;
-                if (px > room_y) px = room_y;
-                px = std::max(px, 1.0f);
-            }
-
-            // A disc's label sits outside it, along the direction it orbits away from,
-            // so the names around a ring fan outward instead of stacking. Text inside
-            // the disc would sit on top of the files themselves.
-            const bool  two_lines = !disc && !label.sub.empty() &&
-                                   half.y * cam.zoom > font_size * 1.15f;
-            const float line_h    = font_size;
-
-            Vec2 anchor{s.x, 0.0f};
-            // Inside once the node has actually grown to hold it; outside otherwise --
-            // which, where the packing is dense, is always.
-            if (disc && inside) {
-                anchor.y = s.y - line_h * 0.5f;
-            } else if (disc) {
-                // Alternate the distance so neighbours on the same orbit do not collide.
-                std::uint32_t hash = 2166136261u;
-                for (unsigned char ch : ref.id) { hash ^= ch; hash *= 16777619u; }
-                const float stagger = (hash & 1u) ? px * 1.05f : 0.0f;
-                // Clear the whole cluster, not just the disc: a directory's files
-                // orbit it, so its own name has to sit outside the outermost orbit.
-                const float reach = std::max(half.y, disc->halo);
-                const float away  = reach * cam.zoom + px * 0.55f + stagger;
-                anchor = Vec2{s.x + disc->outward.x * away, s.y + disc->outward.y * away};
-                anchor.y -= px * 0.5f;
+                px = std::max(std::min(px, room_y), 1.0f);
             } else {
-                anchor.y = s.y - (two_lines ? line_h * 0.98f : line_h * 0.5f);
+                // Fade out rather than pop when the node itself is barely visible.
+                alpha = std::clamp(half.y * cam.zoom / 3.0f, 0.0f, 1.0f);
+                if (!asked_for && alpha < 0.05f) continue;
             }
+            col.a *= alpha;
 
             const ImVec2 sz = font->CalcTextSizeA(px, FLT_MAX, 0.0f, label.text.c_str());
 
-            // Too crowded to name -- files only. `room` is the distance to the nearest
-            // neighbour, which eases as the user zooms in and the dots spread apart.
+            // Too crowded to name. Eases as the user zooms in and the nodes spread out.
             //
-            // Directories are exempt: their nearest neighbour is usually a file they
-            // own, so `room` understates the empty space their label actually goes
-            // into, and applying the test to them hides the structure.
-            if (disc && !inside && !asked_for && ref.kind == NodeKind::File &&
-                disc->room * cam.zoom < sz.x * 0.55f) {
+            // Directories in the radial view are exempt: their nearest neighbour is a
+            // file they own, so `room` understates the empty space their name goes into,
+            // and applying the test there hides the structure.
+            const bool dense_exempt = disc && ref.kind != NodeKind::File;
+            if (!inside && !asked_for && !dense_exempt && space &&
+                space->room * cam.zoom < sz.x * 0.55f) {
                 continue;
+            }
+
+            const bool  two_lines = inside && !label.sub.empty() &&
+                                   half.y * cam.zoom > px * 1.15f;
+            const float line_h    = px;
+
+            Vec2 anchor{s.x, 0.0f};
+            if (inside) {
+                anchor.y = s.y - (two_lines ? line_h * 0.98f : line_h * 0.5f);
+            } else if (disc) {
+                // Along the direction it orbits away from, so names around a ring fan
+                // outward instead of stacking, staggered so neighbours miss each other.
+                std::uint32_t hash = 2166136261u;
+                for (unsigned char ch : ref.id) { hash ^= ch; hash *= 16777619u; }
+                const float stagger = (hash & 1u) ? px * 1.05f : 0.0f;
+                // Clear the whole cluster: a directory's files orbit it, so its own name
+                // has to sit outside the outermost orbit.
+                const float reach = std::max(half.y, disc->halo);
+                const float away  = reach * cam.zoom + px * 0.55f + stagger;
+                anchor   = Vec2{s.x + disc->outward.x * away, s.y + disc->outward.y * away};
+                anchor.y -= px * 0.5f;
+            } else {
+                // Below the node in the layered views, where rows already separate them.
+                anchor.y = s.y + half.y * cam.zoom + px * 0.25f;
             }
 
             dl->AddText(font, px, ImVec2(anchor.x - sz.x * 0.5f, anchor.y), to_u32(col),
@@ -1129,7 +1135,7 @@ void draw_graph_overlay(ecs::World& world, ImDrawList* dl) {
             if (two_lines) {
                 Vec4 sub = t.node_text;
                 sub.a *= 0.5f * alpha;
-                const float  sub_size = font_size * 0.85f;
+                const float  sub_size = px * 0.85f;
                 const ImVec2 ssz =
                     font->CalcTextSizeA(sub_size, FLT_MAX, 0.0f, label.sub.c_str());
                 dl->AddText(font, sub_size,
@@ -1137,8 +1143,7 @@ void draw_graph_overlay(ecs::World& world, ImDrawList* dl) {
                             to_u32(sub), label.sub.c_str());
             }
 
-            // Distance badge. Only while labels are up: once nodes are dots, the
-            // colour already carries the distance and a badge would just be noise.
+            // Distance badge. The number is the whole point of the impact view.
             if (imp && imp->distance > 0) {
                 char buf[16];
                 std::snprintf(buf, sizeof(buf), "%d", imp->distance);

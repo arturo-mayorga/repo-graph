@@ -438,7 +438,7 @@ void LayoutSystem::radial_tree(ecs::World& world) {
             auto        dir    = outward.find(to_raw(e));
             auto        h      = halo.find(to_raw(e));
             reg.emplace_or_replace<ecs::Disc>(
-                e, ecs::Disc{radius, h == halo.end() ? radius : h->second, 1e9f,
+                e, ecs::Disc{radius, h == halo.end() ? radius : h->second,
                              dir == outward.end() ? Vec2{0.0f, 1.0f} : dir->second});
         }
     };
@@ -466,40 +466,6 @@ void LayoutSystem::radial_tree(ecs::World& world) {
         }
     }
 
-    // How much room each node has before it meets a neighbour. Measured after
-    // placement, on a uniform grid so it stays linear, and used to cap how far a node
-    // may morph toward its label box.
-    {
-        constexpr float kCell = 90.0f;
-        std::unordered_map<std::int64_t, std::vector<entt::entity>> bins;
-        auto key = [](int x, int y) {
-            return (static_cast<std::int64_t>(x) << 32) ^ static_cast<std::uint32_t>(y);
-        };
-        for (auto [e, t] : reg.view<const ecs::LayoutTarget>().each()) {
-            bins[key(static_cast<int>(std::floor(t.p.x / kCell)),
-                     static_cast<int>(std::floor(t.p.y / kCell)))]
-                .push_back(e);
-        }
-        for (auto [e, t, disc] : reg.view<const ecs::LayoutTarget, ecs::Disc>().each()) {
-            const int cx = static_cast<int>(std::floor(t.p.x / kCell));
-            const int cy = static_cast<int>(std::floor(t.p.y / kCell));
-            float     best = kCell * 2.0f;
-            for (int dy = -1; dy <= 1; ++dy) {
-                for (int dx = -1; dx <= 1; ++dx) {
-                    auto it = bins.find(key(cx + dx, cy + dy));
-                    if (it == bins.end()) continue;
-                    for (auto other : it->second) {
-                        if (other == e) continue;
-                        const auto* ot = reg.try_get<ecs::LayoutTarget>(other);
-                        if (!ot) continue;
-                        best = std::min(best, length(ot->p - t.p));
-                    }
-                }
-            }
-            disc.room = best * 0.5f;
-        }
-    }
-
     // Depth, for anything that wants it.
     for (auto [ent, ref] : reg.view<const ecs::NodeRef>().each()) {
         int           d   = 0;
@@ -510,6 +476,48 @@ void LayoutSystem::radial_tree(ecs::World& world) {
     energy_ = 1e9f;
 }
 
+// How much room each node has before it meets a neighbour. Measured after placement, on
+// a uniform grid so it stays linear, and used both to cap how far a node may morph
+// toward its label box and to decide whether there is space beside it for its name.
+void LayoutSystem::measure_spacing(ecs::World& world) {
+    auto& reg = world.registry;
+
+    float widest = 40.0f;
+    for (auto [e, ext] : reg.view<const ecs::Extent>().each()) {
+        widest = std::max(widest, std::max(ext.half.x, ext.half.y));
+    }
+    const float cell = widest * 2.0f;
+
+    std::unordered_map<std::int64_t, std::vector<entt::entity>> bins;
+    auto key = [](int x, int y) {
+        return (static_cast<std::int64_t>(x) << 32) ^ static_cast<std::uint32_t>(y);
+    };
+    for (auto [e, t] : reg.view<const ecs::LayoutTarget>().each()) {
+        bins[key(static_cast<int>(std::floor(t.p.x / cell)),
+                 static_cast<int>(std::floor(t.p.y / cell)))]
+            .push_back(e);
+    }
+
+    for (auto [e, t] : reg.view<const ecs::LayoutTarget>().each()) {
+        const int cx = static_cast<int>(std::floor(t.p.x / cell));
+        const int cy = static_cast<int>(std::floor(t.p.y / cell));
+        float     best = cell * 2.0f;
+        for (int dy = -1; dy <= 1; ++dy) {
+            for (int dx = -1; dx <= 1; ++dx) {
+                auto it = bins.find(key(cx + dx, cy + dy));
+                if (it == bins.end()) continue;
+                for (auto other : it->second) {
+                    if (other == e) continue;
+                    const auto* ot = reg.try_get<ecs::LayoutTarget>(other);
+                    if (!ot) continue;
+                    best = std::min(best, length(ot->p - t.p));
+                }
+            }
+        }
+        reg.emplace_or_replace<ecs::Spacing>(e, ecs::Spacing{best * 0.5f});
+    }
+}
+
 void LayoutSystem::reset(ecs::World& world) {
     tree_mode_ = world.resource<ecs::ViewSettings>().mode == ecs::ViewMode::Filesystem;
     if (tree_mode_) {
@@ -518,6 +526,8 @@ void LayoutSystem::reset(ecs::World& world) {
         assign_depths(world);
         order_and_place(world);
     }
+    // Every layout, so every view can answer the same questions about crowding.
+    measure_spacing(world);
 }
 
 namespace {

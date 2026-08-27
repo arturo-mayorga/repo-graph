@@ -1042,3 +1042,76 @@ TEST(children_keep_settling_while_a_node_is_held_still) {
     CHECK(length(h.registry().get<ecs::Position>(file).p - before) > 0.1f);
 }
 
+
+// -- the one label model ------------------------------------------------------
+//
+// Three views, one rule: a node is a dot until there is both room for a box and enough
+// zoom to read one, and its name sits inside the box once it has grown into one and
+// beside it before that. What differs between views is only what the collapsed shape is
+// and how early the zoom half of the gate opens.
+
+// `Spacing` is what the label crowding test reads. It used to be produced by the radial
+// packing alone, which left the box views with no measure of how close their neighbours
+// were -- so their names were drawn however dense the graph got.
+TEST(every_layout_measures_the_room_around_a_node) {
+    for (auto mode : {ecs::ViewMode::Architecture, ecs::ViewMode::Filesystem,
+                      ecs::ViewMode::FileGraph}) {
+        auto h = make_filesystem();
+        h.view().mode = mode;
+        h.request_rebuild();
+        h.settle();
+
+        int nodes = 0, spaced = 0;
+        for (auto [e, ref] : h.registry().view<const ecs::NodeRef>().each()) {
+            ++nodes;
+            if (const auto* s = h.registry().try_get<ecs::Spacing>(e)) {
+                if (s->room > 0.0f && s->room < 1e8f) ++spaced;
+            }
+        }
+        CHECK(nodes > 1);
+        CHECK_EQ(spaced, nodes);
+    }
+}
+
+// The two views disagree about zoom on purpose, and the disagreement is the whole point
+// of the split curve. A layered layout reserves each label box as the node's footprint,
+// so at the fit zoom the box is exactly the right thing to draw. A radial layout
+// reserves no such thing, so a box is something you zoom in to get.
+//
+// Unifying these on the disc curve regressed the architecture view to circles at the
+// zoom it opens at, which is the view's default reading.
+TEST(a_layered_node_is_a_box_where_a_disc_is_still_a_circle) {
+    const Vec2  half{62.0f, 21.0f};                  // a package label box
+    const float fit = 0.85f;                         // roughly where a small graph opens
+    const auto  detail = view::node_detail(fit, 1.0f);
+
+    const float layered = view::disc_morph(detail, {0.0f, 400.0f}, half);
+    const float radial  = view::disc_morph(detail, {30.0f, 400.0f}, half);
+
+    CHECK(view::label_belongs_inside(layered));
+    CHECK(!view::label_belongs_inside(radial));
+    CHECK(radial < layered);
+}
+
+// Room gates the morph independently of zoom, or a file on a crowded orbit would grow a
+// box straight through its neighbours the moment the text became legible.
+TEST(a_node_with_no_room_stays_collapsed_however_far_you_zoom) {
+    const Vec2 half{60.0f, 16.0f};
+    const auto deep = view::node_detail(8.0f, 1.0f);
+
+    CHECK_EQ(view::disc_morph(deep, {6.0f, 9.0f}, half), 0.0f);
+    CHECK(view::disc_morph(deep, {6.0f, 400.0f}, half) > 0.9f);
+}
+
+// A collapsed node holds a constant screen size, so an overview stays a readable
+// constellation instead of fading out as the user zooms away from it.
+TEST(a_collapsed_node_holds_its_screen_size) {
+    const Vec2 half{60.0f, 16.0f};
+    const float dot = view::dot_px_for(false, false, false);
+
+    for (float zoom : {0.05f, 0.2f, 0.5f}) {
+        const auto d = view::node_detail(zoom, 1.0f);
+        const Vec2 h = view::node_half(zoom, d, half, {0.0f, 1e9f}, dot);
+        CHECK(std::abs(h.y * zoom - dot) < 0.5f);
+    }
+}

@@ -37,9 +37,10 @@ void GraphRenderSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
         const bool emphasised = registry.all_of<ecs::Selected>(e) ||
                                 registry.all_of<ecs::Hovered>(e) ||
                                 registry.all_of<ecs::OnExplainedPath>(e);
-        const auto*           d = registry.try_get<ecs::Disc>(e);
-        const view::DiscShape shape{d ? d->radius : 0.0f, d ? d->room : 1e9f};
-        return view::node_half(camera.zoom, detail, ext->half, d ? &shape : nullptr,
+        const auto*           d  = registry.try_get<ecs::Disc>(e);
+        const auto*           sp = registry.try_get<ecs::Spacing>(e);
+        const view::DiscShape shape{d ? d->radius : 0.0f, sp ? sp->room : 1e9f};
+        return view::node_half(camera.zoom, detail, ext->half, shape,
                                view::dot_px_for(registry.all_of<ecs::Changed>(e),
                                                 registry.all_of<ecs::Impacted>(e), emphasised));
     };
@@ -90,13 +91,13 @@ void GraphRenderSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
          registry.view<const ecs::NodeRef, const ecs::Position, const ecs::Extent,
                        const ecs::Style>().each()) {
         const Vec2  half = half_of(ent);
-        const auto* d = registry.try_get<ecs::Disc>(ent);
+        const auto* d  = registry.try_get<ecs::Disc>(ent);
+        const auto* sp = registry.try_get<ecs::Spacing>(ent);
         // A circle is a box whose corners are its own radius, so the corner follows the
         // same morph the size does. Using the plain zoom curve here rounds a circle into
         // a square the moment the graph opens.
-        const float shape_t =
-            d ? view::disc_morph(detail, view::DiscShape{d->radius, d->room}, ext.half)
-              : detail.t;
+        const float shape_t = view::disc_morph(
+            detail, view::DiscShape{d ? d->radius : 0.0f, sp ? sp->room : 1e9f}, ext.half);
         const float radius = 5.0f * shape_t + std::min(half.x, half.y) * (1.0f - shape_t);
 
         // A seed gets a halo: "the agent touched this" must be findable without reading

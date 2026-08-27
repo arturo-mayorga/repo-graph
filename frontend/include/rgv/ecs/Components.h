@@ -63,6 +63,11 @@ struct Extent { Vec2 half{54.0f, 17.0f}; };
 // Dependency depth: 0 = depends on nothing else in view. Owner: LayoutSystem.
 struct Depth { int value = 0; };
 
+// Distance to the nearest neighbouring node, measured after placement. Every view has
+// one, because every view has to answer the same two questions: may this node grow into
+// a labelled box, and is there space beside it to write its name? Owner: LayoutSystem.
+struct Spacing { float room = 1e9f; };
+
 // Present only where the view lays nodes out as circles rather than boxes -- the
 // filesystem view. `radius` is the world-space radius of the disc itself; for a
 // directory it is the ring its files sit on, so a directory's size IS its file count.
@@ -73,10 +78,6 @@ struct Disc {
     // label has to clear this, not just the disc, or a directory's own name lands on
     // top of its files.
     float halo = 6.0f;
-    // Distance to the nearest neighbouring node. A node may only morph into a labelled
-    // box as far as this allows: dense radial packing and full text boxes are in direct
-    // conflict, and letting every node grow to its label produces an unreadable stack.
-    float room = 1e9f;
     // Unit vector pointing away from whatever this node orbits. Labels are placed
     // along it, so the names around a ring fan outward instead of stacking on top of
     // one another. Zero for a node with no parent.

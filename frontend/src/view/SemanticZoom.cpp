@@ -21,10 +21,16 @@ NodeDetail node_detail(float zoom, float graph_text_scale) {
 }
 
 float dot_px_for(bool changed, bool impacted, bool emphasised) {
-    float r = 4.5f;
-    if (impacted) r = 6.0f;
-    if (changed) r = 7.5f;
-    if (emphasised) r += 2.0f;   // selected or hovered stays findable at any zoom
+    // The same golden-ratio scale the discs use: context, impacted, changed are r,
+    // r*phi, r*phi^2. Three sizes on one geometric progression read as a family, and
+    // what the eye should go to is unmistakably the largest.
+    constexpr float kGolden = 1.6180339887f;
+    constexpr float kBase   = 4.2f;
+
+    float r = kBase;
+    if (impacted) r = kBase * kGolden;
+    if (changed) r = kBase * kGolden * kGolden;
+    if (emphasised) r *= 1.25f;   // selected or hovered stays findable at any zoom
     return r;
 }
 
@@ -42,42 +48,45 @@ Vec2 disc_half(float zoom, float world_radius, float min_px) {
     return Vec2{r, r};
 }
 
-float disc_morph(const NodeDetail& detail, const DiscShape& disc, const Vec2& layout_half) {
+float disc_morph(const NodeDetail& detail, const DiscShape& shape, const Vec2& layout_half) {
     // The bar for "has room" is lower than the full label width, because a name inside
     // a box is shrunk to fit it. A node only needs enough space for a legible box, not
     // for its name at full size -- otherwise anything with a long name never morphs at
     // all, however far you zoom.
     const float need = std::max(layout_half.x, 1.0f);
-    const float room = std::clamp((disc.room - need * 0.30f) / (need * 0.35f), 0.0f, 1.0f);
+    const float room = std::clamp((shape.room - need * 0.30f) / (need * 0.35f), 0.0f, 1.0f);
 
-    // Expressed in on-screen text size rather than raw zoom, so it tracks the user's
-    // text-size preference instead of ignoring it.
-    const float x    = std::clamp((detail.font_px - 18.0f) / 12.0f, 0.0f, 1.0f);
-    const float near = x * x * (3.0f - 2.0f * x);
-    return room * near;
+    // The zoom half of the gate differs by view, and for a reason rather than by
+    // accident. A layered layout reserves each node's label box as its footprint, so
+    // the moment the label is legible the box is the right thing to draw -- that is the
+    // legibility curve, which saturates near the default fit. A radial layout reserves
+    // no such thing, so boxes there are something you zoom in to get; reusing the early
+    // curve turns its overview into squashed boxes the moment it opens, when it should
+    // be a constellation of circles.
+    if (shape.radius <= 0.0f) return room * detail.t;
+
+    const float x = std::clamp((detail.font_px - 18.0f) / 12.0f, 0.0f, 1.0f);
+    return room * (x * x * (3.0f - 2.0f * x));
 }
 
 Vec2 node_half(float zoom, const NodeDetail& detail, const Vec2& layout_half,
-               const DiscShape* disc, float dot_px) {
-    if (!disc) return render_half(zoom, detail, layout_half, dot_px);
-
-    // A disc morphs toward its label box on the way in, the same way a dot does in the
-    // other views -- but only if it has the room. Two gates, multiplied:
+               const DiscShape& shape, float dot_px) {
+    // Two gates, multiplied, and the same two in every view:
     //
-    //   room  -- is there space between this node and its neighbours for a box? In a
-    //            radial layout the answer is yes for the repository and its packages,
-    //            and no for files on an orbit, which sit ~18 units apart while a
-    //            filename box is ~120 wide. Those stay circles at every zoom, and are
-    //            named from outside instead.
-    //   zoom  -- has the user zoomed past an overview? This is the part they drive.
+    //   room  -- is there space between this node and its neighbours for a box? In the
+    //            radial view the answer is yes for the repository and its packages, and
+    //            no for files on an orbit, which sit ~18 units apart while a filename
+    //            box is ~120 wide. Those stay collapsed and are named from outside.
+    //   zoom  -- has the user zoomed past an overview? The part they drive.
     //
-    // The zoom gate is deliberately later than the one the box views use. That curve
-    // saturates around the default fit, so reusing it turns the whole graph into
-    // squashed boxes the moment it opens -- the overview has to stay a constellation
-    // of circles, and boxes are what you zoom in to get.
-    const Vec2 base = disc_half(zoom, disc->radius);
+    // The collapsed shape differs by view: a disc view supplies a world-space radius
+    // whose size means something, a box view collapses to a constant-size dot. What
+    // happens on the way in does not differ.
+    const Vec2 base = shape.radius > 0.0f
+                          ? disc_half(zoom, shape.radius)
+                          : disc_half(zoom, dot_px / std::max(zoom, 1e-4f));
     const Vec2 target{std::max(base.x, layout_half.x), std::max(base.y, layout_half.y)};
-    return lerp(base, target, disc_morph(detail, *disc, layout_half));
+    return lerp(base, target, disc_morph(detail, shape, layout_half));
 }
 
 bool label_belongs_inside(float morph) { return morph > 0.5f; }

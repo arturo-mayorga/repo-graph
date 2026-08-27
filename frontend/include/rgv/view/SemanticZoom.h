@@ -44,21 +44,23 @@ Vec2 disc_half(float zoom, float world_radius, float min_px = 1.6f);
 
 // The drawn half-extent of a node, whichever shape the view uses. Rendering and
 // picking both call this, so a click can never land on something that is not drawn.
-// `room` caps how far a disc may grow toward its label box. Where the packing is dense
-// -- files on an orbit are ~18 units apart while a filename box is ~120 wide -- the node
-// stays a disc and its name is drawn outside instead.
+// The collapsed shape of a node. A disc view supplies a world-space radius; a box view
+// leaves it zero and collapses to a constant-size dot instead. `room` is the distance to
+// the nearest neighbour and gates how far the node may grow toward its label box: where
+// the packing is dense -- files on an orbit are ~18 units apart while a filename box is
+// ~120 wide -- it stays collapsed and its name is drawn outside.
 struct DiscShape {
-    float radius = 6.0f;
+    float radius = 0.0f;    // 0 => collapses to a dot rather than a world-space disc
     float room   = 1e9f;
 };
 
 Vec2 node_half(float zoom, const NodeDetail& detail, const Vec2& layout_half,
-               const DiscShape* disc, float dot_px);
+               const DiscShape& shape, float dot_px);
 
 // How far a disc has morphed toward its label box, in [0, 1]. Rendering needs it for
 // the corner radius -- a circle is just a box whose corners are its own radius -- and
 // using the plain zoom curve there draws rounded squares where circles belong.
-float disc_morph(const NodeDetail& detail, const DiscShape& disc, const Vec2& layout_half);
+float disc_morph(const NodeDetail& detail, const DiscShape& shape, const Vec2& layout_half);
 
 // True once a node is enough of a box that its name belongs inside it. Deliberately not
 // "has it grown big enough to fit the text": mid-morph that leaves a rectangle drawn
