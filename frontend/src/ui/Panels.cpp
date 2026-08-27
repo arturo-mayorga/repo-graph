@@ -1059,7 +1059,8 @@ void draw_graph_overlay(ecs::World& world, ImDrawList* dl) {
             const Vec2 half = rgv::view::node_half(
                 cam.zoom, detail, ext.half, disc ? &shape : nullptr,
                 rgv::view::dot_px_for(changed, imp != nullptr, false));
-            const bool inside = rgv::view::label_fits_inside(half, ext.half);
+            const float morph  = disc ? rgv::view::disc_morph(detail, shape, ext.half) : 0.0f;
+            const bool  inside = disc && rgv::view::label_belongs_inside(morph);
 
             // A label inside a box scales with the box, so it always fits. A label
             // floating beside a node is chrome and holds a constant screen size.
@@ -1068,8 +1069,19 @@ void draw_graph_overlay(ecs::World& world, ImDrawList* dl) {
             // grows in step with the space between nodes, so crowding never eases
             // however far you zoom; screen-space text stays put while the dots spread
             // apart beneath it, which is how Gource does it.
-            const float px = inside ? font_size
-                                    : rgv::view::kBaseFontPx * ui.view.graph_text_scale;
+            float px = inside ? font_size : rgv::view::kBaseFontPx * ui.view.graph_text_scale;
+
+            // A name inside a box is shrunk to fit that box. Half-morphed, the box is
+            // narrower than the text wants, and drawing at full size spills the name
+            // out of the rectangle that is supposed to contain it.
+            if (inside) {
+                const ImVec2 want = font->CalcTextSizeA(px, FLT_MAX, 0.0f, label.text.c_str());
+                const float  room_x = half.x * cam.zoom * 1.80f;
+                const float  room_y = half.y * cam.zoom * 1.70f;
+                if (want.x > room_x && want.x > 0.0f) px *= room_x / want.x;
+                if (px > room_y) px = room_y;
+                px = std::max(px, 1.0f);
+            }
 
             // A disc's label sits outside it, along the direction it orbits away from,
             // so the names around a ring fan outward instead of stacking. Text inside

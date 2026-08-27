@@ -60,8 +60,11 @@ Vec2 node_half(float zoom, const NodeDetail& detail, const Vec2& layout_half,
 // using the plain zoom curve there draws rounded squares where circles belong.
 float disc_morph(const NodeDetail& detail, const DiscShape& disc, const Vec2& layout_half);
 
-// True when the node has grown enough to hold its own label.
-bool label_fits_inside(const Vec2& drawn_half, const Vec2& text_half);
+// True once a node is enough of a box that its name belongs inside it. Deliberately not
+// "has it grown big enough to fit the text": mid-morph that leaves a rectangle drawn
+// with its name floating outside, which is the worst of both. Past this point the label
+// goes in and is shrunk to fit whatever the box currently is.
+bool label_belongs_inside(float morph);
 
 // The box a node needs to hold its label at this text scale.
 Vec2 text_extent(NodeKind kind, const std::string& name, const std::string& sub,

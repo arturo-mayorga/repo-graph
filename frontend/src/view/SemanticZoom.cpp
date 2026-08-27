@@ -43,8 +43,12 @@ Vec2 disc_half(float zoom, float world_radius, float min_px) {
 }
 
 float disc_morph(const NodeDetail& detail, const DiscShape& disc, const Vec2& layout_half) {
+    // The bar for "has room" is lower than the full label width, because a name inside
+    // a box is shrunk to fit it. A node only needs enough space for a legible box, not
+    // for its name at full size -- otherwise anything with a long name never morphs at
+    // all, however far you zoom.
     const float need = std::max(layout_half.x, 1.0f);
-    const float room = std::clamp((disc.room - need * 0.6f) / (need * 0.4f), 0.0f, 1.0f);
+    const float room = std::clamp((disc.room - need * 0.30f) / (need * 0.35f), 0.0f, 1.0f);
 
     // Expressed in on-screen text size rather than raw zoom, so it tracks the user's
     // text-size preference instead of ignoring it.
@@ -76,9 +80,7 @@ Vec2 node_half(float zoom, const NodeDetail& detail, const Vec2& layout_half,
     return lerp(base, target, disc_morph(detail, *disc, layout_half));
 }
 
-bool label_fits_inside(const Vec2& drawn_half, const Vec2& text_half) {
-    return drawn_half.x >= text_half.x * 0.92f && drawn_half.y >= text_half.y * 0.85f;
-}
+bool label_belongs_inside(float morph) { return morph > 0.5f; }
 
 Vec2 text_extent(NodeKind kind, const std::string& name, const std::string& sub,
                  float graph_text_scale) {

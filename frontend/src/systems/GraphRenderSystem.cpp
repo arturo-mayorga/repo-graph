@@ -131,11 +131,15 @@ void GraphRenderSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
             fill = mix(style.stroke, fill, 0.35f + 0.65f * detail.t * 2.0f);
         }
 
-        // Directories get a soft halo, the way Gource blooms them. It is what makes a
-        // dense tree read as structure rather than as scattered dots.
-        if (d && ref.kind != NodeKind::File) {
+        // Directories get a soft halo, the way Gource blooms them -- it is what makes a
+        // dense tree read as structure rather than scattered dots. It fades out as the
+        // node becomes a box, where a halo reads as a second, broken rectangle rather
+        // than a glow.
+        // Gone entirely by the time the node is a box, not merely faint: a halo behind
+        // a rectangle reads as a second, misaligned rectangle rather than a glow.
+        if (d && ref.kind != NodeKind::File && shape_t < 0.5f) {
             Vec4 bloom = style.stroke;
-            bloom.a    = 0.13f;
+            bloom.a    = 0.13f * (1.0f - shape_t * 2.0f);
             renderer_.add_node(pos.p, half * 1.55f, bloom, Vec4{0, 0, 0, 0}, 0.0f, 0.0f,
                                radius * 1.55f);
         }

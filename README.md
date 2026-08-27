@@ -137,8 +137,11 @@ into an annulus with a void in the middle once there are hundreds.
 Impact colouring still wins over the extension palette. The repository looks like
 Gource; the blast radius lights up on top of it.
 
-**Zooming in morphs circles into labelled boxes**, but only where there is room for
-one. That caveat is not a shortcut — dense radial packing and full text boxes are in
+**Zooming in morphs circles into labelled boxes**, with the name rendered inside the
+box — shrunk to fit it, so a half-morphed node never draws a rectangle with its name
+floating outside. The directory bloom fades out as the node becomes a box, where a halo
+reads as a second misaligned rectangle rather than a glow. Boxes appear only where there
+is room for one. That caveat is not a shortcut — dense radial packing and full text boxes are in
 direct conflict. Files on an orbit sit ~18 world units apart while a filename box is
 ~120 wide, so letting every node grow to its label produces an unreadable stack. The
 morph is gated on room × zoom: the repository and its packages become proper boxes with
