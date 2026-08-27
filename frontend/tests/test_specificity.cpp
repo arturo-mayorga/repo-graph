@@ -2,6 +2,7 @@
 #include "TestMain.h"
 
 
+#include "rgv/analysis/Reach.h"
 #include "rgv/analysis/Specificity.h"
 #include "Harness.h"
 
@@ -439,4 +440,92 @@ TEST(the_hidden_count_reports_stop_words_not_mode_filtered_nodes) {
     h.request_rebuild();
     h.tick();
     CHECK_EQ(h.stats().hidden, 1);
+}
+
+// -- reach --------------------------------------------------------------------
+//
+// How much of the repository ultimately depends on a node. Where specificity asks how
+// informative a dependency is, reach asks how far the consequences of touching
+// something travel -- and it is what decides how close to the core the concentric
+// layout puts a node.
+
+// The whole point: reach counts the chain, not the neighbours. A node imported by one
+// adapter that everything else sits behind is core, and a direct count calls it a leaf.
+TEST(reach_counts_transitive_dependents_not_direct_ones) {
+    Snapshot s;
+    s.generation                  = 100;
+    s.session.baseline_generation = 100;
+    s.nodes = {mk_node("repo", NodeKind::Repository),
+               mk_node("pkg:core", NodeKind::Package, "repo"),
+               mk_node("pkg:adapter", NodeKind::Package, "repo")};
+    // One adapter on core; five packages behind the adapter.
+    s.edges = {mk_edge("e:ad", EdgeKind::DependsOn, "pkg:adapter", "pkg:core")};
+    for (int i = 0; i < 5; ++i) {
+        const std::string p = "pkg:app" + std::to_string(i);
+        s.nodes.push_back(mk_node(p, NodeKind::Package, "repo"));
+        s.edges.push_back(mk_edge("e:" + p, EdgeKind::DependsOn, p, "pkg:adapter"));
+    }
+    GraphStore store;
+    store.reset(s);
+    const auto r = analysis::build_reach(store, Level::Package, ImpactFilters{});
+
+    // Direct: core has exactly one dependent, which is the misleading number.
+    const auto spec = analysis::build(store, Level::Package, ImpactFilters{});
+    CHECK_EQ(spec.dependents("pkg:core"), 1);
+
+    CHECK_EQ(r.dependents("pkg:core"), 6);      // adapter + the five behind it
+    CHECK_EQ(r.dependents("pkg:adapter"), 5);
+    CHECK_EQ(r.dependents("pkg:app0"), 0);
+    CHECK_EQ(r.widest(), 6);
+}
+
+// Import graphs cycle. The fixed point is monotone, so it converges rather than
+// diverging, and a node is never counted as depending on itself.
+TEST(reach_survives_a_cycle) {
+    Snapshot s;
+    s.generation                  = 100;
+    s.session.baseline_generation = 100;
+    s.nodes = {mk_node("repo", NodeKind::Repository),
+               mk_node("pkg:a", NodeKind::Package, "repo"),
+               mk_node("pkg:b", NodeKind::Package, "repo"),
+               mk_node("pkg:c", NodeKind::Package, "repo")};
+    s.edges = {mk_edge("e:ab", EdgeKind::DependsOn, "pkg:a", "pkg:b"),
+               mk_edge("e:bc", EdgeKind::DependsOn, "pkg:b", "pkg:c"),
+               mk_edge("e:ca", EdgeKind::DependsOn, "pkg:c", "pkg:a")};
+    GraphStore store;
+    store.reset(s);
+    const auto r = analysis::build_reach(store, Level::Package, ImpactFilters{});
+
+    // Each reaches the other two, and never itself.
+    CHECK_EQ(r.dependents("pkg:a"), 2);
+    CHECK_EQ(r.dependents("pkg:b"), 2);
+    CHECK_EQ(r.dependents("pkg:c"), 2);
+}
+
+// `ImpactFilters` defaults to DependsOn, which is a package-level edge. At file level
+// that matched nothing, so every file scored as having no dependents at all -- which
+// silently disabled the relevance filter there and flattened the concentric layout into
+// one ring. The level has to pick the edges.
+TEST(file_level_analysis_counts_import_edges) {
+    Snapshot s;
+    s.generation                  = 100;
+    s.session.baseline_generation = 100;
+    s.nodes = {mk_node("repo", NodeKind::Repository),
+               mk_node("file:base.ts", NodeKind::File, "repo"),
+               mk_node("file:one.ts", NodeKind::File, "repo"),
+               mk_node("file:two.ts", NodeKind::File, "repo")};
+    s.edges = {mk_edge("e:1", EdgeKind::Imports, "file:one.ts", "file:base.ts"),
+               mk_edge("e:2", EdgeKind::Imports, "file:two.ts", "file:one.ts")};
+    GraphStore store;
+    store.reset(s);
+
+    ImpactFilters files;
+    files.edge_kinds = {EdgeKind::Imports};
+    const auto r = analysis::build_reach(store, Level::File, files);
+    CHECK_EQ(r.dependents("file:base.ts"), 2);
+
+    // The default policy is package-level and finds nothing here, which is exactly the
+    // trap: it does not fail, it quietly reports a flat graph.
+    const auto blind = analysis::build_reach(store, Level::File, ImpactFilters{});
+    CHECK_EQ(blind.dependents("file:base.ts"), 0);
 }

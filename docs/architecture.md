@@ -66,33 +66,44 @@ that is genuinely superlinear in the graph, is gated on its inputs changing.
 
 ### Layout and rendering
 
-Layout has two strategies. The filesystem view is radial and Gource-inspired: discs
-sized by file count, files on the rim, children packed into shells inside their
-parent's wedge. The dependency views are layered: dependency depth fixes the row,
-barycentre sweeps order within it. Neither relaxes into place; both are computed. A spring
-simulation was tried first for the dependency views and produced a hairball that never
-stopped drifting, and Gource's own force-based spreading was replaced with structural
-packing for the same reason. Rows run so a package depending on nothing sits at the
-bottom and its dependents stack above — impact rises, the way the spec draws it.
+Layout has two strategies, and both are radial. The filesystem view is a Gource-inspired
+tree: discs sized by file count, files on the rim, children packed into shells inside
+their parent's wedge. The dependency views are concentric: the ring is **reach** — how
+much of the repository transitively depends on a node — so the core sits in the middle
+and consumers end up on the rim, and angle is ordered by circular barycentre so
+dependency lines run roughly radially instead of chording across the middle.
 
-Node size means the same thing in every view: how much depends on this. The radial view
-says it with a disc radius, the box views with a `Prominence` multiplier on the golden
-ratio (1, φ, φ²) applied to the footprint and to the label inside it. Without it a box
-view sizes a node by the length of its name, so a package six others import is drawn
-like one nothing imports and blast radius is invisible until something changes. It scales
-up only — shrinking below what the text needs would trade legibility for a distinction
-colour and layout already carry — and it is off in the filesystem view, whose discs
-already carry it.
+Reach, not direct dependents, and not depth. A package imported by one adapter that half
+the repository sits behind has a direct count of 1, and putting it on the rim would exile
+the actual core. Depth is still computed and still cycle-safe, but it no longer decides
+position. Reach is heavily skewed — a small core, a wide middle, a rim of leaves — so the
+buckets it produces are compacted before placement; without that, a graph scoring 63, 62,
+5, 0 lands on rings 0, 0, 4, 6 and the empty rings in between are just a moat. Ring count
+is bounded by population as well as by the spread of reach, because eight packages over
+seven rings puts one node on each, and a ring of one is a point on a line: the whole graph
+comes out as a single radial spoke.
+
+Neither layout relaxes into place; both are computed. A spring simulation was tried first
+for the dependency views and produced a hairball that never stopped drifting, and Gource's
+own force-based spreading was replaced with structural packing for the same reason.
+
+Node size means the same thing in every view: how much depends on this. The radial tree
+says it with a disc radius, the dependency views with a `Prominence` multiplier on the
+golden ratio (1, φ, φ²) applied to the footprint and to the label inside it. Without it a
+box view sizes a node by the length of its name, so a package six others import is drawn
+like one nothing imports. It scales up only — shrinking below what the text needs would
+trade legibility for a distinction colour and layout already carry — and it is off in the
+filesystem view, whose discs already carry it.
 
 A drag switches on a live relaxation and releasing does not switch it off: it runs until
 the graph is quiet, so a dropped node travels somewhere that belongs instead of freezing
-under the cursor. Dropping never pins. The two layouts relax differently because they
-mean different things. A containment tree has no privileged direction, so the radial
-relaxation is free in both axes, springs along containment holding the distances the
-packing chose. A layered graph does have one — the row *is* the depth reading — so there
-`relax_rows` springs y back to the row and leaves x alone: neighbours slide apart to
-reopen the gap a drop closed, and the horizontal position the user chose is kept, because
-springing x home too would simply undo the drag.
+under the cursor. Dropping never pins. The two layouts relax differently because they mean
+different things. A containment tree has no privileged direction, so the radial tree
+relaxes freely in both axes, springs along containment holding the distances the packing
+chose. The concentric layout does have one — the ring *is* the reach reading — so
+`relax_rings` springs the radius home and leaves the angle alone: neighbours slide apart
+along the arc to reopen the gap a drop closed, and the angle the user chose is kept,
+because springing that home too would simply undo the drag.
 
 Text is drawn through ImGui's draw list rather than the GL renderer: a glyph atlas is a
 subsystem, and ImGui already ships one. Nodes, edges, and arrowheads are three

@@ -303,9 +303,15 @@ TEST(cycling_past_the_last_path_wraps_to_the_first) {
 
 // -- layout -------------------------------------------------------------------
 
-// Depth 0 = depends on nothing in view, and rows go upward from there, so a blast
-// radius reads bottom-to-top the way the spec draws it.
-TEST(layout_puts_dependencies_below_their_dependents) {
+// Depth is still dependency distance and still cycle-safe, but it no longer decides
+// where a node goes. The dependency views are concentric, and the ring is REACH: how
+// much of the repository transitively depends on this node. The core sits in the
+// middle, consumers on the rim.
+//
+// Direct dependents would be the wrong axis. In this chain c depends on b depends on a,
+// so a has one direct dependent and would be exiled to the rim while being the thing
+// everything else is built on.
+TEST(layout_puts_the_most_depended_on_node_at_the_core) {
     auto h = make();
     h.settle();
 
@@ -316,11 +322,34 @@ TEST(layout_puts_dependencies_below_their_dependents) {
     CHECK_EQ(depth_of("pkg:b"), 1);
     CHECK_EQ(depth_of("pkg:c"), 2);
 
-    auto y_of = [&](const char* id) {
-        return h.registry().get<ecs::LayoutTarget>(h.node(id)).p.y;
+    // a is depended on by b and c, c by nobody. A three-node chain buckets into two
+    // rings, so the core end may share one -- but it may never be further out.
+    auto radius_of = [&](const char* id) {
+        return length(h.registry().get<ecs::LayoutTarget>(h.node(id)).p);
     };
-    CHECK(y_of("pkg:c") < y_of("pkg:b"));   // screen y grows downward
-    CHECK(y_of("pkg:b") < y_of("pkg:a"));
+    CHECK(radius_of("pkg:a") <= radius_of("pkg:b"));
+    CHECK(radius_of("pkg:b") < radius_of("pkg:c"));
+
+    // With reach spread wide enough to separate, the hub lands strictly inside.
+    Snapshot w;
+    w.generation                  = 100;
+    w.session.baseline_generation = 100;
+    w.nodes = {mk_node("repo", NodeKind::Repository),
+               mk_node("pkg:hub", NodeKind::Package, "repo"),
+               mk_node("pkg:leaf", NodeKind::Package, "repo")};
+    for (int i = 0; i < 6; ++i) {
+        const std::string p = "pkg:d" + std::to_string(i);
+        w.nodes.push_back(mk_node(p, NodeKind::Package, "repo"));
+        w.edges.push_back(mk_edge("e:" + p, EdgeKind::DependsOn, p, "pkg:hub"));
+    }
+    auto g = make(w);
+    g.settle();
+
+    const auto& reg = g.registry();
+    CHECK(reg.get<ecs::Ring>(g.node("pkg:hub")).index <
+          reg.get<ecs::Ring>(g.node("pkg:leaf")).index);
+    CHECK(length(reg.get<ecs::LayoutTarget>(g.node("pkg:hub")).p) <
+          length(reg.get<ecs::LayoutTarget>(g.node("pkg:leaf")).p));
 }
 
 // Import graphs really do cycle. Layout must terminate and stay finite.
@@ -991,9 +1020,9 @@ TEST(relaxation_separates_nodes_that_would_overlap) {
 // but constrained, and the constraint is what these tests are about.
 
 // Dropping a node on top of its neighbour must not leave them overlapping. There is no
-// containment here to spring anything home, so reopening the gap is the whole job.
-TEST(dragging_a_layered_node_pushes_its_neighbours_aside) {
-    // Three packages depending on one shared base all land on the same row.
+// containment here to spring anything home, so reopening the arc is the whole job.
+TEST(dragging_a_dependency_node_pushes_its_neighbours_aside) {
+    // Three packages depending on one shared base all land on the same ring.
     Snapshot s;
     s.generation                  = 100;
     s.session.baseline_generation = 100;
@@ -1012,8 +1041,8 @@ TEST(dragging_a_layered_node_pushes_its_neighbours_aside) {
 
     const entt::entity a    = h.node("pkg:p0");
     const entt::entity mate = h.node("pkg:p1");
-    CHECK_EQ(h.registry().get<ecs::Depth>(a).value,
-             h.registry().get<ecs::Depth>(mate).value);
+    CHECK_EQ(h.registry().get<ecs::Ring>(a).index,
+             h.registry().get<ecs::Ring>(mate).index);
 
     const Vec2 target = h.registry().get<ecs::Position>(mate).p;
     const Vec2 from   = h.registry().get<ecs::Position>(a).p;
@@ -1023,50 +1052,58 @@ TEST(dragging_a_layered_node_pushes_its_neighbours_aside) {
     const Vec2 toward = (target - from) * (1.0f / 12.0f);
     for (int i = 0; i < 12; ++i) h.drag_by(toward * h.camera().zoom);
     h.end_drag();
-    h.tick(1.0f / 60.0f, 300);
+    h.tick(1.0f / 60.0f, 400);
 
-    const float sep  = std::abs(h.registry().get<ecs::Position>(a).p.x -
-                                h.registry().get<ecs::Position>(mate).p.x);
+    const Vec2  pa = h.registry().get<ecs::Position>(a).p;
+    const Vec2  pm = h.registry().get<ecs::Position>(mate).p;
     const float want = h.registry().get<ecs::Extent>(a).half.x +
                        h.registry().get<ecs::Extent>(mate).half.x;
-    CHECK(sep > want * 0.8f);
+    CHECK(length(pa - pm) > want * 0.8f);
 }
 
-// A node dragged off its row comes back to it. Depth is the one thing the layered view
-// asserts, and a node parked between rows is claiming a distance from the change that
-// is not true.
-TEST(a_layered_node_returns_to_its_row_after_a_drop) {
+// A node dragged off its ring comes back to it. The ring is the reach reading, and a
+// node parked between rings is claiming a share of the repository it does not carry.
+TEST(a_dependency_node_returns_to_its_ring_after_a_drop) {
     auto h = make();
     h.settle();
     view::fit_camera(h.world, {});
 
-    const entt::entity b   = h.node("pkg:b");
-    const float        row = h.registry().get<ecs::Position>(b).p.y;
+    const entt::entity b    = h.node("pkg:b");
+    const float        ring = length(h.registry().get<ecs::Position>(b).p);
 
     h.begin_drag(h.camera().world_to_screen(h.registry().get<ecs::Position>(b).p));
-    for (int i = 0; i < 12; ++i) h.drag_by(Vec2{0.0f, 14.0f});
+    for (int i = 0; i < 12; ++i) h.drag_by(Vec2{11.0f, 11.0f});
     h.end_drag();
-    h.tick(1.0f / 60.0f, 300);
+    h.tick(1.0f / 60.0f, 400);
 
-    CHECK(std::abs(h.registry().get<ecs::Position>(b).p.y - row) < 2.0f);
+    const float after = length(h.registry().get<ecs::Position>(b).p);
+    CHECK(std::abs(after - ring) < std::max(4.0f, ring * 0.06f));
 }
 
-// Horizontal intent survives. Springing x home as well would simply undo the drag, and
-// the user moved the node there on purpose.
-TEST(a_layered_drop_keeps_where_it_was_put_horizontally) {
+// Angular intent survives. Springing the angle home as well would undo the drag, and
+// the user swung the node round there on purpose.
+TEST(a_dependency_drop_keeps_the_angle_it_was_put_at) {
     auto h = make();
     h.settle();
     view::fit_camera(h.world, {});
 
-    const entt::entity b      = h.node("pkg:b");
-    const float        before = h.registry().get<ecs::Position>(b).p.x;
+    const entt::entity b = h.node("pkg:b");
+    const Vec2  start    = h.registry().get<ecs::Position>(b).p;
+    const float before   = std::atan2(start.y, start.x);
 
-    h.begin_drag(h.camera().world_to_screen(h.registry().get<ecs::Position>(b).p));
-    for (int i = 0; i < 12; ++i) h.drag_by(Vec2{9.0f, 0.0f});
+    h.begin_drag(h.camera().world_to_screen(start));
+    // Swing it round the ring rather than in or out.
+    const Vec2 tangent{-start.y, start.x};
+    const Vec2 step = tangent * (1.0f / (length(tangent) + 1e-4f)) * 12.0f;
+    for (int i = 0; i < 12; ++i) h.drag_by(step * h.camera().zoom);
     h.end_drag();
-    h.tick(1.0f / 60.0f, 300);
+    h.tick(1.0f / 60.0f, 400);
 
-    CHECK(h.registry().get<ecs::Position>(b).p.x > before + 20.0f);
+    const Vec2  end   = h.registry().get<ecs::Position>(b).p;
+    const float after = std::atan2(end.y, end.x);
+    float       moved = std::abs(after - before);
+    if (moved > 3.14159f) moved = 6.2831853f - moved;
+    CHECK(moved > 0.08f);
 }
 
 // Pausing mid-drag is not a release.

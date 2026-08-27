@@ -73,6 +73,19 @@ struct Prominence { float scale = 1.0f; };
 // Dependency depth: 0 = depends on nothing else in view. Owner: LayoutSystem.
 struct Depth { int value = 0; };
 
+// Where a node sits in the concentric dependency layout. Ring 0 is the core -- the
+// nodes the most of the repository transitively depends on -- and the index rises
+// outward as reach falls, so consumers end up on the rim.
+//
+// Polar coordinates are kept alongside the position because a drag has to relax in
+// them: the ring is the reading, so radius springs home while the angle is free, the
+// way the layered version sprang y home and left x alone. Owner: LayoutSystem.
+struct Ring {
+    int   index  = 0;
+    float radius = 0.0f;
+    float angle  = 0.0f;
+};
+
 // Distance to the nearest neighbouring node, measured after placement. Every view has
 // one, because every view has to answer the same two questions: may this node grow into
 // a labelled box, and is there space beside it to write its name? Owner: LayoutSystem.

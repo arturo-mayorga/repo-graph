@@ -29,8 +29,9 @@
 namespace rgv::systems {
 
 struct LayoutParams {
-    float layer_gap = 150.0f;   // minimum vertical distance between dependency layers
-    float node_gap  = 34.0f;    // horizontal gap between neighbours in a row
+    float layer_gap = 150.0f;   // minimum distance between dependency rings
+    float node_gap  = 34.0f;    // gap between neighbours sharing a ring
+    int   max_rings = 7;        // reach is bucketed into at most this many rings
     float ease      = 7.0f;     // higher converges faster; 0 disables animation
     int   sweeps    = 6;        // barycentre passes; more = fewer edge crossings
 
@@ -87,12 +88,12 @@ public:
 private:
     void reset(ecs::World& world);
     void assign_depths(ecs::World& world);
-    void order_and_place(ecs::World& world);
+    void concentric_place(ecs::World& world);
     void radial_tree(ecs::World& world);
     void measure_spacing(ecs::World& world);
     void apply_drag(ecs::World& world);
     void relax(ecs::World& world, float dt);
-    void relax_rows(ecs::World& world, float dt);
+    void relax_rings(ecs::World& world, float dt);
     void capture_rest_lengths(ecs::World& world);
 
     LayoutParams params_;
@@ -100,10 +101,10 @@ private:
     int          depth_span_ = 1;
     bool         tree_mode_  = false;
 
-    // The y each depth row was placed at. A layered drag relaxes within the rows rather
-    // than freely: the rows are the depth reading, so a node that drifts off its own is
-    // no longer telling the truth about how far it sits from the change.
-    std::unordered_map<int, float> row_y_;
+    // The radius each ring was placed at. A dependency drag relaxes within the rings
+    // rather than freely: the ring is the reach reading, so a node that drifts off its
+    // own stops telling the truth about how much of the repository is behind it.
+    std::unordered_map<int, float> ring_radius_;
 
     // Live-relaxation state. `rest_` is captured when a drag starts, so the springs
     // pull toward what the structural layout produced rather than toward a guess.

@@ -1,5 +1,6 @@
 #include "rgv/systems/SpecificitySystem.h"
 
+#include "rgv/analysis/Reach.h"
 #include "rgv/analysis/Specificity.h"
 #include "rgv/ecs/Resources.h"
 #include "rgv/model/GraphStore.h"
@@ -27,11 +28,27 @@ void SpecificitySystem::run(ecs::World& world, const ecs::FrameContext&) {
     // Score over the same edges the traversal would follow, or the index would
     // disagree with the paths it is used to weigh.
     ImpactFilters traversal;
-    if (result) traversal = result->filters;
+    if (result) {
+        traversal = result->filters;
+    } else {
+        // No impact result to borrow a policy from. `ImpactFilters` defaults to
+        // DependsOn, which is a package-level edge -- at file or symbol level that
+        // matches nothing, and every node scores as though it had no dependents at all.
+        switch (view.level) {
+            case Level::File:
+            case Level::Symbol:
+                traversal.edge_kinds = {EdgeKind::Imports, EdgeKind::Calls,
+                                        EdgeKind::References, EdgeKind::Inherits};
+                break;
+            default:
+                break;
+        }
+    }
     traversal.include_heuristic = filters.show_heuristic;
 
     auto& derived       = world.resource<ecs::DerivedState>();
     derived.specificity = analysis::build(store, view.level, traversal);
+    derived.reach       = analysis::build_reach(store, view.level, traversal);
     derived.hub_alerts.clear();
     if (result) {
         derived.hub_alerts =

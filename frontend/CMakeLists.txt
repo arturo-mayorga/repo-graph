@@ -55,6 +55,7 @@ add_library(rgv_core STATIC
   src/fixture/Json.cpp
   src/fixture/FixtureSource.cpp
   src/sim/ImpactSim.cpp
+  src/analysis/Reach.cpp
   src/analysis/Specificity.cpp
   src/config/Settings.cpp
 

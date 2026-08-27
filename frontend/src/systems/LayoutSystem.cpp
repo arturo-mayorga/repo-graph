@@ -68,121 +68,194 @@ void LayoutSystem::assign_depths(ecs::World& world) {
     }
 }
 
-void LayoutSystem::order_and_place(ecs::World& world) {
-    auto& reg = world.registry;
+// Concentric placement for the dependency views.
+//
+// The ring is reach: how much of the repository transitively depends on this node. The
+// core -- what everything is ultimately built on -- sits in the middle, and consumers
+// end up on the rim, which is the shape an architecture diagram is usually drawn in by
+// hand. Direct dependents would be the wrong axis: a package imported by one adapter
+// that half the repository sits behind has a direct count of 1, and would be exiled to
+// the edge while being the actual core.
+//
+// Angle is ordered by barycentre, the same idea the layered version used for x, so
+// dependency lines run roughly radially instead of chording across the middle. The mean
+// is circular -- averaging raw angles puts a node with neighbours either side of zero
+// on the far side of the ring.
+void LayoutSystem::concentric_place(ecs::World& world) {
+    auto&       reg     = world.registry;
+    const auto& derived = world.resource<ecs::DerivedState>();
+    const auto& reach   = derived.reach;
 
-    std::vector<std::vector<entt::entity>> layers(static_cast<std::size_t>(depth_span_));
-    for (auto [ent, ref, depth] : reg.view<const ecs::NodeRef, const ecs::Depth>().each()) {
-        layers[static_cast<std::size_t>(depth.value)].push_back(ent);
+    struct Item { entt::entity e; float half_x, half_y; };
+    std::vector<entt::entity> all;
+    for (auto [ent, ref] : reg.view<const ecs::NodeRef>().each()) all.push_back(ent);
+    if (all.empty()) { energy_ = 1e9f; return; }
+
+    // -- rings, from reach. Bucketed rather than continuous: the barycentre sweeps need
+    // discrete layers to order within, and a ring you can see is the point.
+    const int widest = std::max(1, reach.widest());
+    // Ring count is bounded by the population as well as by the spread of reach. Eight
+    // packages over seven rings puts one node on each, and a ring of one is a point on a
+    // line, not a ring -- the whole graph comes out as a single radial spoke.
+    const int by_population =
+        static_cast<int>(std::lround(std::sqrt(static_cast<float>(all.size()))));
+    const int rings = std::clamp(std::min({params_.max_rings, widest + 1, by_population}),
+                                 2, params_.max_rings);
+
+    std::vector<std::vector<entt::entity>> layer(static_cast<std::size_t>(rings));
+    for (auto e : all) {
+        const auto* ref = reg.try_get<ecs::NodeRef>(e);
+        const int   r   = ref ? reach.dependents(ref->id) : 0;
+        // 0 at the core, rings-1 on the rim. sqrt pulls the middle of the distribution
+        // inward: reach is heavily skewed, and a linear map leaves every ring but the
+        // outermost nearly empty.
+        const float t   = 1.0f - std::sqrt(static_cast<float>(r) / static_cast<float>(widest));
+        int         idx = static_cast<int>(std::lround(t * static_cast<float>(rings - 1)));
+        layer[static_cast<std::size_t>(std::clamp(idx, 0, rings - 1))].push_back(e);
     }
 
-    // Seed each row from where its nodes already are, so re-running layout after a
-    // graph change preserves the arrangement the user has been looking at. Nodes with
-    // no position yet sort last, deterministically.
-    for (auto& row : layers) {
+    // Reach is heavily skewed -- a core everything imports, a wide middle, a rim of
+    // leaves -- so bucketing it leaves gaps: 63, 62, 5, 0 lands on rings 0, 0, 4, 6 and
+    // the three empty ones in between are just a moat. Compacting keeps the order and
+    // the grouping and drops the holes, so the rings that exist are the ones you see.
+    layer.erase(std::remove_if(layer.begin(), layer.end(),
+                               [](const auto& r) { return r.empty(); }),
+                layer.end());
+    if (layer.empty()) { energy_ = 1e9f; return; }
+
+    // Deterministic seed order, so the same graph always lays out the same way.
+    for (auto& row : layer) {
         std::sort(row.begin(), row.end(), [&](entt::entity a, entt::entity b) {
-            const auto* pa = reg.try_get<ecs::Position>(a);
-            const auto* pb = reg.try_get<ecs::Position>(b);
-            if (pa && pb) return pa->p.x < pb->p.x;
-            if (pa != pb) return pa != nullptr;
             const auto* la = reg.try_get<ecs::Label>(a);
             const auto* lb = reg.try_get<ecs::Label>(b);
             return (la ? la->text : "") < (lb ? lb->text : "");
         });
     }
 
-    std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> up, down;
+    std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> adj;
     for (auto [ent, ref, ends] : reg.view<const ecs::EdgeRef, const ecs::Endpoints>().each()) {
         if (ref.kind == EdgeKind::Contains) continue;
-        up[to_raw(ends.from)].push_back(to_raw(ends.to));     // toward lower depth
-        down[to_raw(ends.to)].push_back(to_raw(ends.from));   // toward higher depth
+        adj[to_raw(ends.from)].push_back(to_raw(ends.to));
+        adj[to_raw(ends.to)].push_back(to_raw(ends.from));
     }
 
-    // Barycentre sweeps. Each node drifts toward the average index of its neighbours
-    // in the adjacent row; alternating direction converges on few crossings.
-    auto index_of = [&](const std::vector<entt::entity>& row) {
-        std::unordered_map<std::uint32_t, float> idx;
-        for (std::size_t i = 0; i < row.size(); ++i) idx[to_raw(row[i])] = static_cast<float>(i);
-        return idx;
+    // -- barycentre sweeps, in angle
+    auto angles_of = [&](const std::vector<entt::entity>& row) {
+        std::unordered_map<std::uint32_t, float> a;
+        const float n = static_cast<float>(std::max<std::size_t>(row.size(), 1));
+        for (std::size_t i = 0; i < row.size(); ++i) {
+            a[to_raw(row[i])] = 6.2831853f * static_cast<float>(i) / n;
+        }
+        return a;
     };
 
     for (int sweep = 0; sweep < params_.sweeps; ++sweep) {
-        const bool downward = (sweep % 2) == 0;
-        for (std::size_t li = 0; li < layers.size(); ++li) {
-            const std::size_t l = downward ? li : layers.size() - 1 - li;
-            const std::size_t ref_layer_idx = downward ? (l == 0 ? 0 : l - 1)
-                                                       : std::min(l + 1, layers.size() - 1);
-            if (ref_layer_idx == l) continue;
+        const bool outward = (sweep % 2) == 0;
+        for (std::size_t li = 0; li < layer.size(); ++li) {
+            const std::size_t l = outward ? li : layer.size() - 1 - li;
+            const std::size_t ref_l =
+                outward ? (l == 0 ? 0 : l - 1) : std::min(l + 1, layer.size() - 1);
+            if (ref_l == l || layer[l].empty()) continue;
 
-            const auto ref_index = index_of(layers[ref_layer_idx]);
-            const auto& adj      = downward ? up : down;
+            const auto ref_angle = angles_of(layer[ref_l]);
 
             std::vector<std::pair<float, entt::entity>> keyed;
-            keyed.reserve(layers[l].size());
-            for (std::size_t i = 0; i < layers[l].size(); ++i) {
-                const entt::entity e = layers[l][i];
-                float sum = 0.0f;
-                int   n   = 0;
-                auto  it  = adj.find(to_raw(e));
+            keyed.reserve(layer[l].size());
+            for (std::size_t i = 0; i < layer[l].size(); ++i) {
+                const entt::entity e = layer[l][i];
+                float sx = 0.0f, sy = 0.0f;
+                auto  it = adj.find(to_raw(e));
                 if (it != adj.end()) {
                     for (auto nb : it->second) {
-                        auto f = ref_index.find(nb);
-                        if (f != ref_index.end()) { sum += f->second; ++n; }
+                        auto f = ref_angle.find(nb);
+                        if (f == ref_angle.end()) continue;
+                        sx += std::cos(f->second);
+                        sy += std::sin(f->second);
                     }
                 }
-                // No neighbour in the reference row: hold position rather than
-                // collapsing to zero and dragging unrelated nodes across the picture.
-                keyed.emplace_back(n ? sum / static_cast<float>(n) : static_cast<float>(i), e);
+                // No neighbour on the reference ring: hold the angle it already has,
+                // rather than collapsing onto zero and dragging the ring around.
+                const float own = 6.2831853f * static_cast<float>(i) /
+                                  static_cast<float>(std::max<std::size_t>(layer[l].size(), 1));
+                const float ang = (sx == 0.0f && sy == 0.0f) ? own : std::atan2(sy, sx);
+                keyed.emplace_back(ang < 0.0f ? ang + 6.2831853f : ang, e);
             }
             std::stable_sort(keyed.begin(), keyed.end(),
                              [](const auto& a, const auto& b) { return a.first < b.first; });
-            for (std::size_t i = 0; i < keyed.size(); ++i) layers[l][i] = keyed[i].second;
+            for (std::size_t i = 0; i < keyed.size(); ++i) layer[l][i] = keyed[i].second;
         }
     }
 
-    // Row widths decide the vertical spacing. A monorepo with 240 packages over six
-    // layers packs eighty nodes into a row, and at the nominal gap the drawing becomes
-    // a ribbon thousands of units wide and a few hundred tall -- fitting it wastes the
-    // whole viewport. Stretching the layers to match the viewport's aspect keeps the
-    // graph filling the space it is given, at any scale.
-    auto row_width = [&](const std::vector<entt::entity>& row) {
-        float total = 0.0f;
+    // -- radii. Each ring has to be long enough round to seat what is on it, and clear
+    // of the one inside it. Same constraint the filesystem view's shells solve.
+    ring_radius_.clear();
+    float prev_r = 0.0f, prev_half = 0.0f;
+    for (std::size_t l = 0; l < layer.size(); ++l) {
+        const auto& row = layer[l];
+        if (row.empty()) { ring_radius_[static_cast<int>(l)] = prev_r; continue; }
+
+        float need = 0.0f, tallest = 0.0f, widest_node = 0.0f;
         for (auto e : row) {
             const auto* ext = reg.try_get<ecs::Extent>(e);
-            total += (ext ? ext->half.x * 2.0f : 100.0f) + params_.node_gap;
+            const float hx  = ext ? ext->half.x : 50.0f;
+            const float hy  = ext ? ext->half.y : 16.0f;
+            need += hx * 2.0f + params_.node_gap;
+            tallest     = std::max(tallest, hy);
+            widest_node = std::max(widest_node, hx);
         }
-        return row.empty() ? 0.0f : total - params_.node_gap;
-    };
 
-    float widest = 0.0f;
-    for (const auto& row : layers) widest = std::max(widest, row_width(row));
+        const float fit   = need / 6.2831853f;                  // circumference -> radius
+        const float clear = prev_r + prev_half + tallest + params_.layer_gap;
+        // A lone core node sits dead centre; anything else needs room to spread.
+        float r = (l == 0 && row.size() == 1) ? 0.0f : std::max(fit, l == 0 ? 0.0f : clear);
+        if (l == 0 && row.size() > 1) r = std::max(fit, widest_node);
 
-    const Vec2  free   = world.resource<ecs::Viewport>().free_size;
-    const float aspect = (free.x > 1.0f && free.y > 1.0f) ? free.x / free.y : 1.6f;
-    const int   gaps   = std::max(1, static_cast<int>(layers.size()) - 1);
-    const float layer_gap =
-        std::clamp(widest / aspect / static_cast<float>(gaps),
-                   params_.layer_gap, params_.layer_gap * 12.0f);
+        ring_radius_[static_cast<int>(l)] = r;
+        prev_r    = r;
+        prev_half = tallest;
+    }
 
-    // Place: rows are centred on x = 0, and depth 0 sits at the bottom so impact
-    // reads upward, the way the spec draws it.
-    row_y_.clear();
-    for (std::size_t l = 0; l < layers.size(); ++l) {
-        const auto& row   = layers[l];
-        const float total = row_width(row);
+    // -- place, from the core outward so each ring can be turned to face the one inside
+    // it. Even spacing decides where nodes sit relative to each other; the offset
+    // decides where the whole ring is rotated to. Without it a ring holding a single
+    // node always lands at angle zero, and a chain of them draws a straight spoke.
+    std::unordered_map<std::uint32_t, float> placed_angle;
+    for (std::size_t l = 0; l < layer.size(); ++l) {
+        const auto& row = layer[l];
+        const float r   = ring_radius_[static_cast<int>(l)];
+        const float n   = static_cast<float>(std::max<std::size_t>(row.size(), 1));
 
-        const float y = -static_cast<float>(l) * layer_gap;
-        row_y_[static_cast<int>(l)] = y;
-        float       x = -total * 0.5f;
-        for (auto e : row) {
-            const auto* ext = reg.try_get<ecs::Extent>(e);
-            const float w   = ext ? ext->half.x * 2.0f : 100.0f;
-            const Vec2  target{x + w * 0.5f, y};
-            x += w + params_.node_gap;
+        float ox = 0.0f, oy = 0.0f;
+        for (std::size_t i = 0; i < row.size(); ++i) {
+            float sx = 0.0f, sy = 0.0f;
+            auto  it = adj.find(to_raw(row[i]));
+            if (it != adj.end()) {
+                for (auto nb : it->second) {
+                    auto f = placed_angle.find(nb);
+                    if (f == placed_angle.end()) continue;
+                    sx += std::cos(f->second);
+                    sy += std::sin(f->second);
+                }
+            }
+            if (sx == 0.0f && sy == 0.0f) continue;
+            // The turn this node would like the ring to make, accumulated circularly.
+            const float want = std::atan2(sy, sx);
+            const float slot = 6.2831853f * static_cast<float>(i) / n;
+            ox += std::cos(want - slot);
+            oy += std::sin(want - slot);
+        }
+        const float offset = (ox == 0.0f && oy == 0.0f) ? 0.0f : std::atan2(oy, ox);
+
+        for (std::size_t i = 0; i < row.size(); ++i) {
+            const entt::entity e = row[i];
+            const float ang = 6.2831853f * static_cast<float>(i) / n + offset;
+            placed_angle[to_raw(e)] = ang;
+            const Vec2  target{std::cos(ang) * r, std::sin(ang) * r};
+
+            reg.emplace_or_replace<ecs::Ring>(
+                e, ecs::Ring{static_cast<int>(l), r, ang});
 
             if (reg.all_of<ecs::Pinned>(e)) {
-                // A pinned node keeps its slot in the ordering but not its target:
-                // the user placed it, so layout stops arguing.
                 if (const auto* p = reg.try_get<ecs::Position>(e)) {
                     reg.emplace_or_replace<ecs::LayoutTarget>(e, ecs::LayoutTarget{p->p});
                     continue;
@@ -526,7 +599,7 @@ void LayoutSystem::reset(ecs::World& world) {
         radial_tree(world);
     } else {
         assign_depths(world);
-        order_and_place(world);
+        concentric_place(world);
     }
     // Every layout, so every view can answer the same questions about crowding.
     measure_spacing(world);
@@ -598,18 +671,18 @@ void LayoutSystem::apply_drag(ecs::World& world) {
 // velocity. Velocity is what makes a force layout oscillate and drift, and drift is the
 // thing this codebase spent a rewrite getting rid of. Without it the graph gives way
 // under the drag and comes to rest, rather than jiggling indefinitely.
-// Live relaxation for the layered views, constrained to the rows.
+// Live relaxation for the dependency views, constrained to the rings.
 //
-// The radial relaxation is free in both axes because a containment tree has no
-// privileged direction. A layered graph does: the row IS the depth reading, and a node
-// that drifts off its own row stops telling the truth about how many hops it sits from
-// the change. So y is sprung back to the row and only x is free.
+// The radial tree relaxation is free in both axes because a containment tree has no
+// privileged direction. The concentric layout does: the ring IS the reach reading, and
+// a node pulled off its own stops telling the truth about how much of the repository
+// sits behind it. So radius is sprung home and only the angle is free -- the polar form
+// of springing y home and leaving x alone.
 //
-// That also decides what "settling" means here. There are no containment springs to
-// pull a dropped node home -- and pulling it back to its packed slot would simply undo
-// the drag -- so the horizontal arrangement the user made is kept, and the relaxation's
-// whole job is to reopen the gaps their drop closed.
-void LayoutSystem::relax_rows(ecs::World& world, float dt) {
+// There are no containment springs here to pull a dropped node back, and pulling it
+// back to its packed angle would simply undo the drag. So the angle the user chose is
+// kept, and the relaxation's whole job is to reopen the arc their drop closed.
+void LayoutSystem::relax_rings(ecs::World& world, float dt) {
     auto&       reg  = world.registry;
     const auto& drag = world.resource<ecs::DragState>();
 
@@ -619,52 +692,67 @@ void LayoutSystem::relax_rows(ecs::World& world, float dt) {
     };
 
     const float step = std::clamp(dt * 60.0f, 0.25f, 2.0f);
+    constexpr float kTau = 6.2831853f;
 
-    // Rows, in the order they are drawn. Separation is a one-dimensional problem once
-    // the nodes are sorted, so this stays linear rather than all-pairs.
-    std::unordered_map<int, std::vector<entt::entity>> rows;
-    for (auto [e, depth] : reg.view<const ecs::Depth>().each()) {
-        if (reg.all_of<ecs::Position>(e)) rows[depth.value].push_back(e);
+    // Re-read polar coordinates from where the nodes actually are, so a dragged node is
+    // separated against its current angle rather than the one the layout gave it.
+    struct Polar { entt::entity e; float ang; float r; };
+    std::unordered_map<int, std::vector<Polar>> rings;
+    for (auto [e, pos, ring] : reg.view<const ecs::Position, ecs::Ring>().each()) {
+        float a = std::atan2(pos.p.y, pos.p.x);
+        if (a < 0.0f) a += kTau;
+        ring.angle = a;
+        rings[ring.index].push_back({e, a, length(pos.p)});
     }
 
     for (int iter = 0; iter < params_.relax_iters; ++iter) {
-        for (auto& [depth, row] : rows) {
-            std::sort(row.begin(), row.end(), [&](entt::entity a, entt::entity b) {
-                return reg.get<ecs::Position>(a).p.x < reg.get<ecs::Position>(b).p.x;
-            });
+        for (auto& [idx, row] : rings) {
+            auto it = ring_radius_.find(idx);
+            if (it == ring_radius_.end() || row.size() < 1) continue;
+            const float target_r = it->second;
 
-            // -- separation: no two boxes in a row may overlap
-            for (std::size_t i = 0; i + 1 < row.size(); ++i) {
-                const entt::entity a = row[i], b = row[i + 1];
-                auto& pa = reg.get<ecs::Position>(a);
-                auto& pb = reg.get<ecs::Position>(b);
+            std::sort(row.begin(), row.end(),
+                      [](const Polar& a, const Polar& b) { return a.ang < b.ang; });
 
-                const auto* ea = reg.try_get<ecs::Extent>(a);
-                const auto* eb = reg.try_get<ecs::Extent>(b);
-                const float want = (ea ? ea->half.x : 50.0f) + (eb ? eb->half.x : 50.0f) +
-                                   params_.node_gap;
+            // -- separation, in arc. Wraps: the last node's neighbour is the first.
+            if (row.size() > 1 && target_r > 1.0f) {
+                for (std::size_t i = 0; i < row.size(); ++i) {
+                    Polar& a = row[i];
+                    Polar& b = row[(i + 1) % row.size()];
 
-                const float gap = pb.p.x - pa.p.x;
-                if (gap >= want) continue;
+                    const auto* ea = reg.try_get<ecs::Extent>(a.e);
+                    const auto* eb = reg.try_get<ecs::Extent>(b.e);
+                    const float want = ((ea ? ea->half.x : 50.0f) + (eb ? eb->half.x : 50.0f) +
+                                        params_.node_gap) / target_r;
 
-                // Split the correction between them, unless one is held: the node under
-                // the cursor must not be shoved out from under it.
-                const float push = (want - gap) * params_.relax_repel * step;
-                const bool  fa   = pinned_fast(a), fb = pinned_fast(b);
-                if (fa && fb) continue;
-                if (fa)      pb.p.x += push;
-                else if (fb) pa.p.x -= push;
-                else { pa.p.x -= push * 0.5f; pb.p.x += push * 0.5f; }
+                    float gap = b.ang - a.ang;
+                    if (gap < 0.0f) gap += kTau;
+                    if (gap >= want) continue;
+
+                    const float push = (want - gap) * params_.relax_repel * step;
+                    const bool  fa = pinned_fast(a.e), fb = pinned_fast(b.e);
+                    if (fa && fb) continue;
+                    if (fa)      b.ang += push;
+                    else if (fb) a.ang -= push;
+                    else { a.ang -= push * 0.5f; b.ang += push * 0.5f; }
+                }
             }
 
-            // -- the row itself: y springs home, so a drop lands back on its depth
-            auto it = row_y_.find(depth);
-            if (it == row_y_.end()) continue;
-            for (auto e : row) {
-                if (pinned_fast(e)) continue;
-                auto& p = reg.get<ecs::Position>(e);
-                p.p.y += (it->second - p.p.y) * std::min(1.0f, params_.relax_spring * step);
+            // -- the ring itself: radius springs home, so a drop lands back on it
+            for (auto& n : row) {
+                if (pinned_fast(n.e)) continue;
+                n.r += (target_r - n.r) * std::min(1.0f, params_.relax_spring * step);
+                auto& p = reg.get<ecs::Position>(n.e);
+                p.p = Vec2{std::cos(n.ang) * n.r, std::sin(n.ang) * n.r};
             }
+        }
+    }
+
+    for (auto [e, ring] : reg.view<ecs::Ring>().each()) {
+        if (const auto* p = reg.try_get<ecs::Position>(e)) {
+            ring.radius = length(p->p);
+            float a     = std::atan2(p->p.y, p->p.x);
+            ring.angle  = a < 0.0f ? a + kTau : a;
         }
     }
 
@@ -807,7 +895,7 @@ void LayoutSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
         relax_elapsed_ += frame.dt;
         apply_drag(world);
         if (tree_mode_) relax(world, frame.dt);
-        else relax_rows(world, frame.dt);
+        else relax_rings(world, frame.dt);
 
         // Held open while the cursor is down; afterwards it ends when the motion dies
         // away, with a hard cap so a pathological graph cannot relax forever.

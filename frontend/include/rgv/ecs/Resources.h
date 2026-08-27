@@ -5,6 +5,7 @@
 // its body -- it asks for Filters, or for Camera, not for "the scene".
 #pragma once
 
+#include "rgv/analysis/Reach.h"
 #include "rgv/analysis/Specificity.h"
 #include "rgv/contract/IGraphSource.h"
 #include "rgv/config/Settings.h"
@@ -153,6 +154,7 @@ struct CameraControl {
 // graph, and any change to a node most of the repository depends on.
 struct DerivedState {
     analysis::SpecificityIndex      specificity;
+    analysis::ReachIndex            reach;
     std::vector<analysis::HubAlert> hub_alerts;
 };
 
