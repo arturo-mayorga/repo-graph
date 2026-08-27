@@ -805,11 +805,20 @@ TEST(node_sizes_step_by_the_golden_ratio) {
 }
 
 // -- dragging -----------------------------------------------------------------
+//
+// A drag switches on a live relaxation: springs along containment whose rest lengths
+// are the distances the structural packing produced, plus repulsion between discs. The
+// layout itself has no forces -- that is deliberate, so nothing drifts -- but a drag
+// wants the graph to give way, so the simulation is seeded from the packing and its
+// equilibrium is the arrangement it started from.
 
-// The bug this fixes: dragging a directory moved the single node under the cursor and
-// left every file it owns behind. In a containment view that is the one thing a drag
-// must not do.
-TEST(dragging_a_directory_takes_its_files_with_it) {
+// Dragging a directory pulls its files along, by relaxation rather than rigidly.
+//
+// It used to move the single node under the cursor and leave every file behind, which
+// in a containment view is the one thing a drag must not do. Translating the subtree
+// rigidly fixed that but made the cluster behave like a solid object; the springs let
+// the children trail and settle instead.
+TEST(dragging_a_directory_pulls_its_files_along) {
     auto h = make_filesystem();
     view::fit_camera(h.world, {});
 
@@ -819,16 +828,37 @@ TEST(dragging_a_directory_takes_its_files_with_it) {
     const Vec2 before_file  = h.registry().get<ecs::Position>(file).p;
 
     h.begin_drag(h.camera().world_to_screen(before_dir));
-    for (int i = 0; i < 10; ++i) h.drag_by(Vec2{6.0f, 0.0f});
+    for (int i = 0; i < 14; ++i) h.drag_by(Vec2{7.0f, 0.0f});
     h.end_drag();
+    h.tick(1.0f / 60.0f, 90);   // let the settle-down finish
 
     const Vec2 moved_dir  = h.registry().get<ecs::Position>(dir).p - before_dir;
     const Vec2 moved_file = h.registry().get<ecs::Position>(file).p - before_file;
 
     CHECK(length(moved_dir) > 10.0f);
-    // The file travelled with its directory, keeping its place on the orbit.
-    CHECK(std::abs(moved_file.x - moved_dir.x) < 1.0f);
-    CHECK(std::abs(moved_file.y - moved_dir.y) < 1.0f);
+    CHECK(length(moved_file) > 5.0f);                                 // it came along
+    CHECK(dot(normalize(moved_file), normalize(moved_dir)) > 0.5f);   // the same way
+}
+
+// The springs hold the distance the packing chose, so a cluster keeps its shape while
+// being dragged instead of stretching out behind the cursor.
+TEST(relaxation_keeps_a_file_at_the_distance_the_packing_gave_it) {
+    auto h = make_filesystem();
+    view::fit_camera(h.world, {});
+
+    const entt::entity dir  = h.node("dir:a");
+    const entt::entity file = h.node("file:a/x.ts");
+    const float rest = length(h.registry().get<ecs::Position>(file).p -
+                              h.registry().get<ecs::Position>(dir).p);
+
+    h.begin_drag(h.camera().world_to_screen(h.registry().get<ecs::Position>(dir).p));
+    for (int i = 0; i < 14; ++i) h.drag_by(Vec2{7.0f, 0.0f});
+    h.end_drag();
+    h.tick(1.0f / 60.0f, 120);
+
+    const float after = length(h.registry().get<ecs::Position>(file).p -
+                               h.registry().get<ecs::Position>(dir).p);
+    CHECK(std::abs(after - rest) < rest * 0.45f);
 }
 
 // A dragged node stays where it was put rather than easing back to its layout slot.
@@ -840,20 +870,60 @@ TEST(a_dragged_node_stays_where_it_is_dropped) {
     const Vec2 start = h.registry().get<ecs::Position>(dir).p;
 
     h.begin_drag(h.camera().world_to_screen(start));
-    for (int i = 0; i < 10; ++i) h.drag_by(Vec2{8.0f, 0.0f});
+    for (int i = 0; i < 12; ++i) h.drag_by(Vec2{8.0f, 0.0f});
     h.end_drag();
+    h.tick(1.0f / 60.0f, 150);
 
-    const Vec2 dropped = h.registry().get<ecs::Position>(dir).p;
-    h.settle();
-    const Vec2 after = h.registry().get<ecs::Position>(dir).p;
-
-    CHECK(length(after - dropped) < 1.0f);
-    CHECK(length(after - start) > 10.0f);
+    CHECK(length(h.registry().get<ecs::Position>(dir).p - start) > 10.0f);
 }
 
-// The dependency views have no containment edges, so a drag there moves one node --
-// which is correct, and worth pinning down so the filesystem fix does not leak.
-TEST(dragging_in_a_dependency_view_moves_only_the_dragged_node) {
+// A drag reflows the graph and the reflow sticks. Nothing snaps back to the packing:
+// the arrangement the user produced is the arrangement they keep.
+TEST(a_reflow_caused_by_dragging_persists_after_release) {
+    auto h = make_filesystem();
+    view::fit_camera(h.world, {});
+
+    const entt::entity dir       = h.node("dir:a");
+    const entt::entity neighbour = h.node("pkg:b");
+    const Vec2 home = h.registry().get<ecs::Position>(neighbour).p;
+
+    h.begin_drag(h.camera().world_to_screen(h.registry().get<ecs::Position>(dir).p));
+    const Vec2 toward = (home - h.registry().get<ecs::Position>(dir).p) / 12.0f;
+    for (int i = 0; i < 12; ++i) h.drag_by(toward * h.camera().zoom);
+    h.end_drag();
+    h.tick(1.0f / 60.0f, 150);
+
+    // Position and target agree, so nothing is still being pulled anywhere.
+    const Vec2 pos = h.registry().get<ecs::Position>(neighbour).p;
+    CHECK(length(h.registry().get<ecs::LayoutTarget>(neighbour).p - pos) < 1.0f);
+}
+
+// Repulsion is the half of the relaxation that keeps a reflow legible: whatever the
+// user shoves things into has to move aside rather than be sat on top of.
+TEST(relaxation_separates_nodes_that_would_overlap) {
+    auto h = make_filesystem();
+    view::fit_camera(h.world, {});
+
+    const entt::entity dir       = h.node("dir:a");
+    const entt::entity neighbour = h.node("pkg:b");
+
+    h.begin_drag(h.camera().world_to_screen(h.registry().get<ecs::Position>(dir).p));
+    const Vec2 target = h.registry().get<ecs::Position>(neighbour).p;
+    const Vec2 toward = (target - h.registry().get<ecs::Position>(dir).p) / 12.0f;
+    for (int i = 0; i < 12; ++i) h.drag_by(toward * h.camera().zoom);
+    h.end_drag();
+    h.tick(1.0f / 60.0f, 150);
+
+    const float gap  = length(h.registry().get<ecs::Position>(dir).p -
+                              h.registry().get<ecs::Position>(neighbour).p);
+    const float want = h.registry().get<ecs::Disc>(dir).radius +
+                       h.registry().get<ecs::Disc>(neighbour).radius;
+    CHECK(gap > want * 0.9f);
+}
+
+// The layered views have no containment to relax, so a drag there stays rigid and the
+// row structure the layout worked to produce is not shaken apart by springs.
+TEST(dragging_in_a_layered_view_does_not_relax) {
     auto h = make();
     h.settle();
     view::fit_camera(h.world, {});
@@ -863,33 +933,9 @@ TEST(dragging_in_a_dependency_view_moves_only_the_dragged_node) {
     const Vec2 before_a  = h.registry().get<ecs::Position>(a).p;
 
     h.begin_drag(h.camera().world_to_screen(h.registry().get<ecs::Position>(b).p));
-    for (int i = 0; i < 8; ++i) h.drag_by(Vec2{5.0f, 0.0f});
+    for (int i = 0; i < 10; ++i) h.drag_by(Vec2{6.0f, 0.0f});
     h.end_drag();
+    h.tick(1.0f / 60.0f, 60);
 
-    // pkg:a may be nudged aside, but it must not have travelled with pkg:b.
-    CHECK(length(h.registry().get<ecs::Position>(a).p - before_a) < 30.0f);
+    CHECK(length(h.registry().get<ecs::Position>(a).p - before_a) < 1.0f);
 }
-
-// Neighbours are pushed on Position only, never on LayoutTarget, so the ordinary ease
-// keeps pulling them home. They move aside while the drag passes and settle back --
-// nothing can drift permanently.
-TEST(neighbours_pushed_aside_by_a_drag_return_afterwards) {
-    auto h = make_filesystem();
-    view::fit_camera(h.world, {});
-
-    const entt::entity dir      = h.node("dir:a");
-    const entt::entity neighbour = h.node("pkg:b");
-    const Vec2 home = h.registry().get<ecs::LayoutTarget>(neighbour).p;
-
-    // Drag the directory right through where the neighbour sits.
-    h.begin_drag(h.camera().world_to_screen(h.registry().get<ecs::Position>(dir).p));
-    const Vec2 toward = (home - h.registry().get<ecs::Position>(dir).p) / 10.0f;
-    for (int i = 0; i < 10; ++i) h.drag_by(toward * h.camera().zoom);
-    h.end_drag();
-    h.settle();
-
-    // Its layout slot was never touched, and it eased back onto it.
-    CHECK_EQ(h.registry().get<ecs::LayoutTarget>(neighbour).p.x, home.x);
-    CHECK(length(h.registry().get<ecs::Position>(neighbour).p - home) < 1.0f);
-}
-

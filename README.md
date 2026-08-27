@@ -149,10 +149,21 @@ a constant screen size while the graph spreads out beneath them — world-scaled
 grows in step with the spacing and never uncrowds, however far you zoom. A label
 *inside* a box scales with the box, so it always fits. Gource makes the same split.
 
-**Dragging a directory takes its files with it**, and pushes whatever it runs into out
-of the way. Neighbours are displaced on position only, never on their layout target, so
-the ordinary easing keeps pulling them home: they move aside while the drag passes and
-settle back afterwards, and nothing can drift permanently.
+**Dragging runs a live relaxation.** The layout itself has no forces — it is structural
+packing, deliberately, so nothing drifts — but a drag wants the graph to give way. So a
+drag switches on a spring-and-repulsion simulation *seeded from the packing*: every
+containment edge remembers the length the packing gave it, and that becomes its rest
+length. The equilibrium of the simulation is the layout it started from.
+
+Only the node under the cursor is moved directly. Its children trail on their springs
+and settle; whatever the cluster runs into is pushed aside. The relaxation is
+position-based, with no velocity — velocity is what makes a force layout oscillate and
+drift, and drift is what the structural layout exists to avoid. It keeps running for a
+beat after release so the graph settles rather than freezing mid-motion, and the
+arrangement then sticks: nothing snaps back.
+
+The layered views have no containment to relax, so a drag there stays rigid and the row
+structure is not shaken apart.
 
 ### Semantic zoom
 

@@ -520,53 +520,157 @@ void LayoutSystem::reset(ecs::World& world) {
     }
 }
 
-// Moving a node moves everything it contains, and nudges everything it runs into.
+namespace {
+
+// Parent of each node, from the containment edges the filesystem view synthesises.
+std::unordered_map<std::uint32_t, entt::entity> containment_parents(entt::registry& reg) {
+    std::unordered_map<std::uint32_t, entt::entity> parent;
+    for (auto [e, ref, ends] : reg.view<const ecs::EdgeRef, const ecs::Endpoints>().each()) {
+        if (ref.kind == EdgeKind::Contains) parent[to_raw(ends.from)] = ends.to;
+    }
+    return parent;
+}
+
+} // namespace
+
+// The distance the structural packing gave every containment edge. Captured when a drag
+// begins, so the springs relax toward the arrangement the layout produced rather than
+// toward some invented ideal.
+void LayoutSystem::capture_rest_lengths(ecs::World& world) {
+    auto& reg = world.registry;
+    rest_.clear();
+
+    for (const auto& [child, parent] : containment_parents(reg)) {
+        const auto* pc = reg.try_get<ecs::Position>(static_cast<entt::entity>(child));
+        const auto* pp = reg.try_get<ecs::Position>(parent);
+        if (pc && pp) rest_[child] = std::max(1.0f, length(pc->p - pp->p));
+    }
+}
+
+// The dragged node follows the cursor; everything else is left to the springs.
 //
-// Dragging used to move the single node under the cursor, so pulling a directory out of
-// its place left all of its files behind -- the one thing a containment view must not
-// do. The subtree now travels with it.
-//
-// Neighbours are pushed on Position only, never on LayoutTarget, so the ordinary ease
-// keeps pulling them home. They get out of the way while the drag passes and settle
-// back afterwards, and nothing can drift permanently.
+// It used to translate the whole subtree rigidly, which moved the files but made the
+// cluster behave like a solid object. Pulling only the node the user has hold of lets
+// its children trail and settle, which is the point of relaxing at all.
 void LayoutSystem::apply_drag(ecs::World& world) {
     auto&       reg  = world.registry;
     const auto& drag = world.resource<ecs::DragState>();
     if (!drag.active || !reg.valid(drag.node)) return;
 
-    // Everything contained by the dragged node, via the containment edges the
-    // filesystem view synthesises. Other views have none, so a drag moves one node.
+    auto move = [&](entt::entity e) {
+        if (auto* pos = reg.try_get<ecs::Position>(e)) pos->p += drag.delta;
+        if (auto* t = reg.try_get<ecs::LayoutTarget>(e)) t->p += drag.delta;
+    };
+
+    if (relaxing_) {
+        move(drag.node);
+        return;
+    }
+
+    // No containment to relax -- the layered views have none -- so the drag stays rigid
+    // and takes whatever the node contains with it.
     std::unordered_map<std::uint32_t, std::vector<entt::entity>> kids;
     for (auto [e, ref, ends] : reg.view<const ecs::EdgeRef, const ecs::Endpoints>().each()) {
         if (ref.kind == EdgeKind::Contains) kids[to_raw(ends.to)].push_back(ends.from);
     }
-
     std::vector<entt::entity> moving{drag.node};
     for (std::size_t i = 0; i < moving.size() && moving.size() < 20000; ++i) {
         for (auto c : kids[to_raw(moving[i])]) moving.push_back(c);
     }
+    for (auto e : moving) move(e);
+}
 
-    for (auto e : moving) {
-        if (auto* pos = reg.try_get<ecs::Position>(e)) pos->p += drag.delta;
-        if (auto* t = reg.try_get<ecs::LayoutTarget>(e)) t->p += drag.delta;
+// Springs along containment, repulsion between overlapping discs.
+//
+// Position-based: each pass computes displacements and applies them directly, with no
+// velocity. Velocity is what makes a force layout oscillate and drift, and drift is the
+// thing this codebase spent a rewrite getting rid of. Without it the graph gives way
+// under the drag and comes to rest, rather than jiggling indefinitely.
+void LayoutSystem::relax(ecs::World& world, float dt) {
+    auto&       reg  = world.registry;
+    const auto& drag = world.resource<ecs::DragState>();
+
+    const auto parent = containment_parents(reg);
+    if (parent.empty()) return;
+
+    const entt::entity held = drag.active ? drag.node : entt::null;
+    auto held_fast = [&](entt::entity e) {
+        return e == held || reg.all_of<ecs::Pinned>(e);
+    };
+
+    // Grid for repulsion, sized to the largest thing in play so a cell's neighbours are
+    // enough. All-pairs would be quadratic at three thousand nodes.
+    float widest = 12.0f;
+    for (auto [e, d] : reg.view<const ecs::Disc>().each()) widest = std::max(widest, d.radius);
+    const float cell = widest * 4.0f;
+
+    const float step = std::clamp(dt * 60.0f, 0.25f, 2.0f);
+
+    for (int iter = 0; iter < params_.relax_iters; ++iter) {
+        // -- containment springs: hold the distance the packing chose
+        for (const auto& [child_raw, par] : parent) {
+            const auto child = static_cast<entt::entity>(child_raw);
+            auto*      pc    = reg.try_get<ecs::Position>(child);
+            auto*      pp    = reg.try_get<ecs::Position>(par);
+            if (!pc || !pp) continue;
+
+            auto it = rest_.find(child_raw);
+            if (it == rest_.end()) continue;
+
+            const Vec2  d    = pc->p - pp->p;
+            const float dist = length(d);
+            if (dist < 1e-4f) continue;
+
+            const float err  = dist - it->second;
+            const Vec2  push = normalize(d) * (err * params_.relax_spring * step * 0.5f);
+
+            if (!held_fast(child)) pc->p -= push;
+            if (!held_fast(par)) pp->p += push;
+        }
+
+        // -- repulsion: nothing may sit inside anything else
+        std::unordered_map<std::int64_t, std::vector<entt::entity>> bins;
+        auto key = [](int x, int y) {
+            return (static_cast<std::int64_t>(x) << 32) ^ static_cast<std::uint32_t>(y);
+        };
+        for (auto [e, pos] : reg.view<const ecs::Position>().each()) {
+            bins[key(static_cast<int>(std::floor(pos.p.x / cell)),
+                     static_cast<int>(std::floor(pos.p.y / cell)))]
+                .push_back(e);
+        }
+
+        for (auto [e, pos, disc] : reg.view<ecs::Position, const ecs::Disc>().each()) {
+            const int cx = static_cast<int>(std::floor(pos.p.x / cell));
+            const int cy = static_cast<int>(std::floor(pos.p.y / cell));
+            Vec2      shove{0.0f, 0.0f};
+
+            for (int dy = -1; dy <= 1; ++dy) {
+                for (int dx = -1; dx <= 1; ++dx) {
+                    auto it = bins.find(key(cx + dx, cy + dy));
+                    if (it == bins.end()) continue;
+                    for (auto other : it->second) {
+                        if (other == e) continue;
+                        const auto* op = reg.try_get<ecs::Position>(other);
+                        const auto* od = reg.try_get<ecs::Disc>(other);
+                        if (!op || !od) continue;
+
+                        const Vec2  away = pos.p - op->p;
+                        const float dist = length(away);
+                        const float want = disc.radius + od->radius + 2.0f;
+                        if (dist >= want) continue;
+                        if (dist < 1e-4f) { shove.x += 0.5f; continue; }
+                        shove += normalize(away) * ((want - dist) * 0.5f);
+                    }
+                }
+            }
+            if (!held_fast(e)) pos.p += shove * (params_.relax_repel * step);
+        }
     }
 
-    // Push whatever the moving cluster runs into out of the way.
-    const auto* centre = reg.try_get<ecs::Position>(drag.node);
-    const auto* disc   = reg.try_get<ecs::Disc>(drag.node);
-    if (!centre) return;
-    const float reach = disc ? disc->halo : 60.0f;
-
-    std::unordered_set<std::uint32_t> inside;
-    for (auto e : moving) inside.insert(to_raw(e));
-
-    for (auto [e, pos, d] : reg.view<ecs::Position, const ecs::Disc>().each()) {
-        if (inside.count(to_raw(e)) || reg.all_of<ecs::Pinned>(e)) continue;
-        const Vec2  away = pos.p - centre->p;
-        const float dist = length(away);
-        const float want = reach + d.radius;
-        if (dist >= want || dist < 1e-3f) continue;
-        pos.p += normalize(away) * (want - dist) * 0.35f;
+    // The arrangement the user produced is the arrangement they keep: targets follow
+    // the relaxed positions rather than dragging everything back to the packing.
+    for (auto [e, pos, target] : reg.view<const ecs::Position, ecs::LayoutTarget>().each()) {
+        target.p = pos.p;
     }
 }
 
@@ -590,7 +694,25 @@ void LayoutSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
                           ? 1.0f
                           : std::clamp(frame.dt * params_.ease, 0.0f, 1.0f);
 
+    // A drag switches on live relaxation, and it keeps running briefly afterwards so
+    // the graph settles instead of freezing mid-motion.
+    const auto& drag = world.resource<ecs::DragState>();
+    if (drag.active && !relaxing_ && tree_mode_) {
+        capture_rest_lengths(world);
+        relaxing_ = true;
+    }
+    if (drag.active) settle_left_ = params_.relax_settle;
+    else if (relaxing_) settle_left_ -= frame.dt;
+    if (relaxing_ && settle_left_ <= 0.0f) relaxing_ = false;
+
     apply_drag(world);
+
+    if (relaxing_) {
+        relax(world, frame.dt);
+        stats.layout_energy  = 0.0f;
+        stats.layout_settled = true;
+        return;
+    }
 
     float worst = 0.0f;
     for (auto [ent, pos, target] :

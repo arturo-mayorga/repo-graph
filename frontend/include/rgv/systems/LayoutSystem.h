@@ -23,6 +23,9 @@
 
 #include "rgv/ecs/System.h"
 
+#include <cstdint>
+#include <unordered_map>
+
 namespace rgv::systems {
 
 struct LayoutParams {
@@ -55,6 +58,18 @@ struct LayoutParams {
     // How wide the first ring of children may get, as a multiple of the largest child.
     // Past this, children spill into further shells rather than one enormous ring.
     float shell_spread    = 5.0f;
+
+    // Live relaxation, which runs only while a node is being dragged.
+    //
+    // The layout itself has no forces -- it is structural packing, deliberately, so
+    // nothing drifts. But a drag wants the graph to give way and reflow, so dragging
+    // switches on a spring-and-repulsion relaxation seeded from the packing: every
+    // containment edge remembers the length the packing gave it, and that becomes its
+    // rest length. The equilibrium of the simulation is the layout it started from.
+    float relax_spring = 0.30f;   // how firmly a child holds its distance from its parent
+    float relax_repel  = 0.55f;   // how firmly overlapping nodes push apart
+    int   relax_iters  = 3;       // relaxation passes per frame
+    float relax_settle = 1.2f;    // seconds of continued relaxation after release
 };
 
 class LayoutSystem final : public ecs::System {
@@ -70,11 +85,19 @@ private:
     void order_and_place(ecs::World& world);
     void radial_tree(ecs::World& world);
     void apply_drag(ecs::World& world);
+    void relax(ecs::World& world, float dt);
+    void capture_rest_lengths(ecs::World& world);
 
     LayoutParams params_;
     float        energy_     = 1e9f;
     int          depth_span_ = 1;
     bool         tree_mode_  = false;
+
+    // Live-relaxation state. `rest_` is captured when a drag starts, so the springs
+    // pull toward what the structural layout produced rather than toward a guess.
+    std::unordered_map<std::uint32_t, float> rest_;
+    bool  relaxing_    = false;
+    float settle_left_ = 0.0f;
 };
 
 } // namespace rgv::systems
