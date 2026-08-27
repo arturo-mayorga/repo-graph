@@ -166,7 +166,8 @@ struct EntityIndex {
 struct SceneStats {
     int nodes = 0, edges = 0;
     int changed = 0, impacted = 0, stale = 0;
-    int muted = 0;   // impacted, but below the relevance threshold
+    int muted  = 0;  // impacted, but below the relevance threshold
+    int hidden = 0;  // hubs removed from the view entirely by that threshold
 
     int render_draw_calls = 0;
     float layout_energy   = 0.0f;

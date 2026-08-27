@@ -17,6 +17,20 @@ void glfw_error(int code, const char* desc) {
     std::fprintf(stderr, "glfw error %d: %s\n", code, desc);
 }
 
+// Scroll is accumulated here rather than read back from ImGui.
+//
+// ImGui zeroes io.MouseWheel at the end of EndFrame(), which Render() calls in the
+// Present phase -- so a read from the next frame's Input phase always saw 0 and zoom
+// was silently dead. Borrowing device state from another subsystem was the mistake;
+// this system is meant to be the only thing that touches the platform.
+//
+// A file-static because GLFW callbacks carry no context and this application has one
+// window. Installed before ImGui's backend, so ImGui chains to it and both see the
+// event.
+double g_scroll_y = 0.0;
+
+void scroll_callback(GLFWwindow*, double, double y) { g_scroll_y += y; }
+
 } // namespace
 
 void WindowSystem::setup(ecs::World& world) {
@@ -56,6 +70,10 @@ void WindowSystem::setup(ecs::World& world) {
     std::printf("GL %s | %s\n", reinterpret_cast<const char*>(gl::glGetString(GL_VERSION)),
                 reinterpret_cast<const char*>(gl::glGetString(GL_RENDERER)));
     std::fflush(stdout);
+
+    // Before ImGui_ImplGlfw_InitForOpenGL, which saves this as the previous callback
+    // and chains to it.
+    glfwSetScrollCallback(window, scroll_callback);
 
     world.resource<ecs::WindowHandle>().window = window;
 }
@@ -107,9 +125,15 @@ void WindowSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
         }
     }
 
-    const ImGuiIO& io      = ImGui::GetIO();
-    input.wheel            = io.MouseWheel;   // the GLFW backend accumulates it
-    input.ui_wants_mouse   = io.WantCaptureMouse;
+    // Consumed, not sampled: a scroll tick must produce exactly one zoom step even if
+    // several arrive between frames.
+    input.wheel = static_cast<float>(g_scroll_y);
+    g_scroll_y  = 0.0;
+
+    // These genuinely belong to ImGui and are inherently one frame old, which is the
+    // documented way to use them.
+    const ImGuiIO& io       = ImGui::GetIO();
+    input.ui_wants_mouse    = io.WantCaptureMouse;
     input.ui_wants_keyboard = io.WantCaptureKeyboard;
 
     auto key = [&](int k) { return glfwGetKey(window, k) == GLFW_PRESS; };

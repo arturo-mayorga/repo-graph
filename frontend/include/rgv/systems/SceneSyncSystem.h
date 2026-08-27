@@ -23,6 +23,10 @@ private:
     void refresh_extents(ecs::World& world);
 
     bool node_visible(const ecs::World& world, const Node& n) const;
+    // The change itself, or a seed everything else is explained against. Exempt from
+    // every filter -- hiding either would remove the thing the view is about.
+    bool exempt_from_filters(const ecs::World& world, const Node& n) const;
+    void count_hidden(ecs::World& world) const;
     bool edge_visible(const ecs::World& world, const Edge& e) const;
     void upsert_node(ecs::World& world, const Node& n);
     void upsert_edge(ecs::World& world, const Edge& e);

@@ -40,8 +40,20 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-Four suites run: the contract, scene, and ECS tests (92), the UI layout tests (5),
-and fixture validation. None of them need a display.
+Four suites run and none of them need a display:
+
+| Target | Covers |
+|---|---|
+| `rgv-tests` | contract, store, scene, layout, settings, specificity, and the ECS itself |
+| `rgv-ui-tests` | panel layout invariants, driven through real ImGui frames with no window |
+| `rgv-replay <dir> --check` | fixture validation, once per fixture set |
+
+What CI should run — no GL, no ImGui, no network fetch, and warnings are errors:
+
+```sh
+cmake -S frontend -B build-headless -G Ninja -DRGV_BUILD_APP=OFF -DRGV_WARNINGS_AS_ERRORS=ON
+cmake --build build-headless && ctest --test-dir build-headless
+```
 
 Useful options:
 
@@ -78,6 +90,18 @@ input always wins over `--hover`, so pointing at something else just works.
 | `space` / `.` / `R` | play-pause / step one event / restart |
 | `Esc` | clear selection |
 
+### Verifying a change you can see
+
+The app is interactive, so reproducible states are flags rather than clicks — that is
+what the `--scenario`/`--at`/`--select`/`--hover`/`--text-settings` options are for.
+`--fullscreen` is real GLFW fullscreen, so demoing never depends on the window manager.
+
+Screenshot with whatever your compositor provides (`grim` on Wayland) and read the
+image back. One trap worth knowing: **if a capture comes back blank or the screenshot
+tool hangs, check whether the screen is locked before suspecting the code.** Draw calls
+being issued while the capture shows nothing means the capture is lying, not the
+renderer.
+
 ### Semantic zoom
 
 Nodes are labelled boxes when you are close enough to read them and collapse to small
@@ -112,9 +136,15 @@ scores near 0; a package with one dependent scores 1. An impacted node's **relev
 is then the weakest specificity along its explanation — one hop through a hub makes the
 whole chain unremarkable, because "everything depends on the hub" was already known.
 
-The **relevance** slider in the toolbar filters on that score. On the synthetic fixture
-it takes 178 impacted packages down to 16, and the 162 it mutes are exactly the ones
-whose only claim to being impacted is that they depend on `core`, `util`, or `types`.
+The **relevance** slider in the toolbar filters on that score, and does two things:
+
+- **Hides the hubs themselves.** Above the threshold a low-specificity package leaves
+  the view entirely — literal stop-word removal. On `monorepo-ts` at 0.50, `logger`
+  (0.06) and `database` (0.33) disappear and the architecture underneath becomes
+  legible.
+- **Mutes impact that only routes through one.** On the synthetic fixture it takes 178
+  impacted packages down to 16; the 162 it mutes are the ones whose only claim to being
+  impacted is that they depend on `core`, `util`, or `types`.
 
 ```sh
 ./build/bin/rgv-replay fixtures/large-synthetic --scenario 0 | grep "package impact"
@@ -125,8 +155,8 @@ whose only claim to being impacted is that they depend on `core`, `util`, or `ty
 explanation*. It says nothing about importance — and when a hub is the thing that
 **changed**, the blast radius is real and enormous. So:
 
-- a seed is never discounted by its own score, and the relevance filter can never mute
-  what the agent actually touched;
+- a seed is never discounted by its own score, and the filter can neither mute nor hide
+  what the agent actually touched, nor an impact seed;
 - a changed hub raises a **HUB CHANGE** banner naming it, its dependent count, and its
   reach, plus expanding rings on the node itself. `07-hub-change.jsonl` is that case:
   `@acme/logger` moves, 7 of 8 packages are impacted, and every individual result
@@ -203,93 +233,34 @@ Editing a scenario and pressing **Reload** in the app re-reads it from disk.
 
 ## Architecture
 
-An entity-component-system, taken seriously. Three kinds of thing, and nothing else:
-
-**Entities** — two archetypes sharing one registry. A node carries `NodeRef`; an edge
-carries `EdgeRef` and `Endpoints`. Those are the tags, and systems name them explicitly
-in their queries rather than relying on which components an archetype happens to lack.
-
-**Components** — per-entity data, iterated in bulk. Every one names the single system
-that owns its value, and no other system writes it. `SceneSyncSystem` creates entities
-and so attaches whole archetypes, but constructing is not owning.
-
-**Resources** — the state there is exactly one of: the graph store, the camera, the
-filters, the selection. Held in the registry's context, so a system's dependencies are
-visible in its body instead of reached through an owner object.
-
-**Systems** — all the behaviour, all with the same shape: given the world and the
-frame, read and write components and resources. Six phases order the frame; insertion
-order orders within a phase. `rgv --schedule` prints it:
-
 ```
-Input/WindowSystem          the only system that touches the OS
-Input/PickingSystem         resolves what the pointer is over, once
-Input/NavigationSystem      pan, zoom, drag, framing
-Input/TransportSystem       play / step / restart, if the source has a timeline
-Ingest/SourceSystem         <- the seam: fixture player today, watcher or socket later
-Sync/CommandSystem          drains the command queue
-Sync/SpecificitySystem      IDF over in-degree, plus hub alerts
-Sync/SceneSyncSystem        store deltas -> entities. The only creator/destroyer.
-Simulate/ImpactStateSystem  Changed / Impacted / HubSeed
-Simulate/SelectionSystem    Selected / Hovered / OnExplainedPath
-Simulate/LayoutSystem       depth, row ordering, easing
-Simulate/StyleSystem        derives Style. The renderer reads it verbatim.
-Render/UiSystem             panels first: they decide how much room the graph gets
-Render/GraphRenderSystem    three instanced draw calls
-Render/OverlaySystem        labels, legend, hover card
-Present/PresentSystem       swap
+IGraphSource ──poll──▶ GraphStore ──dirty set──▶ World (EnTT) ──▶ GL renderer
+  fixture │ live         single writer            components          3 draw calls
+                         of graph state           + 16 systems        + ImGui panels
 ```
 
-`main.cpp` is the world, the schedule, and the loop. Adding a capability is adding a
-system; attaching live data is constructing a different `IGraphSource`. Neither touches
-that file.
+An entity-component-system: resources are the state there is exactly one of, components
+are per-entity data with a single owning system each, and systems are all the behaviour.
+Six phases order the frame — `rgv --schedule` prints it. `main.cpp` is the world, the
+schedule, and the loop; adding a capability is adding a system, and attaching live data
+is constructing a different `IGraphSource`.
 
-### Rules the design enforces
-
-**One writer per component.** `Style` used to be written by the styling pass and then
-overridden again at draw time — two places computing the same thing, the second
-silently winning. Now `StyleSystem` is the only writer and the renderer is dumb.
-
-**No duplicated state.** Selection lives in one resource; `Selected`, `Hovered`, and
-`OnExplainedPath` are derived from it by one system. Previously the id and the
-component were maintained side by side at three call sites, and one of them — selecting
-from the inspector — set the id but not the component, so the canvas showed no outline.
-That bug is now unrepresentable, and `test_scene.cpp` holds the line.
-
-**Panels never mutate.** They read resources and push commands. `CommandSystem` is the
-single place anything is applied, so there is one order in which things happen.
-
-**Nothing derived is cached without a reason.** Most Simulate systems run every frame
-as linear passes with no allocation after warm-up. Only `SpecificitySystem`, the one
-that is genuinely superlinear in the graph, is gated on its inputs changing.
-
-### Layout and rendering
-
-Layout is layered, not force-directed: dependency depth fixes the row, barycentre
-sweeps order within it. A spring simulation was tried first and produced a hairball
-that never stopped drifting. Rows run so a package depending on nothing sits at the
-bottom and its dependents stack above — impact rises, the way the spec draws it.
-
-Text is drawn through ImGui's draw list rather than the GL renderer: a glyph atlas is a
-subsystem, and ImGui already ships one. Nodes, edges, and arrowheads are three
-instanced draw calls with rounded-rectangle SDFs in the fragment shader.
-
-Graph labels are drawn in world space, so they scale with zoom and can never overflow
-the box that was sized to hold them. That single fact — the on-screen size of a label —
-drives semantic zoom, and it is why the layout footprint a node reserves is kept
-separate from the size it is drawn at: zooming must never reflow the graph.
-
-### Testing the pipeline, not a stand-in
-
-`tests/Harness.h` builds a real world and a real schedule with everything except the
-platform, the GPU, and the data source. Tests tick it and assert on components, so they
-exercise the systems that ship. `test_schedule.cpp` covers the ECS itself — phase
-ordering, resource identity, teardown order — and `test_ui_layout.cpp` drives real
-ImGui frames with no window at all.
+**[docs/architecture.md](docs/architecture.md)** has the design in full: the schedule,
+the rules it enforces and why, layout and rendering, and how the pipeline is tested.
 
 ## What is not here yet
 
-No backend. No live source. No symbol level. The temporal-compare view (FR-34) is
-represented in the contract (`valid_to` on edges) but has no dedicated view mode.
-Open questions on the contract itself are listed at the end of
-`docs/frontend-contract.md`.
+No backend, no live source, no symbol level. The temporal-compare view (FR-34) is
+represented in the contract (`valid_to` on edges) but has no view mode.
+
+Two gaps worth knowing before building on this:
+
+- **The fixture generators are not committed.** The JSON is the artefact; the scripts
+  that produced it were throwaway. Regenerating a fixture means rewriting the generator.
+  Deliberate — a fixture you cannot diff is a fixture you cannot trust — but it makes
+  large edits to `large-synthetic` more expensive than they look.
+- **Architectural specificity assumes the whole graph is present.** It is derived
+  frontend-side from in-degree, so if the backend ever streams a subgraph the scores
+  skew silently: a hub looks specific because most of its dependents were not sent.
+
+Open questions on the contract itself are at the end of `docs/frontend-contract.md`.

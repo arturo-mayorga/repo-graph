@@ -90,17 +90,21 @@ bool SceneSyncSystem::node_visible(const ecs::World& world, const Node& n) const
         return false;
     }
     if (n.freshness == Freshness::Stale && !f.show_stale) return false;
+
+    // Stop words. A package most of the repository depends on adds no architectural
+    // information -- "X depends on it" is true of nearly everything -- so above the
+    // threshold it leaves the view entirely rather than being drawn dimmer. Same idea
+    // as dropping "the" from a query, and the reason specificity is measured at all.
+    if (f.min_relevance > 0.0f && derived.specificity.population() > 1 &&
+        derived.specificity.specificity(n.id) < f.min_relevance &&
+        !exempt_from_filters(world, n)) {
+        return false;
+    }
+
     if (f.show_unaffected) return true;
 
     // "Show me only what the agent touched plus affected context."
-    for (const auto& c : store.changed_files()) {
-        if (c.node_id == n.id) return true;
-        // A changed file keeps its owning package on screen at architecture level.
-        if (view.mode == ecs::ViewMode::Architecture &&
-            store.ancestor_of_kind(c.node_id, n.kind) == n.id) {
-            return true;
-        }
-    }
+    if (exempt_from_filters(world, n)) return true;
     if (const ImpactResult* r = store.impact(view.level)) {
         for (const auto& in : r->impacted_nodes) {
             if (in.node_id != n.id || in.min_distance > f.max_impact_depth) continue;
@@ -111,6 +115,46 @@ bool SceneSyncSystem::node_visible(const ecs::World& world, const Node& n) const
         }
     }
     return false;
+}
+
+bool SceneSyncSystem::exempt_from_filters(const ecs::World& world, const Node& n) const {
+    const auto& store = world.resource<GraphStore>();
+    const auto& view  = world.resource<ecs::ViewSettings>();
+
+    for (const auto& c : store.changed_files()) {
+        if (c.node_id == n.id) return true;
+        // A changed file keeps its owning package on screen at architecture level.
+        if (store.ancestor_of_kind(c.node_id, n.kind) == n.id) return true;
+    }
+    if (const ImpactResult* r = store.impact(view.level)) {
+        for (const auto& seed : r->seed_nodes) {
+            if (seed == n.id) return true;
+        }
+    }
+    return false;
+}
+
+// Counted over the nodes the current view could show, so it reports stop words dropped
+// rather than everything the view mode already excludes.
+void SceneSyncSystem::count_hidden(ecs::World& world) const {
+    const auto& store   = world.resource<GraphStore>();
+    const auto& filters = world.resource<ecs::Filters>();
+    const auto& derived = world.resource<ecs::DerivedState>();
+    auto&       stats   = world.resource<ecs::SceneStats>();
+
+    stats.hidden = 0;
+    if (filters.min_relevance <= 0.0f || derived.specificity.population() <= 1) return;
+
+    for (const auto& [id, n] : store.nodes()) {
+        if (derived.specificity.dependents(id) == 0 &&
+            derived.specificity.specificity(id) >= 1.0f) {
+            continue;   // not in the scored population at all
+        }
+        if (derived.specificity.specificity(id) < filters.min_relevance &&
+            !exempt_from_filters(world, n)) {
+            ++stats.hidden;
+        }
+    }
 }
 
 bool SceneSyncSystem::edge_visible(const ecs::World& world, const Edge& e) const {
@@ -261,6 +305,7 @@ void SceneSyncSystem::rebuild(ecs::World& world) {
     for (const auto& [id, n] : store.nodes()) {
         if (node_visible(world, n)) upsert_node(world, n);
     }
+    count_hidden(world);
     for (const auto& [id, e] : store.edges()) {
         if (edge_visible(world, e)) upsert_edge(world, e);
     }

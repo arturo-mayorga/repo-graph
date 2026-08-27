@@ -324,8 +324,8 @@ void draw_top_bar(ecs::World& world) {
         flow.item(w);
         ImGui::SetNextItemWidth(w);
         if (ImGui::SliderFloat("relevance", &f.min_relevance, 0.0f, 1.0f, "%.2f")) {
-            
-            if (!f.show_unaffected) ui.world.resource<ecs::SceneRequests>().rebuild = true;
+            // Visibility depends on this now, not just emphasis.
+            ui.world.resource<ecs::SceneRequests>().rebuild = true;
         }
         flow.placed();
         if (ImGui::IsItemHovered()) {
@@ -511,8 +511,8 @@ void draw_session_panel(ecs::World& world) {
     ImGui::TextDisabled("on screen");
     ImGui::Text("%d nodes   %d edges", s.nodes, s.edges);
     ImGui::Text("%d changed   %d impacted   %d stale", s.changed, s.impacted, s.stale);
-    if (s.muted > 0) {
-        ImGui::TextDisabled("%d muted below relevance %.2f", s.muted,
+    if (s.muted > 0 || s.hidden > 0) {
+        ImGui::TextDisabled("%d hidden   %d muted   below relevance %.2f", s.hidden, s.muted,
                             static_cast<double>(ui.filters.min_relevance));
     }
     ImGui::TextDisabled("%d draw calls", ui.stats.render_draw_calls);

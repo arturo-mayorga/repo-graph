@@ -326,3 +326,117 @@ TEST(a_changed_hub_is_flagged_on_the_node_itself) {
     // An ordinary changed package carries no such flag.
     CHECK(h.registry().try_get<ecs::HubSeed>(h.node("pkg:auth")) == nullptr);
 }
+
+// -- stop-word removal: hiding the hubs themselves ---------------------------
+
+// The point of the whole IDF exercise. A package most of the repository depends on is
+// the architectural equivalent of the word "the": it clutters every view and explains
+// nothing, so above a threshold it should leave the picture entirely -- not merely be
+// drawn dimmer.
+TEST(raising_the_relevance_threshold_hides_hub_packages_entirely) {
+    GraphStore store;
+    store.reset(hub_graph());
+
+    rgvtest::Harness h;
+    h.world.resource<GraphStore>() = std::move(store);
+    h.view().mode  = ecs::ViewMode::Architecture;
+    h.view().level = Level::Package;
+
+    // log: 3 of 4 packages depend on it -> specificity ~0.21
+    // auth: 1 dependent -> specificity 1.0
+    h.filters().min_relevance = 0.0f;
+    h.request_rebuild();
+    h.tick();
+    CHECK(h.node("pkg:log") != entt::null);
+
+    h.filters().min_relevance = 0.5f;
+    h.request_rebuild();
+    h.tick();
+    CHECK(h.node("pkg:log") == entt::null);    // the stop word is gone
+    CHECK(h.node("pkg:auth") != entt::null);   // the content word stays
+}
+
+// Edges into a hidden node must go with it, or the renderer walks into an endpoint
+// that no longer exists.
+TEST(hiding_a_hub_removes_the_edges_that_pointed_at_it) {
+    GraphStore store;
+    store.reset(hub_graph());
+
+    rgvtest::Harness h;
+    h.world.resource<GraphStore>() = std::move(store);
+    h.view().mode             = ecs::ViewMode::Architecture;
+    h.view().level            = Level::Package;
+    h.filters().min_relevance = 0.5f;
+    h.request_rebuild();
+    h.tick();
+
+    CHECK(h.edge("e:auth->log") == entt::null);
+    CHECK(h.edge("e:api->auth") != entt::null);
+}
+
+// The rule that keeps this safe. A hub edit is the loudest event the product can
+// report, so the filter that hides hubs must never hide one that just changed.
+TEST(a_changed_hub_is_never_hidden_however_high_the_filter) {
+    GraphStore store;
+    store.reset(hub_graph());
+
+    rgvtest::Harness h;
+    h.world.resource<GraphStore>() = std::move(store);
+    push_change(h.store(), "pkg:log");
+
+    h.view().mode             = ecs::ViewMode::Architecture;
+    h.view().level            = Level::Package;
+    h.filters().min_relevance = 1.0f;   // maximum filtering
+    h.request_rebuild();
+    h.tick();
+
+    CHECK(h.node("pkg:log") != entt::null);
+    CHECK(h.registry().all_of<ecs::Changed>(h.node("pkg:log")));
+}
+
+// A seed of the current impact result is what everything else is explained against;
+// hiding it would leave paths pointing at nothing.
+TEST(an_impact_seed_is_never_hidden_by_the_filter) {
+    GraphStore store;
+    store.reset(hub_graph());
+
+    rgvtest::Harness h;
+    h.world.resource<GraphStore>() = std::move(store);
+
+    ImpactResult r;
+    r.level          = Level::Package;
+    r.seed_nodes     = {"pkg:log"};
+    r.impacted_nodes = {impacted("pkg:log", 0, {}), impacted("pkg:web", 1, {"e:web->log"})};
+    push_impact(h.store(), std::move(r));
+
+    h.view().mode             = ecs::ViewMode::Architecture;
+    h.view().level            = Level::Package;
+    h.filters().min_relevance = 1.0f;
+    h.request_rebuild();
+    h.tick();
+
+    CHECK(h.node("pkg:log") != entt::null);
+}
+
+// The count must report stop words dropped, not everything the view mode already
+// excludes -- it read "26 hidden" on an 8-package repo before this.
+TEST(the_hidden_count_reports_stop_words_not_mode_filtered_nodes) {
+    GraphStore store;
+    store.reset(hub_graph());
+
+    rgvtest::Harness h;
+    h.world.resource<GraphStore>() = std::move(store);
+    h.view().mode  = ecs::ViewMode::Architecture;
+    h.view().level = Level::Package;
+
+    h.filters().min_relevance = 0.0f;
+    h.request_rebuild();
+    h.tick();
+    CHECK_EQ(h.stats().hidden, 0);
+
+    // Only pkg:log scores below 0.5; auth, api and web are all fully specific.
+    h.filters().min_relevance = 0.5f;
+    h.request_rebuild();
+    h.tick();
+    CHECK_EQ(h.stats().hidden, 1);
+}

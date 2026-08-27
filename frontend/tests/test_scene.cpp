@@ -502,3 +502,81 @@ TEST(clicking_a_node_selects_it_through_a_command) {
     CHECK_EQ(h.selection().node, std::string("pkg:b"));
     CHECK(h.registry().all_of<ecs::Selected>(target));
 }
+
+// -- navigation ---------------------------------------------------------------
+
+// Regression: the wheel used to be read from ImGui's io, which zeroes it in
+// EndFrame() -- so by the time the next frame's Input phase looked, it was always 0
+// and zoom was silently dead. WindowSystem now owns the accumulator.
+TEST(scrolling_zooms_the_camera) {
+    auto h = make();
+    h.settle();
+    view::fit_camera(h.world, {});
+
+    const float before = h.camera().zoom;
+    h.input().mouse    = Vec2{600.0f, 400.0f};   // inside the free rect
+    h.input().wheel    = 1.0f;
+    h.tick();
+
+    CHECK(h.camera().zoom > before);
+}
+
+TEST(scrolling_down_zooms_out) {
+    auto h = make();
+    h.settle();
+    view::fit_camera(h.world, {});
+
+    const float before = h.camera().zoom;
+    h.input().mouse    = Vec2{600.0f, 400.0f};
+    h.input().wheel    = -1.0f;
+    h.tick();
+
+    CHECK(h.camera().zoom < before);
+}
+
+// The thing under the pointer must stay under the pointer, or zooming feels like the
+// graph is sliding away from you.
+TEST(zooming_keeps_the_point_under_the_cursor_fixed) {
+    auto h = make();
+    h.settle();
+    view::fit_camera(h.world, {});
+
+    const Vec2 cursor = Vec2{700.0f, 300.0f};
+    const Vec2 before = h.camera().screen_to_world(cursor);
+
+    h.input().mouse = cursor;
+    h.input().wheel = 2.0f;
+    h.tick();
+
+    const Vec2 after = h.camera().screen_to_world(cursor);
+    CHECK(std::abs(after.x - before.x) < 0.5f);
+    CHECK(std::abs(after.y - before.y) < 0.5f);
+}
+
+// Once the user has placed the view, layout stops moving it.
+TEST(scrolling_takes_the_camera_off_auto_fit) {
+    auto h = make();
+    CHECK(h.world.resource<ecs::CameraControl>().auto_fit);
+
+    h.input().mouse = Vec2{600.0f, 400.0f};
+    h.input().wheel = 1.0f;
+    h.tick();
+
+    CHECK(!h.world.resource<ecs::CameraControl>().auto_fit);
+}
+
+// A panel that wants the wheel must get it; otherwise scrolling the event log also
+// zooms the graph behind it.
+TEST(scrolling_over_a_panel_does_not_zoom_the_graph) {
+    auto h = make();
+    h.settle();
+    view::fit_camera(h.world, {});
+
+    const float before        = h.camera().zoom;
+    h.input().mouse           = Vec2{600.0f, 400.0f};
+    h.input().wheel           = 1.0f;
+    h.input().ui_wants_mouse  = true;
+    h.tick();
+
+    CHECK_EQ(h.camera().zoom, before);
+}
