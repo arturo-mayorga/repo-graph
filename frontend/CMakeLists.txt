@@ -49,6 +49,7 @@ target_include_directories(rgv_entt INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/third_
 # keeping them out of the app target is what lets the tests assert things like "a
 # stale impact conclusion must not be styled as current" without a GPU.
 add_library(rgv_core STATIC
+  # contract, store, fixtures
   src/contract/Types.cpp
   src/model/GraphStore.cpp
   src/fixture/Json.cpp
@@ -56,9 +57,28 @@ add_library(rgv_core STATIC
   src/sim/ImpactSim.cpp
   src/analysis/Specificity.cpp
   src/config/Settings.cpp
-  src/ecs/SceneSync.cpp
-  src/ecs/LayoutSystem.cpp
+
+  # the ECS itself
+  src/ecs/System.cpp
+  src/ecs/Resources.cpp
+
+  # view policy: pure functions shared by rendering, picking, and layout
+  src/view/SemanticZoom.cpp
+  src/view/CameraFit.cpp
   src/ui/Theme.cpp
+
+  # systems that need neither a GPU nor a window, and are therefore testable headless
+  src/systems/SourceSystem.cpp
+  src/systems/CommandSystem.cpp
+  src/systems/SpecificitySystem.cpp
+  src/systems/SceneSyncSystem.cpp
+  src/systems/ImpactStateSystem.cpp
+  src/systems/SelectionSystem.cpp
+  src/systems/LayoutSystem.cpp
+  src/systems/StyleSystem.cpp
+  src/systems/PickingSystem.cpp
+  src/systems/NavigationSystem.cpp
+  src/systems/TransportSystem.cpp
 )
 target_include_directories(rgv_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(rgv_core PUBLIC rgv_warnings rgv_entt PRIVATE rgv_json)
@@ -83,6 +103,7 @@ if(RGV_BUILD_TESTS)
     tests/test_scene.cpp
     tests/test_settings.cpp
     tests/test_specificity.cpp
+    tests/test_schedule.cpp
   )
   target_include_directories(rgv-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
   target_compile_definitions(rgv-tests PRIVATE RGV_FIXTURE_DIR="${RGV_FIXTURE_DIR}")
@@ -117,10 +138,16 @@ endif()
 
 # --- application -------------------------------------------------------------
 if(RGV_BUILD_APP)
+  # Only the systems that genuinely need a window, a GPU, or ImGui live here.
   add_executable(rgv
     app/main.cpp
+    app/Options.cpp
+    app/FixtureBootstrap.cpp
     src/render/GL.cpp
     src/render/GraphRenderer.cpp
+    src/systems/WindowSystem.cpp
+    src/systems/GraphRenderSystem.cpp
+    src/systems/UiSystem.cpp
     src/ui/Panels.cpp
     src/ui/ImGuiStyle.cpp
   )

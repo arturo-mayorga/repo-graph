@@ -1,27 +1,29 @@
-#include "rgv/ecs/LayoutSystem.h"
+#include "rgv/systems/LayoutSystem.h"
+
+#include "rgv/ecs/Components.h"
+#include "rgv/ecs/Resources.h"
 
 #include <algorithm>
 #include <cmath>
 #include <unordered_map>
 #include <vector>
 
-namespace rgv::ecs {
+namespace rgv::systems {
 namespace {
 
-entt::entity to_entity(std::uint32_t v) { return static_cast<entt::entity>(v); }
 std::uint32_t to_raw(entt::entity e) { return static_cast<std::uint32_t>(e); }
 
 } // namespace
 
-void LayoutSystem::assign_depths(Scene& scene) {
-    auto& reg = scene.registry;
+void LayoutSystem::assign_depths(ecs::World& world) {
+    auto& reg = world.registry;
 
     // Adjacency over what is on screen, not over the whole store: depth has to
     // describe the picture the user is actually looking at.
     std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> deps;
-    for (auto [ent, ref, ends] : reg.view<const EdgeRef, const Endpoints>().each()) {
+    for (auto [ent, ref, ends] : reg.view<const ecs::EdgeRef, const ecs::Endpoints>().each()) {
         if (ref.kind == EdgeKind::Contains) continue;
-        deps[ends.from].push_back(ends.to);
+        deps[to_raw(ends.from)].push_back(to_raw(ends.to));
     }
 
     std::unordered_map<std::uint32_t, int> depth;
@@ -30,7 +32,7 @@ void LayoutSystem::assign_depths(Scene& scene) {
 
     // Longest path to a sink. Iterative because a deep monorepo would blow a
     // recursive stack, and cycle-tolerant because import graphs really do cycle.
-    for (auto [ent, ref] : reg.view<const NodeRef>().each()) {
+    for (auto [ent, ref] : reg.view<const ecs::NodeRef>().each()) {
         const std::uint32_t root = to_raw(ent);
         if (state[root] == 2) continue;
         stack.push_back(root);
@@ -58,18 +60,18 @@ void LayoutSystem::assign_depths(Scene& scene) {
     }
 
     depth_span_ = 1;
-    for (auto [ent, ref] : reg.view<const NodeRef>().each()) {
+    for (auto [ent, ref] : reg.view<const ecs::NodeRef>().each()) {
         const int d = depth[to_raw(ent)];
-        reg.emplace_or_replace<Depth>(ent, Depth{d});
+        reg.emplace_or_replace<ecs::Depth>(ent, ecs::Depth{d});
         depth_span_ = std::max(depth_span_, d + 1);
     }
 }
 
-void LayoutSystem::order_and_place(Scene& scene) {
-    auto& reg = scene.registry;
+void LayoutSystem::order_and_place(ecs::World& world) {
+    auto& reg = world.registry;
 
     std::vector<std::vector<entt::entity>> layers(static_cast<std::size_t>(depth_span_));
-    for (auto [ent, ref, depth] : reg.view<const NodeRef, const Depth>().each()) {
+    for (auto [ent, ref, depth] : reg.view<const ecs::NodeRef, const ecs::Depth>().each()) {
         layers[static_cast<std::size_t>(depth.value)].push_back(ent);
     }
 
@@ -78,21 +80,21 @@ void LayoutSystem::order_and_place(Scene& scene) {
     // no position yet sort last, deterministically.
     for (auto& row : layers) {
         std::sort(row.begin(), row.end(), [&](entt::entity a, entt::entity b) {
-            const auto* pa = reg.try_get<Position>(a);
-            const auto* pb = reg.try_get<Position>(b);
+            const auto* pa = reg.try_get<ecs::Position>(a);
+            const auto* pb = reg.try_get<ecs::Position>(b);
             if (pa && pb) return pa->p.x < pb->p.x;
             if (pa != pb) return pa != nullptr;
-            const auto* la = reg.try_get<Label>(a);
-            const auto* lb = reg.try_get<Label>(b);
+            const auto* la = reg.try_get<ecs::Label>(a);
+            const auto* lb = reg.try_get<ecs::Label>(b);
             return (la ? la->text : "") < (lb ? lb->text : "");
         });
     }
 
     std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> up, down;
-    for (auto [ent, ref, ends] : reg.view<const EdgeRef, const Endpoints>().each()) {
+    for (auto [ent, ref, ends] : reg.view<const ecs::EdgeRef, const ecs::Endpoints>().each()) {
         if (ref.kind == EdgeKind::Contains) continue;
-        up[ends.from].push_back(ends.to);     // toward lower depth
-        down[ends.to].push_back(ends.from);   // toward higher depth
+        up[to_raw(ends.from)].push_back(to_raw(ends.to));     // toward lower depth
+        down[to_raw(ends.to)].push_back(to_raw(ends.from));   // toward higher depth
     }
 
     // Barycentre sweeps. Each node drifts toward the average index of its neighbours
@@ -103,7 +105,7 @@ void LayoutSystem::order_and_place(Scene& scene) {
         return idx;
     };
 
-    for (int sweep = 0; sweep < params.sweeps; ++sweep) {
+    for (int sweep = 0; sweep < params_.sweeps; ++sweep) {
         const bool downward = (sweep % 2) == 0;
         for (std::size_t li = 0; li < layers.size(); ++li) {
             const std::size_t l = downward ? li : layers.size() - 1 - li;
@@ -145,21 +147,21 @@ void LayoutSystem::order_and_place(Scene& scene) {
     auto row_width = [&](const std::vector<entt::entity>& row) {
         float total = 0.0f;
         for (auto e : row) {
-            const auto* ext = reg.try_get<Extent>(e);
-            total += (ext ? ext->half.x * 2.0f : 100.0f) + params.node_gap;
+            const auto* ext = reg.try_get<ecs::Extent>(e);
+            total += (ext ? ext->half.x * 2.0f : 100.0f) + params_.node_gap;
         }
-        return row.empty() ? 0.0f : total - params.node_gap;
+        return row.empty() ? 0.0f : total - params_.node_gap;
     };
 
     float widest = 0.0f;
     for (const auto& row : layers) widest = std::max(widest, row_width(row));
 
-    const Vec2  free   = scene.view.free_size;
+    const Vec2  free   = world.resource<ecs::Viewport>().free_size;
     const float aspect = (free.x > 1.0f && free.y > 1.0f) ? free.x / free.y : 1.6f;
     const int   gaps   = std::max(1, static_cast<int>(layers.size()) - 1);
     const float layer_gap =
         std::clamp(widest / aspect / static_cast<float>(gaps),
-                   params.layer_gap, params.layer_gap * 12.0f);
+                   params_.layer_gap, params_.layer_gap * 12.0f);
 
     // Place: rows are centred on x = 0, and depth 0 sits at the bottom so impact
     // reads upward, the way the spec draws it.
@@ -170,46 +172,46 @@ void LayoutSystem::order_and_place(Scene& scene) {
         const float y = -static_cast<float>(l) * layer_gap;
         float       x = -total * 0.5f;
         for (auto e : row) {
-            const auto* ext = reg.try_get<Extent>(e);
+            const auto* ext = reg.try_get<ecs::Extent>(e);
             const float w   = ext ? ext->half.x * 2.0f : 100.0f;
             const Vec2  target{x + w * 0.5f, y};
-            x += w + params.node_gap;
+            x += w + params_.node_gap;
 
-            if (reg.all_of<Pinned>(e)) {
+            if (reg.all_of<ecs::Pinned>(e)) {
                 // A pinned node keeps its slot in the ordering but not its target:
                 // the user placed it, so layout stops arguing.
-                if (const auto* p = reg.try_get<Position>(e)) {
-                    reg.emplace_or_replace<LayoutTarget>(e, LayoutTarget{p->p});
+                if (const auto* p = reg.try_get<ecs::Position>(e)) {
+                    reg.emplace_or_replace<ecs::LayoutTarget>(e, ecs::LayoutTarget{p->p});
                     continue;
                 }
             }
-            reg.emplace_or_replace<LayoutTarget>(e, LayoutTarget{target});
-            if (!reg.all_of<Position>(e)) reg.emplace<Position>(e, Position{target});
+            reg.emplace_or_replace<ecs::LayoutTarget>(e, ecs::LayoutTarget{target});
+            if (!reg.all_of<ecs::Position>(e)) reg.emplace<ecs::Position>(e, ecs::Position{target});
         }
     }
     energy_ = 1e9f;
 }
 
-void LayoutSystem::tidy_tree(Scene& scene) {
-    auto& reg = scene.registry;
+void LayoutSystem::tidy_tree(ecs::World& world) {
+    auto& reg = world.registry;
 
     std::unordered_map<std::uint32_t, std::vector<entt::entity>> kids;
     std::unordered_map<std::uint32_t, std::uint32_t>             parent;
-    for (auto [ent, ref, ends] : reg.view<const EdgeRef, const Endpoints>().each()) {
+    for (auto [ent, ref, ends] : reg.view<const ecs::EdgeRef, const ecs::Endpoints>().each()) {
         if (ref.kind != EdgeKind::Contains) continue;
-        kids[ends.to].push_back(to_entity(ends.from));
-        parent[ends.from] = ends.to;
+        kids[to_raw(ends.to)].push_back(ends.from);
+        parent[to_raw(ends.from)] = to_raw(ends.to);
     }
 
     auto by_label = [&](entt::entity a, entt::entity b) {
-        const auto* la = reg.try_get<Label>(a);
-        const auto* lb = reg.try_get<Label>(b);
+        const auto* la = reg.try_get<ecs::Label>(a);
+        const auto* lb = reg.try_get<ecs::Label>(b);
         return (la ? la->text : "") < (lb ? lb->text : "");
     };
     for (auto& [k, v] : kids) std::sort(v.begin(), v.end(), by_label);
 
     std::vector<entt::entity> roots;
-    for (auto [ent, ref] : reg.view<const NodeRef>().each()) {
+    for (auto [ent, ref] : reg.view<const ecs::NodeRef>().each()) {
         if (!parent.count(to_raw(ent))) roots.push_back(ent);
     }
     std::sort(roots.begin(), roots.end(), by_label);
@@ -238,7 +240,7 @@ void LayoutSystem::tidy_tree(Scene& scene) {
                 // Centre a parent over the span its children occupy.
                 float lo = 1e30f, hi = -1e30f;
                 for (auto c : ch) {
-                    if (const auto* t = reg.try_get<LayoutTarget>(c)) {
+                    if (const auto* t = reg.try_get<ecs::LayoutTarget>(c)) {
                         lo = std::min(lo, t->p.y);
                         hi = std::max(hi, t->p.y);
                     }
@@ -246,9 +248,9 @@ void LayoutSystem::tidy_tree(Scene& scene) {
                 y = (lo + hi) * 0.5f;
             }
             const Vec2 target{static_cast<float>(f.depth) * col, y};
-            reg.emplace_or_replace<LayoutTarget>(f.node, LayoutTarget{target});
-            if (!reg.all_of<Position>(f.node)) reg.emplace<Position>(f.node, Position{target});
-            reg.emplace_or_replace<Depth>(f.node, Depth{f.depth});
+            reg.emplace_or_replace<ecs::LayoutTarget>(f.node, ecs::LayoutTarget{target});
+            if (!reg.all_of<ecs::Position>(f.node)) reg.emplace<ecs::Position>(f.node, ecs::Position{target});
+            reg.emplace_or_replace<ecs::Depth>(f.node, ecs::Depth{f.depth});
             stack.pop_back();
         }
         slot += row;   // gap between top-level trees
@@ -256,33 +258,48 @@ void LayoutSystem::tidy_tree(Scene& scene) {
     energy_ = 1e9f;
 }
 
-void LayoutSystem::reset(Scene& scene, const GraphStore& store) {
-    tree_mode_ = scene.view.mode == ViewMode::Filesystem;
+void LayoutSystem::reset(ecs::World& world) {
+    tree_mode_ = world.resource<ecs::ViewSettings>().mode == ecs::ViewMode::Filesystem;
     if (tree_mode_) {
-        tidy_tree(scene);
+        tidy_tree(world);
     } else {
-        assign_depths(scene);
-        order_and_place(scene);
+        assign_depths(world);
+        order_and_place(world);
     }
-    scene.needs_layout_reset = false;
 }
 
-void LayoutSystem::step(Scene& scene, float dt) {
-    if (!scene.view.layout_running) return;
+void LayoutSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
+    auto& requests = world.resource<ecs::SceneRequests>();
+    if (requests.relayout) {
+        reset(world);
+        requests.relayout = false;
+    }
 
-    auto&       reg = scene.registry;
-    const float t   = params.ease <= 0.0f
+    auto&       stats = world.resource<ecs::SceneStats>();
+    const auto& view  = world.resource<ecs::ViewSettings>();
+    if (!view.layout_running) {
+        stats.layout_energy  = energy_;
+        stats.layout_settled = energy_ < 0.5f;
+        return;
+    }
+
+    auto&       reg = world.registry;
+    const float t   = params_.ease <= 0.0f
                           ? 1.0f
-                          : std::clamp(dt * params.ease, 0.0f, 1.0f);
+                          : std::clamp(frame.dt * params_.ease, 0.0f, 1.0f);
 
     float worst = 0.0f;
-    for (auto [ent, pos, target] : reg.view<Position, const LayoutTarget>().each()) {
-        if (reg.all_of<Pinned>(ent)) continue;
+    for (auto [ent, pos, target] :
+         reg.view<ecs::Position, const ecs::LayoutTarget>().each()) {
+        if (reg.all_of<ecs::Pinned>(ent)) continue;
         const Vec2 d = target.p - pos.p;
         worst        = std::max(worst, length(d));
         pos.p += d * t;
     }
     energy_ = worst;
+
+    stats.layout_energy  = energy_;
+    stats.layout_settled = energy_ < 0.5f;
 }
 
-} // namespace rgv::ecs
+} // namespace rgv::systems

@@ -7,8 +7,8 @@
 // is asserted here.
 #include "TestMain.h"
 
-#include "rgv/ecs/LayoutSystem.h"
-#include "rgv/ecs/Scene.h"
+#include "Harness.h"
+
 #include "rgv/fixture/FixtureSource.h"
 #include "rgv/model/GraphStore.h"
 #include "rgv/ui/Panels.h"
@@ -44,30 +44,26 @@ struct HeadlessImGui {
     ~HeadlessImGui() { ImGui::DestroyContext(); }
 };
 
-// A minimal but real app state: a store seeded from a snapshot and a synced scene.
-struct Harness {
-    GraphStore                              store;
-    ecs::Scene                              scene;
-    ecs::LayoutSystem                       layout;
+// A real world with a fixture loaded, plus the panels' own resources. The panels are
+// driven exactly as the application drives them.
+struct UiHarness {
+    rgvtest::Harness h;
     std::unique_ptr<fixture::FixtureSource> source;
 
-    explicit Harness(const std::string& dir) {
+    explicit UiHarness(const std::string& dir) {
         source = std::make_unique<fixture::FixtureSource>(fixture::FixtureSet::load(dir), 0);
-        store.reset(source->baseline());
-        scene.view.camera.vw = 1920.0f;
-        scene.view.camera.vh = 1200.0f;
-        scene.view.free_size = Vec2{1200.0f, 900.0f};
-        scene.rebuild(store);
-        layout.reset(scene, store);
+        auto& handle    = h.world.resource<ecs::SourceHandle>();
+        handle.source   = source.get();
+        handle.fixtures = source.get();
+
+        h.world.resource<ecs::FixtureLibrary>().names = {"monorepo-ts"};
+        h.store().reset(source->baseline());
+        h.world.resource<ecs::Viewport>().free_origin = Vec2{330.0f, 64.0f};
+        h.request_rebuild();
+        h.settle();
     }
 
-    ui::UiContext context() {
-        ui::UiContext ctx{store, scene, layout, *source, source.get()};
-        ctx.top_bar_height = 64.0f;
-        ctx.free_origin    = Vec2{330.0f, 64.0f};
-        ctx.free_size      = Vec2{1200.0f, 900.0f};
-        return ctx;
-    }
+    ecs::World& world() { return h.world; }
 };
 
 struct WindowGeometry {
@@ -114,16 +110,16 @@ const std::string kFixture = std::string(RGV_FIXTURE_DIR) + "/monorepo-ts";
 // not, its controls move while you drag them.
 TEST(the_text_size_window_geometry_does_not_depend_on_the_scale_it_edits) {
     HeadlessImGui imgui;
-    Harness       h(kFixture);
-    h.scene.view.show_text_settings = true;
+    UiHarness u(kFixture);
+    u.world().resource<ecs::ViewSettings>().show_text_settings = true;
 
-    h.scene.view.ui_text_scale = 1.0f;
-    auto ctx_a                 = h.context();
-    const auto small = measure(1.0f, "##textsettings", [&] { ui::draw_text_settings(ctx_a); });
+    u.world().resource<ecs::ViewSettings>().ui_text_scale = 1.0f;
+    const auto small =
+        measure(1.0f, "##textsettings", [&] { ui::draw_text_settings(u.world()); });
 
-    h.scene.view.ui_text_scale = 2.2f;
-    auto ctx_b                 = h.context();
-    const auto large = measure(2.2f, "##textsettings", [&] { ui::draw_text_settings(ctx_b); });
+    u.world().resource<ecs::ViewSettings>().ui_text_scale = 2.2f;
+    const auto large =
+        measure(2.2f, "##textsettings", [&] { ui::draw_text_settings(u.world()); });
 
     CHECK(small.found);
     CHECK(large.found);
@@ -133,13 +129,13 @@ TEST(the_text_size_window_geometry_does_not_depend_on_the_scale_it_edits) {
 
 TEST(the_text_size_window_renders_at_the_base_font_size_whatever_the_ui_scale) {
     HeadlessImGui imgui;
-    Harness       h(kFixture);
-    h.scene.view.show_text_settings = true;
+    UiHarness u(kFixture);
+    u.world().resource<ecs::ViewSettings>().show_text_settings = true;
 
     for (float scale : {0.7f, 1.0f, 1.6f, 2.5f}) {
-        h.scene.view.ui_text_scale = scale;
-        auto       ctx = h.context();
-        const auto g   = measure(scale, "##textsettings", [&] { ui::draw_text_settings(ctx); });
+        u.world().resource<ecs::ViewSettings>().ui_text_scale = scale;
+        const auto g =
+            measure(scale, "##textsettings", [&] { ui::draw_text_settings(u.world()); });
         CHECK(g.found);
         CHECK(std::abs(g.effective_font_scale - 1.0f) < 1e-3f);
     }
@@ -174,20 +170,20 @@ TEST(an_uncorrected_window_would_change_size_with_the_ui_scale) {
 // whatever they leave. It must never collapse, however large the text is set.
 TEST(the_graph_area_survives_the_largest_ui_text_scale) {
     HeadlessImGui imgui;
-    Harness       h(kFixture);
+    UiHarness u(kFixture);
 
     for (float scale : {0.7f, 1.0f, 1.8f, 2.5f}) {
-        h.scene.view.ui_text_scale = scale;
-        auto     ctx = h.context();
-        ImGuiIO& io  = ImGui::GetIO();
+        u.world().resource<ecs::ViewSettings>().ui_text_scale = scale;
+        ImGuiIO& io = ImGui::GetIO();
         for (int frame = 0; frame < 3; ++frame) {
             io.FontGlobalScale = scale;
             ImGui::NewFrame();
-            ui::draw_panels(ctx, {"monorepo-ts"}, 0);
+            ui::draw_panels(u.world());
             ImGui::Render();
         }
-        CHECK(ctx.free_size.x > 200.0f);
-        CHECK(ctx.free_size.y > 200.0f);
+        const auto& viewport = u.world().resource<ecs::Viewport>();
+        CHECK(viewport.free_size.x > 200.0f);
+        CHECK(viewport.free_size.y > 200.0f);
     }
 }
 
@@ -195,19 +191,18 @@ TEST(the_graph_area_survives_the_largest_ui_text_scale) {
 // stopped reporting its height the panels below would overlap it.
 TEST(the_toolbar_reports_a_larger_height_as_text_grows) {
     HeadlessImGui imgui;
-    Harness       h(kFixture);
+    UiHarness u(kFixture);
 
     auto measure_bar = [&](float scale) {
-        h.scene.view.ui_text_scale = scale;
-        auto     ctx = h.context();
-        ImGuiIO& io  = ImGui::GetIO();
+        u.world().resource<ecs::ViewSettings>().ui_text_scale = scale;
+        ImGuiIO& io = ImGui::GetIO();
         for (int frame = 0; frame < 3; ++frame) {
             io.FontGlobalScale = scale;
             ImGui::NewFrame();
-            ui::draw_panels(ctx, {"monorepo-ts"}, 0);
+            ui::draw_panels(u.world());
             ImGui::Render();
         }
-        return ctx.measured_top_bar;
+        return u.world().resource<ecs::Viewport>().top_bar_height;
     };
 
     const float small = measure_bar(1.0f);

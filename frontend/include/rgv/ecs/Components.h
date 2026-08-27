@@ -1,57 +1,81 @@
-// ECS components. Everything the renderer and the interaction systems need lives in
-// components; nothing reaches back into GraphStore during a frame.
+// Components: per-entity state, iterated in bulk by systems.
+//
+// Two archetypes share the registry. A node entity carries NodeRef; an edge entity
+// carries EdgeRef and Endpoints. Those are the tags -- systems name them explicitly in
+// their views rather than relying on which components an archetype happens to lack.
+//
+// Every component names the system that owns its VALUE, and no other system writes it.
+// That rule is the difference between components as data and components as a shared
+// scratchpad -- and it is what makes "why is this node the wrong colour" a question
+// with one place to look.
+//
+// One deliberate exception: SceneSyncSystem creates entities, and creation means
+// attaching the whole archetype at once -- including components it does not own, in
+// their default state. Constructing is not owning. After the entity exists, only the
+// named owner writes the value.
 #pragma once
 
 #include "rgv/contract/Types.h"
 #include "rgv/render/Math.h"
 
+#include <entt/entt.hpp>
+
 #include <string>
 
 namespace rgv::ecs {
 
-// -- identity ----------------------------------------------------------------
+// -- identity: also the archetype tags ---------------------------------------
 
+// Owner: SceneSyncSystem.
 struct NodeRef {
     NodeId   id;
     NodeKind kind = NodeKind::Unknown;
 };
 
+// Owner: SceneSyncSystem.
 struct EdgeRef {
     EdgeId   id;
     EdgeKind kind = EdgeKind::Unknown;
 };
 
-// Endpoint entities, resolved once at sync time so layout and rendering never do a
-// string lookup per frame.
+// Endpoint entities, resolved once at sync time so nothing does a string lookup per
+// frame. Owner: SceneSyncSystem.
 struct Endpoints {
-    std::uint32_t from = 0;   // entt::entity, stored raw to keep this header light
-    std::uint32_t to   = 0;
+    entt::entity from = entt::null;
+    entt::entity to   = entt::null;
 };
 
-// -- spatial -----------------------------------------------------------------
+// -- spatial ------------------------------------------------------------------
 
+// Owner: LayoutSystem. Seeded once at creation near whatever the node connects to,
+// so a package appearing mid-session does not fly in from the origin.
 struct Position { Vec2 p; };
-struct Velocity { Vec2 v; };
-struct Extent   { Vec2 half{54.0f, 17.0f}; };
-
-// Dependency depth: 0 = depends on nothing else in view. Drives the layered layout,
-// which is what turns a hairball into something that reads as an architecture.
-struct Depth { int value = 0; };
-
-// The user dragged this node. Layout must leave it alone until they release it.
-struct Pinned {};
 
 // Where layout wants this node. Positions ease toward it, so a topology change
-// animates instead of teleporting -- and the user can watch what moved.
+// animates instead of teleporting. Owner: LayoutSystem.
 struct LayoutTarget { Vec2 p; };
 
-// -- presentation ------------------------------------------------------------
+// The footprint layout reserves. Deliberately independent of zoom: the drawn size
+// collapses toward a dot at low zoom, but this does not, so panning and zooming can
+// never reflow the graph. Owner: SceneSyncSystem.
+struct Extent { Vec2 half{54.0f, 17.0f}; };
 
+// Dependency depth: 0 = depends on nothing else in view. Owner: LayoutSystem.
+struct Depth { int value = 0; };
+
+// The user dragged this node. Layout leaves it alone. Owner: DragSystem.
+struct Pinned {};
+
+// -- presentation -------------------------------------------------------------
+
+// Owner: SceneSyncSystem.
 struct Label {
     std::string text;
-    std::string sub;   // secondary line: package path, language, distance
+    std::string sub;   // secondary line: package path, language
 };
 
+// Fully derived from the state below plus Selected/Hovered/OnExplainedPath.
+// Owner: StyleSystem, and nothing else may write it -- the renderer reads it verbatim.
 struct Style {
     Vec4  fill{0.16f, 0.17f, 0.20f, 1.0f};
     Vec4  stroke{0.30f, 0.32f, 0.38f, 1.0f};
@@ -60,35 +84,41 @@ struct Style {
     float emphasis = 0.0f;   // 0 = context, 1 = fully lit
 };
 
-// -- semantic state ----------------------------------------------------------
+// -- evidence quality ---------------------------------------------------------
 
+// Owner: SceneSyncSystem.
 struct FreshnessState { Freshness value = Freshness::Current; };
 struct ConfidenceState { Confidence value = Confidence::Exact; };
 
-// Present only on nodes the agent actually touched.
+// -- impact -------------------------------------------------------------------
+
+// Present only on nodes the agent actually touched. Owner: ImpactStateSystem.
 struct Changed {
     FileChangeKind kind       = FileChangeKind::Modified;
     Processing     processing = Processing::Pending;
 };
 
-// Present only on nodes inside the current blast radius.
+// Present only on nodes inside the current blast radius. Owner: ImpactStateSystem.
 struct Impacted {
     int         distance = 0;
     bool        direct   = false;
     ImpactCause cause    = ImpactCause::Implementation;
 
-    // How much this node's presence in the radius actually tells you: the weakest
-    // architectural specificity along its explanation. A path through a hub scores
-    // low, because "everything depends on the hub" was already known.
+    // The weakest architectural specificity along this node's explanation. A path
+    // through a hub scores low: "everything depends on the hub" was already known.
     float relevance = 1.0f;
 
-    // Below the user's relevance threshold. Still impacted, still true -- just not
+    // As reported by the backend: how trustworthy the PATH is, which can be worse than
+    // anything the node says about itself.
+    Freshness freshness = Freshness::Current;
+
+    // Below the user's relevance threshold. Still impacted and still true, just not
     // worth their attention, so it is drawn as context.
     bool muted = false;
 };
 
 // The agent changed something most of the repository depends on. Rare, and the loudest
-// thing the product can say.
+// thing the product can say. Owner: ImpactStateSystem.
 struct HubSeed {
     int   dependents     = 0;
     int   population     = 0;
@@ -96,13 +126,13 @@ struct HubSeed {
     float reach_fraction = 0.0f;
 };
 
-// -- transient interaction ---------------------------------------------------
+// -- interaction: all derived from the Selection resource ---------------------
+// Owner: SelectionSystem. Nothing else writes these.
 
 struct Hovered {};
 struct Selected {};
+
 // On the dependency path currently being explained in the inspector.
 struct OnExplainedPath { int hop = 0; };
-// Filtered out, but kept alive so its layout position survives the filter toggling.
-struct Hidden {};
 
 } // namespace rgv::ecs

@@ -1,5 +1,12 @@
 #include "rgv/ui/Panels.h"
 
+#include "rgv/ecs/Commands.h"
+#include "rgv/ecs/Components.h"
+#include "rgv/ecs/Resources.h"
+#include "rgv/fixture/FixtureSource.h"
+#include "rgv/model/GraphStore.h"
+#include "rgv/view/SemanticZoom.h"
+
 #include "rgv/analysis/Specificity.h"
 #include "rgv/config/Settings.h"
 #include "rgv/sim/ImpactSim.h"
@@ -14,6 +21,42 @@
 namespace rgv::ui {
 namespace {
 
+// Gathers the resources the panels touch. Constructed per call rather than stored, so
+// a panel can never hold a reference across a frame boundary.
+struct Ui {
+    ecs::World&          world;
+    GraphStore&          store;
+    ecs::ViewSettings&   view;
+    ecs::Filters&        filters;
+    ecs::Selection&      selection;
+    ecs::Viewport&       viewport;
+    ecs::SceneStats&     stats;
+    ecs::DerivedState&   derived;
+    ecs::EntityIndex&    index;
+    ecs::CommandQueue&   cmd;
+    ecs::SourceHandle&   source;
+    ecs::FixtureLibrary& library;
+    ecs::FrameTiming&    timing;
+    Camera&              camera;
+
+    explicit Ui(ecs::World& w)
+        : world(w),
+          store(w.resource<GraphStore>()),
+          view(w.resource<ecs::ViewSettings>()),
+          filters(w.resource<ecs::Filters>()),
+          selection(w.resource<ecs::Selection>()),
+          viewport(w.resource<ecs::Viewport>()),
+          stats(w.resource<ecs::SceneStats>()),
+          derived(w.resource<ecs::DerivedState>()),
+          index(w.resource<ecs::EntityIndex>()),
+          cmd(w.resource<ecs::CommandQueue>()),
+          source(w.resource<ecs::SourceHandle>()),
+          library(w.resource<ecs::FixtureLibrary>()),
+          timing(w.resource<ecs::FrameTiming>()),
+          camera(w.resource<Camera>()) {}
+};
+
+
 // Panel sizes at 1x text. They scale with the user's text preference -- a panel that
 // keeps its pixel width while its text grows simply clips, which is worse than a
 // smaller graph area.
@@ -27,12 +70,12 @@ struct PanelMetrics {
 
 // Scaled and then clamped: at the largest text size the raw multiples would leave
 // almost no graph, and the graph is the product.
-PanelMetrics panel_metrics(const UiContext& ctx) {
+PanelMetrics panel_metrics(const Ui& ui) {
     const ImGuiViewport* vp = ImGui::GetMainViewport();
-    const float          s  = ctx.scene.view.ui_text_scale;
+    const float          s  = ui.view.ui_text_scale;
 
     PanelMetrics m;
-    m.top    = ctx.top_bar_height;
+    m.top    = ui.viewport.top_bar_height;
     m.left   = std::min(kLeftW * s, vp->WorkSize.x * 0.28f);
     m.right  = std::min(kRightW * s, vp->WorkSize.x * 0.34f);
     m.bottom = std::min(kBottomH * s, vp->WorkSize.y * 0.34f);
@@ -139,11 +182,10 @@ Vec4 change_color(FileChangeKind k) {
     return t.changed;
 }
 
-void select_node(UiContext& ctx, const NodeId& id) {
-    ctx.scene.view.selected_node = id;
-    ctx.scene.view.selected_edge.clear();
-    ctx.scene.view.path_index = 0;
-    ctx.scene.update_explained_path(ctx.store);
+// Panels never write selection state. They ask, and CommandSystem is the single place
+// that applies it -- which is what stops the id and the Selected component drifting.
+void select_node(Ui& ui, const NodeId& id) {
+    ui.cmd.push(ecs::SelectNode{id});
 }
 
 const ImpactedNode* impacted_for(const GraphStore& store, Level level, const NodeId& id) {
@@ -162,17 +204,18 @@ std::string short_id(const std::string& id) {
 
 // ------------------------------------------------------------------ top bar
 
-void draw_top_bar(UiContext& ctx) {
+void draw_top_bar(ecs::World& world) {
+    Ui ui(world);
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(vp->WorkPos);
-    ImGui::SetNextWindowSize(ImVec2(vp->WorkSize.x, ctx.top_bar_height));
+    ImGui::SetNextWindowSize(ImVec2(vp->WorkSize.x, ui.viewport.top_bar_height));
     ImGui::Begin("##topbar", nullptr,
                  ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                      ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
                      ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoSavedSettings);
 
-    auto& view = ctx.scene.view;
-    auto& f    = view.filters;
+    auto& vs = ui.view;
+    auto& f  = ui.filters;
 
     Flow flow;
     flow.right = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
@@ -188,16 +231,16 @@ void draw_top_bar(UiContext& ctx) {
     for (auto m : {ecs::ViewMode::Architecture, ecs::ViewMode::Filesystem,
                    ecs::ViewMode::FileGraph}) {
         const char* name   = ecs::to_label(m);
-        const bool  active = view.mode == m;
+        const bool  active = vs.mode == m;
         flow.item(button_w(name));
         if (active) ImGui::PushStyleColor(ImGuiCol_Button, to_v4(Vec4{0.26f, 0.30f, 0.39f, 1.0f}));
         if (ImGui::Button(name) && !active) {
             // Selection is deliberately preserved across the switch (FR-30). Only the
             // visible node set changes.
-            view.mode           = m;
-            view.level          = m == ecs::ViewMode::Architecture ? Level::Package : Level::File;
-            ctx.request_rebuild = true;
-            ctx.request_fit     = true;
+            vs.mode           = m;
+            vs.level          = m == ecs::ViewMode::Architecture ? Level::Package : Level::File;
+            ui.world.resource<ecs::SceneRequests>().rebuild = true;
+            ui.cmd.push(ecs::FitView{});
         }
         if (active) ImGui::PopStyleColor();
         flow.placed();
@@ -205,14 +248,14 @@ void draw_top_bar(UiContext& ctx) {
 
     label("IMPACT AT");
     {
-        const float w = 130.0f * view.ui_text_scale;
+        const float w = 130.0f * vs.ui_text_scale;
         flow.item(w);
         ImGui::SetNextItemWidth(w);
-        int lvl = static_cast<int>(view.level);
+        int lvl = static_cast<int>(vs.level);
         if (ImGui::Combo("##level", &lvl, "package\0build target\0file\0symbol\0")) {
             // Levels coexist, so this is a free switch: no re-query, no lost context.
-            view.level = static_cast<Level>(lvl);
-            ctx.scene.restyle(ctx.store);
+            vs.level = static_cast<Level>(lvl);
+            
         }
         flow.placed();
         if (ImGui::IsItemHovered()) {
@@ -223,23 +266,29 @@ void draw_top_bar(UiContext& ctx) {
     }
 
     flow.item(button_w("Fit"));
-    if (ImGui::Button("Fit")) ctx.request_fit = true;
+    if (ImGui::Button("Fit")) ui.cmd.push(ecs::FitView{});
     flow.placed();
 
     flow.item(button_w("Focus impact"));
-    if (ImGui::Button("Focus impact")) ctx.request_focus_impact = true;
+    if (ImGui::Button("Focus impact")) {
+        std::vector<NodeId> ids;
+        if (const ImpactResult* r = ui.store.impact(ui.view.level)) {
+            for (const auto& n : r->impacted_nodes) ids.push_back(n.node_id);
+        }
+        ui.cmd.push(ecs::FocusNodes{std::move(ids)});
+    }
     flow.placed();
 
     flow.item(checkbox_w("Layout"));
-    ImGui::Checkbox("Layout", &view.layout_running);
+    ImGui::Checkbox("Layout", &vs.layout_running);
     flow.placed();
 
     flow.item(checkbox_w("Labels"));
-    ImGui::Checkbox("Labels", &view.show_labels);
+    ImGui::Checkbox("Labels", &vs.show_labels);
     flow.placed();
 
     flow.item(checkbox_w("Arrows"));
-    ImGui::Checkbox("Arrows", &view.show_arrows);
+    ImGui::Checkbox("Arrows", &vs.show_arrows);
     flow.placed();
 
     // -- filters (FR-35)
@@ -254,18 +303,18 @@ void draw_top_bar(UiContext& ctx) {
     };
     for (const auto& tg : toggles) {
         flow.item(checkbox_w(tg.name));
-        if (ImGui::Checkbox(tg.name, tg.value)) ctx.request_rebuild = true;
+        if (ImGui::Checkbox(tg.name, tg.value)) ui.world.resource<ecs::SceneRequests>().rebuild = true;
         flow.placed();
         if (tg.tip && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tg.tip);
     }
 
     {
-        const float w = 150.0f * view.ui_text_scale;
+        const float w = 150.0f * vs.ui_text_scale;
         flow.item(w);
         ImGui::SetNextItemWidth(w);
         if (ImGui::SliderInt("depth", &f.max_impact_depth, 1, 12)) {
-            ctx.scene.restyle(ctx.store);
-            if (!f.show_unaffected) ctx.request_rebuild = true;
+            
+            if (!f.show_unaffected) ui.world.resource<ecs::SceneRequests>().rebuild = true;
         }
         flow.placed();
 
@@ -275,8 +324,8 @@ void draw_top_bar(UiContext& ctx) {
         flow.item(w);
         ImGui::SetNextItemWidth(w);
         if (ImGui::SliderFloat("relevance", &f.min_relevance, 0.0f, 1.0f, "%.2f")) {
-            ctx.scene.restyle(ctx.store);
-            if (!f.show_unaffected) ctx.request_rebuild = true;
+            
+            if (!f.show_unaffected) ui.world.resource<ecs::SceneRequests>().rebuild = true;
         }
         flow.placed();
         if (ImGui::IsItemHovered()) {
@@ -290,14 +339,14 @@ void draw_top_bar(UiContext& ctx) {
     }
 
     {
-        const float w = 200.0f * view.ui_text_scale;
+        const float w = 200.0f * vs.ui_text_scale;
         flow.item(w);
         ImGui::SetNextItemWidth(w);
         char buf[128];
         std::snprintf(buf, sizeof(buf), "%s", f.text.c_str());
         if (ImGui::InputTextWithHint("##search", "filter by name or path", buf, sizeof(buf))) {
             f.text              = buf;
-            ctx.request_rebuild = true;
+            ui.world.resource<ecs::SceneRequests>().rebuild = true;
         }
         flow.placed();
     }
@@ -310,43 +359,45 @@ void draw_top_bar(UiContext& ctx) {
         // Fixed-width formatting: a label whose length changes with its own value
         // would reflow the toolbar on every drag step.
         std::snprintf(label, sizeof(label), "Text  %.2f / %.2f",
-                      static_cast<double>(view.ui_text_scale),
-                      static_cast<double>(view.graph_text_scale));
+                      static_cast<double>(vs.ui_text_scale),
+                      static_cast<double>(vs.graph_text_scale));
         flow.item(button_w(label));
-        if (ImGui::Button(label)) view.show_text_settings = !view.show_text_settings;
+        if (ImGui::Button(label)) vs.show_text_settings = !vs.show_text_settings;
         flow.placed();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("UI and graph text size.");
     }
 
     {
         char fps[64];
-        std::snprintf(fps, sizeof(fps), "%5.1f fps  %4.1f ms", static_cast<double>(ctx.fps),
-                      static_cast<double>(ctx.frame_ms));
+        std::snprintf(fps, sizeof(fps), "%5.1f fps  %4.1f ms", static_cast<double>(ui.timing.fps),
+                      static_cast<double>(ui.timing.frame_ms));
         flow.item(ImGui::CalcTextSize(fps).x);
         ImGui::AlignTextToFramePadding();
         ImGui::TextDisabled("%s", fps);
         flow.placed();
     }
 
-    // Measured now, used to size the window next frame.
-    ctx.measured_top_bar =
-        ImGui::GetCursorPosY() + ImGui::GetStyle().WindowPadding.y;
+    // Measured now, used to size the window on the next frame. Read at the top of this
+    // function, written here: the toolbar wraps, so its height is only knowable after
+    // its contents have been laid out.
+    ui.viewport.top_bar_height = ImGui::GetCursorPosY() + ImGui::GetStyle().WindowPadding.y;
 
     ImGui::End();
 }
 
 // --------------------------------------------------------------- left panel
 
-void draw_session_panel(UiContext& ctx) {
+void draw_session_panel(ecs::World& world) {
+    Ui ui(world);
     const ImGuiViewport* vp = ImGui::GetMainViewport();
-    const PanelMetrics   m  = panel_metrics(ctx);
+    const PanelMetrics   m  = panel_metrics(ui);
     ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x, vp->WorkPos.y + m.top));
     ImGui::SetNextWindowSize(ImVec2(m.left, vp->WorkSize.y - m.top - m.bottom));
     ImGui::Begin("Session", nullptr,
                  ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings);
 
-    const auto& base = ctx.store.baseline();
+    const auto& base = ui.store.baseline();
     ImGui::TextUnformatted(base.repo.name.c_str());
     ImGui::TextDisabled("%s", base.repo.root.c_str());
 
@@ -354,8 +405,8 @@ void draw_session_panel(UiContext& ctx) {
     ImGui::Text("%s @ %.8s", base.repo.branch.c_str(), base.repo.head.c_str());
     ImGui::Text("baseline g%llu  ->  current g%llu",
                 static_cast<unsigned long long>(base.session.baseline_generation),
-                static_cast<unsigned long long>(ctx.store.generation()));
-    if (!ctx.store.checkpoints().empty()) {
+                static_cast<unsigned long long>(ui.store.generation()));
+    if (!ui.store.checkpoints().empty()) {
         ImGui::SameLine();
         chip("reconciled", Vec4{0.42f, 0.72f, 0.55f, 1.0f},
              "A git reconcile checkpoint has confirmed this generation.");
@@ -364,8 +415,8 @@ void draw_session_panel(UiContext& ctx) {
     // -- the loudest thing this product can say. A change to something most of the
     //    repository depends on: the radius is enormous and every individual entry in
     //    it is unsurprising, so the hub itself has to be the headline.
-    for (const auto& hub : ctx.scene.hub_alerts()) {
-        const Node* n   = ctx.store.node(hub.node);
+    for (const auto& hub : ui.derived.hub_alerts) {
+        const Node* n   = ui.store.node(hub.node);
         const Vec4  hot = theme().changed;
 
         ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(hot.r * 0.22f, hot.g * 0.10f,
@@ -392,7 +443,7 @@ void draw_session_panel(UiContext& ctx) {
     ImGui::Separator();
 
     // -- changed files (FR-09): the agent's footprint, in arrival order.
-    const auto& changed = ctx.store.changed_files();
+    const auto& changed = ui.store.changed_files();
     ImGui::Text("Changed files");
     ImGui::SameLine();
     ImGui::TextDisabled("(%zu)", changed.size());
@@ -402,7 +453,7 @@ void draw_session_panel(UiContext& ctx) {
     // the user turns up the UI text.
     {
         const float line     = ImGui::GetTextLineHeightWithSpacing();
-        const float reserved = 118.0f * ctx.scene.view.ui_text_scale + line * 9.0f;
+        const float reserved = 118.0f * ui.view.ui_text_scale + line * 9.0f;
         const float h = std::max(line * 3.0f, ImGui::GetContentRegionAvail().y - reserved);
         ImGui::BeginChild("##changed", ImVec2(0, h), true);
     }
@@ -411,7 +462,7 @@ void draw_session_panel(UiContext& ctx) {
     }
     for (const auto& c : changed) {
         ImGui::PushID(c.node_id.c_str());
-        const bool selected = ctx.scene.view.selected_node == c.node_id;
+        const bool selected = ui.selection.node == c.node_id;
 
         chip(std::string(to_string(c.change)).substr(0, 3).c_str(), change_color(c.change),
              std::string("change: ").append(to_string(c.change)).c_str());
@@ -425,8 +476,7 @@ void draw_session_panel(UiContext& ctx) {
         ImGui::SameLine();
 
         if (ImGui::Selectable(c.path.c_str(), selected)) {
-            select_node(ctx, c.node_id);
-            ctx.request_focus_impact = false;
+            select_node(ui, c.node_id);
         }
         if (ImGui::IsItemHovered()) {
             ImGui::BeginTooltip();
@@ -442,9 +492,9 @@ void draw_session_panel(UiContext& ctx) {
 
     // -- adapters (NFR-02/NFR-09): the UI must show pending work, not freeze on it.
     ImGui::Text("Providers");
-    ImGui::BeginChild("##adapters", ImVec2(0, 118.0f * ctx.scene.view.ui_text_scale), true);
-    if (ctx.store.adapters().empty()) ImGui::TextDisabled("no provider has reported yet");
-    for (const auto& a : ctx.store.adapters()) {
+    ImGui::BeginChild("##adapters", ImVec2(0, 118.0f * ui.view.ui_text_scale), true);
+    if (ui.store.adapters().empty()) ImGui::TextDisabled("no provider has reported yet");
+    for (const auto& a : ui.store.adapters()) {
         chip(std::string(to_string(a.state)).c_str(), adapter_color(a.state), a.message.c_str());
         ImGui::SameLine();
         ImGui::TextUnformatted(a.name.c_str());
@@ -456,27 +506,25 @@ void draw_session_panel(UiContext& ctx) {
     ImGui::EndChild();
 
     // -- what is on screen right now
-    const auto& s = ctx.scene.stats;
+    const auto& s = ui.stats;
     ImGui::Separator();
     ImGui::TextDisabled("on screen");
     ImGui::Text("%d nodes   %d edges", s.nodes, s.edges);
     ImGui::Text("%d changed   %d impacted   %d stale", s.changed, s.impacted, s.stale);
     if (s.muted > 0) {
         ImGui::TextDisabled("%d muted below relevance %.2f", s.muted,
-                            static_cast<double>(ctx.scene.view.filters.min_relevance));
+                            static_cast<double>(ui.filters.min_relevance));
     }
-    if (ctx.render_stats) {
-        ImGui::TextDisabled("%d draw calls", ctx.render_stats->draw_calls);
-    }
-    ImGui::TextDisabled("layout energy %.2f%s", static_cast<double>(ctx.layout.energy()),
-                        ctx.layout.settled() ? " (settled)" : "");
+    ImGui::TextDisabled("%d draw calls", ui.stats.render_draw_calls);
+    ImGui::TextDisabled("layout energy %.2f%s", static_cast<double>(ui.stats.layout_energy),
+                        ui.stats.layout_settled ? " (settled)" : "");
 
     ImGui::End();
 }
 
 // -------------------------------------------------------------- right panel
 
-void draw_node_inspector(UiContext& ctx, const Node& n) {
+void draw_node_inspector(Ui& ui, const Node& n) {
     ImGui::TextUnformatted(n.name.c_str());
     ImGui::SameLine();
     chip(std::string(to_string(n.kind)).c_str(), Vec4{0.50f, 0.55f, 0.68f, 1.0f});
@@ -494,7 +542,7 @@ void draw_node_inspector(UiContext& ctx, const Node& n) {
 
     // How much information "something depends on this" carries.
     {
-        const auto& idx  = ctx.scene.specificity();
+        const auto& idx  = ui.derived.specificity;
         const float spec = idx.specificity(n.id);
         const int   deps = idx.dependents(n.id);
         if (!idx.empty() && idx.population() > 1) {
@@ -511,7 +559,7 @@ void draw_node_inspector(UiContext& ctx, const Node& n) {
                      "Few things depend on this, so a dependency on it is informative.");
             }
             ImGui::TextDisabled("%d of %d %s depend on this", deps, idx.population(),
-                                to_string(ctx.scene.view.level).data());
+                                to_string(ui.view.level).data());
         }
     }
 
@@ -531,7 +579,7 @@ void draw_node_inspector(UiContext& ctx, const Node& n) {
     ImGui::Separator();
 
     // -- impact and its explanation (FR-26, FR-33)
-    const ImpactedNode* in = impacted_for(ctx.store, ctx.scene.view.level, n.id);
+    const ImpactedNode* in = impacted_for(ui.store, ui.view.level, n.id);
     if (!in) {
         ImGui::TextDisabled("Not in the current blast radius.");
     } else {
@@ -555,7 +603,7 @@ void draw_node_inspector(UiContext& ctx, const Node& n) {
 
         // How much this result is worth reading, as opposed to how close it is.
         if (in->min_distance > 0) {
-            const float rel = analysis::relevance(ctx.store, ctx.scene.specificity(), *in);
+            const float rel = analysis::relevance(ui.store, ui.derived.specificity, *in);
             ImGui::TextDisabled("relevance %.2f", static_cast<double>(rel));
             ImGui::SameLine();
             if (rel <= analysis::kHubThreshold) {
@@ -564,7 +612,7 @@ void draw_node_inspector(UiContext& ctx, const Node& n) {
                      "on, so its presence here says little. Raise the relevance filter\n"
                      "to hide results like it.");
             }
-            if (rel < ctx.scene.view.filters.min_relevance) {
+            if (rel < ui.filters.min_relevance) {
                 ImGui::SameLine();
                 chip("muted", theme().pending, "Below the current relevance filter.");
             }
@@ -574,22 +622,22 @@ void draw_node_inspector(UiContext& ctx, const Node& n) {
             ImGui::TextDisabled("seed node -- nothing to explain");
         } else {
             const int count = static_cast<int>(in->paths.size());
-            ctx.scene.view.path_index = std::clamp(ctx.scene.view.path_index, 0, count - 1);
+            ui.selection.path_index = std::clamp(ui.selection.path_index, 0, count - 1);
 
             ImGui::Spacing();
             ImGui::Text("Why:");
             ImGui::SameLine();
             if (count > 1) {
                 if (ImGui::SmallButton("<")) {
-                    ctx.scene.view.path_index = (ctx.scene.view.path_index + count - 1) % count;
-                    ctx.scene.update_explained_path(ctx.store);
+                    ui.selection.path_index = (ui.selection.path_index + count - 1) % count;
+                    
                 }
                 ImGui::SameLine();
-                ImGui::Text("path %d/%d", ctx.scene.view.path_index + 1, count);
+                ImGui::Text("path %d/%d", ui.selection.path_index + 1, count);
                 ImGui::SameLine();
                 if (ImGui::SmallButton(">")) {
-                    ctx.scene.view.path_index = (ctx.scene.view.path_index + 1) % count;
-                    ctx.scene.update_explained_path(ctx.store);
+                    ui.selection.path_index = (ui.selection.path_index + 1) % count;
+                    
                 }
             } else {
                 ImGui::TextDisabled("1 path");
@@ -602,26 +650,26 @@ void draw_node_inspector(UiContext& ctx, const Node& n) {
             // The chain, hop by hop. Every hop is clickable and opens the evidence
             // behind that specific relationship -- the difference between a claim and
             // an explanation.
-            const auto& path = in->paths[ctx.scene.view.path_index].edges;
+            const auto& path = in->paths[ui.selection.path_index].edges;
             NodeId      cur  = n.id;
             for (std::size_t hop = 0; hop < path.size(); ++hop) {
-                const Edge* e = ctx.store.edge(path[hop]);
+                const Edge* e = ui.store.edge(path[hop]);
                 if (!e) {
                     ImGui::TextColored(to_v4(theme().invalid), "  ? unknown edge %s",
                                        path[hop].c_str());
                     break;
                 }
-                const Node* dst = ctx.store.node(e->to);
+                const Node* dst = ui.store.node(e->to);
                 ImGui::PushID(static_cast<int>(hop));
                 ImGui::Text("  %zu.", hop + 1);
                 ImGui::SameLine();
                 chip(std::string(to_string(e->kind)).c_str(), Vec4{0.45f, 0.50f, 0.62f, 1.0f});
                 ImGui::SameLine();
                 if (ImGui::SmallButton(dst ? dst->name.c_str() : short_id(e->to).c_str())) {
-                    select_node(ctx, e->to);
+                    select_node(ui, e->to);
                 }
                 ImGui::SameLine();
-                if (ImGui::SmallButton("evidence")) ctx.scene.view.selected_edge = e->id;
+                if (ImGui::SmallButton("evidence")) ui.selection.edge = e->id;
                 if (e->confidence != Confidence::Exact || e->freshness != Freshness::Current) {
                     ImGui::SameLine();
                     chip(e->freshness != Freshness::Current
@@ -640,18 +688,18 @@ void draw_node_inspector(UiContext& ctx, const Node& n) {
     ImGui::Separator();
 
     // -- neighbourhood, so the user can walk the graph without hunting on canvas
-    const auto& dependents   = ctx.store.in_edges(n.id);
-    const auto& dependencies = ctx.store.out_edges(n.id);
+    const auto& dependents   = ui.store.in_edges(n.id);
+    const auto& dependencies = ui.store.out_edges(n.id);
 
     if (ImGui::CollapsingHeader("Dependents", ImGuiTreeNodeFlags_DefaultOpen)) {
         if (dependents.empty()) ImGui::TextDisabled("  nothing depends on this");
         for (const auto& eid : dependents) {
-            const Edge* e = ctx.store.edge(eid);
+            const Edge* e = ui.store.edge(eid);
             if (!e) continue;
-            const Node* other = ctx.store.node(e->from);
+            const Node* other = ui.store.node(e->from);
             ImGui::PushID(eid.c_str());
             if (ImGui::SmallButton(other ? other->name.c_str() : short_id(e->from).c_str())) {
-                select_node(ctx, e->from);
+                select_node(ui, e->from);
             }
             ImGui::SameLine();
             ImGui::TextDisabled("%s", std::string(to_string(e->kind)).c_str());
@@ -661,12 +709,12 @@ void draw_node_inspector(UiContext& ctx, const Node& n) {
     if (ImGui::CollapsingHeader("Dependencies")) {
         if (dependencies.empty()) ImGui::TextDisabled("  depends on nothing in this repo");
         for (const auto& eid : dependencies) {
-            const Edge* e = ctx.store.edge(eid);
+            const Edge* e = ui.store.edge(eid);
             if (!e) continue;
-            const Node* other = ctx.store.node(e->to);
+            const Node* other = ui.store.node(e->to);
             ImGui::PushID(eid.c_str());
             if (ImGui::SmallButton(other ? other->name.c_str() : short_id(e->to).c_str())) {
-                select_node(ctx, e->to);
+                select_node(ui, e->to);
             }
             ImGui::SameLine();
             ImGui::TextDisabled("%s", std::string(to_string(e->kind)).c_str());
@@ -681,10 +729,10 @@ void draw_node_inspector(UiContext& ctx, const Node& n) {
     }
     if (ImGui::BeginPopup("##whatif")) {
         ImGui::TextDisabled("computed in the frontend, not reported by a provider");
-        const auto r = sim::compute(ctx.store, {n.id}, ctx.scene.view.level,
-                                    ImpactFilters{ctx.scene.view.filters.max_impact_depth,
+        const auto r = sim::compute(ui.store, {n.id}, ui.view.level,
+                                    ImpactFilters{ui.filters.max_impact_depth,
                                                   {EdgeKind::DependsOn, EdgeKind::Imports},
-                                                  ctx.scene.view.filters.show_heuristic});
+                                                  ui.filters.show_heuristic});
         ImGui::Text("%zu node(s) would be in the radius", r.impacted_nodes.size());
         for (const auto& x : r.impacted_nodes) {
             if (x.min_distance == 0) continue;
@@ -694,9 +742,9 @@ void draw_node_inspector(UiContext& ctx, const Node& n) {
     }
 }
 
-void draw_edge_inspector(UiContext& ctx, const Edge& e) {
-    const Node* from = ctx.store.node(e.from);
-    const Node* to   = ctx.store.node(e.to);
+void draw_edge_inspector(Ui& ui, const Edge& e) {
+    const Node* from = ui.store.node(e.from);
+    const Node* to   = ui.store.node(e.to);
 
     ImGui::TextUnformatted("Relationship");
     ImGui::SameLine();
@@ -704,13 +752,13 @@ void draw_edge_inspector(UiContext& ctx, const Edge& e) {
 
     ImGui::Spacing();
     if (ImGui::SmallButton(from ? from->name.c_str() : short_id(e.from).c_str())) {
-        select_node(ctx, e.from);
+        select_node(ui, e.from);
     }
     ImGui::SameLine();
     ImGui::TextDisabled("depends on");
     ImGui::SameLine();
     if (ImGui::SmallButton(to ? to->name.c_str() : short_id(e.to).c_str())) {
-        select_node(ctx, e.to);
+        select_node(ui, e.to);
     }
 
     ImGui::Separator();
@@ -741,7 +789,7 @@ void draw_edge_inspector(UiContext& ctx, const Edge& e) {
         ImGui::Text("%s:%d", e.evidence->artifact.c_str(), e.evidence->line);
         if (!e.evidence->snippet.empty()) {
             ImGui::PushStyleColor(ImGuiCol_ChildBg, to_v4(Vec4{0.05f, 0.055f, 0.07f, 1.0f}));
-            ImGui::BeginChild("##snip", ImVec2(0, 46.0f * ctx.scene.view.ui_text_scale), true);
+            ImGui::BeginChild("##snip", ImVec2(0, 46.0f * ui.view.ui_text_scale), true);
             ImGui::TextWrapped("%s", e.evidence->snippet.c_str());
             ImGui::EndChild();
             ImGui::PopStyleColor();
@@ -753,9 +801,10 @@ void draw_edge_inspector(UiContext& ctx, const Edge& e) {
     }
 }
 
-void draw_inspector(UiContext& ctx) {
+void draw_inspector(ecs::World& world) {
+    Ui ui(world);
     const ImGuiViewport* vp = ImGui::GetMainViewport();
-    const PanelMetrics   m  = panel_metrics(ctx);
+    const PanelMetrics   m  = panel_metrics(ui);
     ImGui::SetNextWindowPos(
         ImVec2(vp->WorkPos.x + vp->WorkSize.x - m.right, vp->WorkPos.y + m.top));
     ImGui::SetNextWindowSize(ImVec2(m.right, vp->WorkSize.y - m.top - m.bottom));
@@ -763,20 +812,20 @@ void draw_inspector(UiContext& ctx) {
                  ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings);
 
-    const auto& view = ctx.scene.view;
+    const auto& vs = ui.view;
 
-    if (!view.selected_edge.empty()) {
-        if (const Edge* e = ctx.store.edge(view.selected_edge)) {
-            if (ImGui::SmallButton("< back to node")) ctx.scene.view.selected_edge.clear();
+    if (!ui.selection.edge.empty()) {
+        if (const Edge* e = ui.store.edge(ui.selection.edge)) {
+            if (ImGui::SmallButton("< back to node")) ui.selection.edge.clear();
             ImGui::Separator();
-            draw_edge_inspector(ctx, *e);
+            draw_edge_inspector(ui, *e);
             ImGui::End();
             return;
         }
-        ctx.scene.view.selected_edge.clear();
+        ui.selection.edge.clear();
     }
 
-    if (view.selected_node.empty()) {
+    if (ui.selection.node.empty()) {
         ImGui::TextDisabled("Nothing selected.");
         ImGui::Spacing();
         ImGui::TextWrapped(
@@ -796,31 +845,31 @@ void draw_inspector(UiContext& ctx) {
         return;
     }
 
-    if (const Node* n = ctx.store.node(view.selected_node)) {
-        draw_node_inspector(ctx, *n);
+    if (const Node* n = ui.store.node(ui.selection.node)) {
+        draw_node_inspector(ui, *n);
     } else {
         // The selected node was deleted by an event. Say so rather than blanking:
         // the disappearance is itself information about what the agent did.
-        ImGui::TextColored(to_v4(theme().removed), "%s", view.selected_node.c_str());
+        ImGui::TextColored(to_v4(theme().removed), "%s", ui.selection.node.c_str());
         ImGui::TextDisabled("This node no longer exists in the current generation.");
-        if (ImGui::SmallButton("clear selection")) ctx.scene.view.selected_node.clear();
+        if (ImGui::SmallButton("clear selection")) ui.selection.node.clear();
     }
     ImGui::End();
 }
 
 // ------------------------------------------------------------- bottom panel
 
-void draw_timeline(UiContext& ctx, const std::vector<std::string>& fixture_names,
-                   int current_fixture) {
+void draw_timeline(ecs::World& world) {
+    Ui ui(world);
     const ImGuiViewport* vp = ImGui::GetMainViewport();
-    const PanelMetrics   m  = panel_metrics(ctx);
+    const PanelMetrics   m  = panel_metrics(ui);
     ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x, vp->WorkPos.y + vp->WorkSize.y - m.bottom));
     ImGui::SetNextWindowSize(ImVec2(vp->WorkSize.x, m.bottom));
     ImGui::Begin("Scenario", nullptr,
                  ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings);
 
-    Timeline* tl = ctx.source.timeline();
+    Timeline* tl = ui.source.source->timeline();
 
     ImGui::BeginChild("##transport", ImVec2(ImGui::GetContentRegionAvail().x * 0.56f, 0), false);
 
@@ -828,41 +877,41 @@ void draw_timeline(UiContext& ctx, const std::vector<std::string>& fixture_names
         // A live backend has no timeline. The panel degrades to a status readout
         // rather than disappearing, so the layout does not jump when sources swap.
         ImGui::TextDisabled("live source -- no timeline");
-        ImGui::Text("%s", ctx.source.status().description.c_str());
+        ImGui::Text("%s", ui.source.source->status().description.c_str());
     } else {
-        if (!fixture_names.empty()) {
-            ImGui::SetNextItemWidth(220.0f * ctx.scene.view.ui_text_scale);
-            int fx = current_fixture;
+        if (!ui.library.names.empty()) {
+            ImGui::SetNextItemWidth(220.0f * ui.view.ui_text_scale);
+            int fx = ui.library.current;
             std::string items;
-            for (const auto& n : fixture_names) { items += n; items.push_back('\0'); }
+            for (const auto& n : ui.library.names) { items += n; items.push_back('\0'); }
             items.push_back('\0');
-            if (ImGui::Combo("##fixture", &fx, items.c_str())) ctx.request_fixture = fx;
+            if (ImGui::Combo("##fixture", &fx, items.c_str())) ui.cmd.push(ecs::SelectFixture{fx});
             ImGui::SameLine();
         }
-        if (ctx.fixtures) {
-            ImGui::SetNextItemWidth(280.0f * ctx.scene.view.ui_text_scale);
-            int  idx = static_cast<int>(ctx.fixtures->scenario_index());
+        if (ui.source.fixtures) {
+            ImGui::SetNextItemWidth(280.0f * ui.view.ui_text_scale);
+            int  idx = static_cast<int>(ui.source.fixtures->scenario_index());
             std::string items;
-            for (const auto& s : ctx.fixtures->scenarios()) {
+            for (const auto& s : ui.source.fixtures->scenarios()) {
                 items += s.name;
                 items.push_back('\0');
             }
             items.push_back('\0');
             if (ImGui::Combo("##scenario", &idx, items.c_str())) {
-                ctx.fixtures->select_scenario(static_cast<std::size_t>(idx));
+                ui.source.fixtures->select_scenario(static_cast<std::size_t>(idx));
             }
             ImGui::SameLine();
-            if (ImGui::Button("Reload")) ctx.request_reload = true;
+            if (ImGui::Button("Reload")) ui.cmd.push(ecs::ReloadFixture{});
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("Re-read the fixture files from disk.\n"
                                   "Edit a scenario in an editor, hit this, watch it run.");
             }
-            if (!ctx.fixtures->scenario().description.empty()) {
-                ImGui::TextDisabled("%s", ctx.fixtures->scenario().description.c_str());
+            if (!ui.source.fixtures->scenario().description.empty()) {
+                ImGui::TextDisabled("%s", ui.source.fixtures->scenario().description.c_str());
             }
         }
 
-        const SourceStatus st = ctx.source.status();
+        const SourceStatus st = ui.source.source->status();
 
         if (ImGui::Button("|<")) tl->restart();
         ImGui::SameLine();
@@ -872,7 +921,7 @@ void draw_timeline(UiContext& ctx, const std::vector<std::string>& fixture_names
         ImGui::SameLine();
         if (ImGui::Button("Step >|")) tl->step_event();
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(120.0f * ctx.scene.view.ui_text_scale);
+        ImGui::SetNextItemWidth(120.0f * ui.view.ui_text_scale);
         float rate = static_cast<float>(tl->rate());
         if (ImGui::SliderFloat("##rate", &rate, 0.25f, 8.0f, "%.2fx",
                                ImGuiSliderFlags_Logarithmic)) {
@@ -880,7 +929,7 @@ void draw_timeline(UiContext& ctx, const std::vector<std::string>& fixture_names
         }
         ImGui::SameLine();
         ImGui::TextDisabled("g%llu   event %d/%d",
-                            static_cast<unsigned long long>(ctx.store.generation()),
+                            static_cast<unsigned long long>(ui.store.generation()),
                             st.events_emitted, st.events_total);
 
         // Scrubber with beat markers. Seeking replays from the baseline, so the state
@@ -915,7 +964,7 @@ void draw_timeline(UiContext& ctx, const std::vector<std::string>& fixture_names
     if (ImGui::BeginTable("##logtab", 4,
                           ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY |
                               ImGuiTableFlags_SizingFixedFit)) {
-        const float ts = ctx.scene.view.ui_text_scale;
+        const float ts = ui.view.ui_text_scale;
         ImGui::TableSetupColumn("t", ImGuiTableColumnFlags_WidthFixed, 60 * ts);
         ImGui::TableSetupColumn("gen", ImGuiTableColumnFlags_WidthFixed, 42 * ts);
         ImGui::TableSetupColumn("event", ImGuiTableColumnFlags_WidthFixed, 132 * ts);
@@ -923,7 +972,7 @@ void draw_timeline(UiContext& ctx, const std::vector<std::string>& fixture_names
         ImGui::TableSetupScrollFreeze(0, 1);
         ImGui::TableHeadersRow();
 
-        for (const auto& l : ctx.store.log()) {
+        for (const auto& l : ui.store.log()) {
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
             ImGui::TextDisabled("%.0f", l.t_ms);
@@ -950,34 +999,36 @@ void draw_timeline(UiContext& ctx, const std::vector<std::string>& fixture_names
 
 } // namespace
 
-void draw_panels(UiContext& ctx, const std::vector<std::string>& fixture_names,
-                 int current_fixture) {
-    draw_top_bar(ctx);
-    draw_session_panel(ctx);
-    draw_inspector(ctx);
-    draw_timeline(ctx, fixture_names, current_fixture);
+void draw_panels(ecs::World& world) {
+    draw_top_bar(world);
+    draw_session_panel(world);
+    draw_inspector(world);
+    draw_timeline(world);
 
     const ImGuiViewport* vp = ImGui::GetMainViewport();
-    const PanelMetrics   m  = panel_metrics(ctx);
-    ctx.free_origin = Vec2{vp->WorkPos.x + m.left, vp->WorkPos.y + m.top};
-    ctx.free_size   = Vec2{std::max(1.0f, vp->WorkSize.x - m.left - m.right),
-                           std::max(1.0f, vp->WorkSize.y - m.top - m.bottom)};
+    Ui                   ui(world);
+    const PanelMetrics   m = panel_metrics(ui);
+
+    ui.viewport.free_origin = Vec2{vp->WorkPos.x + m.left, vp->WorkPos.y + m.top};
+    ui.viewport.free_size   = Vec2{std::max(1.0f, vp->WorkSize.x - m.left - m.right),
+                                   std::max(1.0f, vp->WorkSize.y - m.top - m.bottom)};
 }
 
 // ------------------------------------------------------------------ overlay
 
-void draw_graph_overlay(UiContext& ctx, ImDrawList* dl) {
-    const auto&  view = ctx.scene.view;
-    const auto&  cam  = view.camera;
+void draw_graph_overlay(ecs::World& world, ImDrawList* dl) {
+    Ui ui(world);
+    const auto&  vs = ui.view;
+    const auto&  cam  = ui.camera;
     const Theme& t    = theme();
-    auto&        reg  = ctx.scene.registry;
+    auto&        reg  = ui.world.registry;
 
     // Semantic zoom decides everything about text here. Below the point where a label
     // is legible it is not drawn at all -- a smear of unreadable glyphs is worse than
     // an honest dot, and the hover card covers what the label would have said.
-    const ecs::NodeDetail detail = ecs::node_detail(view);
+    const rgv::view::NodeDetail detail = rgv::view::node_detail(ui.camera.zoom, vs.graph_text_scale);
 
-    if (view.show_labels && detail.labels) {
+    if (vs.show_labels && detail.labels) {
         ImFont*     font      = ImGui::GetFont();
         const float font_size = detail.font_px;
         const float alpha     = detail.t;
@@ -986,8 +1037,8 @@ void draw_graph_overlay(UiContext& ctx, ImDrawList* dl) {
              reg.view<const ecs::Position, const ecs::Extent, const ecs::NodeRef,
                       const ecs::Label>().each()) {
             const Vec2 s = cam.world_to_screen(pos.p);
-            if (s.x < ctx.free_origin.x - 240 || s.x > ctx.free_origin.x + ctx.free_size.x + 240 ||
-                s.y < ctx.free_origin.y - 90 || s.y > ctx.free_origin.y + ctx.free_size.y + 90) {
+            if (s.x < ui.viewport.free_origin.x - 240 || s.x > ui.viewport.free_origin.x + ui.viewport.free_size.x + 240 ||
+                s.y < ui.viewport.free_origin.y - 90 || s.y > ui.viewport.free_origin.y + ui.viewport.free_size.y + 90) {
                 continue;
             }
 
@@ -999,8 +1050,8 @@ void draw_graph_overlay(UiContext& ctx, ImDrawList* dl) {
             else if (imp) col = impact_color(imp->distance);
             col.a *= alpha;
 
-            const Vec2 half = ecs::render_half(view, detail, ext.half,
-                                               ecs::dot_px_for(changed, imp != nullptr, false));
+            const Vec2 half = rgv::view::render_half(ui.camera.zoom, detail, ext.half,
+                                               rgv::view::dot_px_for(changed, imp != nullptr, false));
 
             // Two lines only when the box is tall enough to hold both.
             const bool  two_lines = !label.sub.empty() && half.y * cam.zoom > font_size * 1.15f;
@@ -1026,7 +1077,7 @@ void draw_graph_overlay(UiContext& ctx, ImDrawList* dl) {
             if (imp && imp->distance > 0) {
                 char buf[16];
                 std::snprintf(buf, sizeof(buf), "%d", imp->distance);
-                const float  r = std::clamp(9.0f * cam.zoom * view.graph_text_scale, 7.0f, 14.0f);
+                const float  r = std::clamp(9.0f * cam.zoom * vs.graph_text_scale, 7.0f, 14.0f);
                 const ImVec2 c(s.x + half.x * cam.zoom - r * 0.5f,
                                s.y - half.y * cam.zoom + r * 0.5f);
                 dl->AddCircleFilled(c, r, ImGui::GetColorU32(ImVec4(0.06f, 0.07f, 0.08f,
@@ -1055,16 +1106,16 @@ void draw_graph_overlay(UiContext& ctx, ImDrawList* dl) {
     };
     // Only while the relevance filter is actually muting something: a legend entry
     // for a state nothing is in is just clutter.
-    if (ctx.scene.stats.muted > 0) {
+    if (ui.stats.muted > 0) {
         rows.push_back({"muted: only via a hub", t.pending, true});
     }
     // The legend's glyphs come from the global font, so its box follows the UI scale.
-    const float  us   = view.ui_text_scale;
+    const float  us   = vs.ui_text_scale;
     const float  line = ImGui::GetTextLineHeight() + 5.0f;
     const float  lw   = 178.0f * us;
     const float  lh   = line * static_cast<float>(rows.size()) + 4.0f;
-    const float  lx   = ctx.free_origin.x + 14.0f;
-    float        ly   = ctx.free_origin.y + ctx.free_size.y - lh - 10.0f;
+    const float  lx   = ui.viewport.free_origin.x + 14.0f;
+    float        ly   = ui.viewport.free_origin.y + ui.viewport.free_size.y - lh - 10.0f;
     dl->AddRectFilled(ImVec2(lx - 8, ly - 8), ImVec2(lx + lw, ly + lh),
                       ImGui::GetColorU32(ImVec4(0.06f, 0.065f, 0.08f, 0.86f)), 4.0f);
     dl->AddRect(ImVec2(lx - 8, ly - 8), ImVec2(lx + lw, ly + lh),
@@ -1087,50 +1138,50 @@ void draw_graph_overlay(UiContext& ctx, ImDrawList* dl) {
 }
 
 
-void draw_hover_card(UiContext& ctx) {
-    const auto& view = ctx.scene.view;
-    if (view.hovered_node.empty()) return;
+void draw_hover_card(ecs::World& world) {
+    Ui ui(world);
+    const auto& vs = ui.view;
+    if (ui.selection.hovered.empty()) return;
 
-    const Node* n = ctx.store.node(view.hovered_node);
+    const Node* n = ui.store.node(ui.selection.hovered);
     if (!n) return;
 
     // A short delay then a quick fade. Without the delay, sweeping the pointer across
     // a dense graph strobes a card per node and the whole view flickers.
     constexpr float kDelay = 0.16f, kFade = 0.11f;
-    const float alpha = std::clamp((view.hover_time - kDelay) / kFade, 0.0f, 1.0f);
+    const float alpha = std::clamp((ui.selection.hover_time - kDelay) / kFade, 0.0f, 1.0f);
     if (alpha <= 0.01f) return;
 
     // Anchored to the node, not to the cursor. A cursor-anchored card jitters as the
     // pointer moves inside a node and sits under the thing the user is aiming at; one
     // pinned to the node stays still and visibly belongs to it.
-    const entt::entity ent = ctx.scene.find_node(view.hovered_node);
+    const entt::entity ent = ui.index.node(ui.selection.hovered);
     if (ent == entt::null) return;
-    const auto* pos = ctx.scene.registry.try_get<ecs::Position>(ent);
-    const auto* ext = ctx.scene.registry.try_get<ecs::Extent>(ent);
+    const auto* pos = ui.world.registry.try_get<ecs::Position>(ent);
+    const auto* ext = ui.world.registry.try_get<ecs::Extent>(ent);
     if (!pos || !ext) return;
 
-    const ecs::NodeDetail detail = ecs::node_detail(view);
-    const Vec2            half   = ecs::render_half(
-        view, detail, ext->half,
-        ecs::dot_px_for(ctx.scene.registry.all_of<ecs::Changed>(ent),
-                        ctx.scene.registry.all_of<ecs::Impacted>(ent), true));
-    const Vec2 anchor = view.camera.world_to_screen(pos->p);
+    const rgv::view::NodeDetail detail = rgv::view::node_detail(ui.camera.zoom, vs.graph_text_scale);
+    const Vec2            half   = rgv::view::render_half(ui.camera.zoom, detail, ext->half,
+        rgv::view::dot_px_for(ui.world.registry.all_of<ecs::Changed>(ent),
+                        ui.world.registry.all_of<ecs::Impacted>(ent), true));
+    const Vec2 anchor = ui.camera.world_to_screen(pos->p);
 
     // The card is chrome, not graph: it is an ImGui surface and follows the UI scale,
     // so it stays readable even when graph text has been turned right down.
-    const float w = 300.0f * view.ui_text_scale;
-    const float h = 210.0f * view.ui_text_scale;   // estimate, only used for flipping
+    const float w = 300.0f * vs.ui_text_scale;
+    const float h = 210.0f * vs.ui_text_scale;   // estimate, only used for flipping
 
     // Flip to the other side rather than let the card run off the graph area.
-    float x = anchor.x + half.x * view.camera.zoom + 14.0f;
-    float y = anchor.y + half.y * view.camera.zoom + 10.0f;
-    if (x + w > ctx.free_origin.x + ctx.free_size.x) {
-        x = anchor.x - half.x * view.camera.zoom - w - 14.0f;
+    float x = anchor.x + half.x * ui.camera.zoom + 14.0f;
+    float y = anchor.y + half.y * ui.camera.zoom + 10.0f;
+    if (x + w > ui.viewport.free_origin.x + ui.viewport.free_size.x) {
+        x = anchor.x - half.x * ui.camera.zoom - w - 14.0f;
     }
-    if (y + h > ctx.free_origin.y + ctx.free_size.y) {
-        y = std::max(ctx.free_origin.y, anchor.y - h);
+    if (y + h > ui.viewport.free_origin.y + ui.viewport.free_size.y) {
+        y = std::max(ui.viewport.free_origin.y, anchor.y - h);
     }
-    x = std::max(x, ctx.free_origin.x);
+    x = std::max(x, ui.viewport.free_origin.x);
 
     ImGui::SetNextWindowPos(ImVec2(x, y));
     ImGui::SetNextWindowSize(ImVec2(w, 0.0f));
@@ -1154,7 +1205,7 @@ void draw_hover_card(UiContext& ctx) {
     }
 
     // What the agent did to it, if anything.
-    for (const auto& c : ctx.store.changed_files()) {
+    for (const auto& c : ui.store.changed_files()) {
         if (c.node_id != n->id) continue;
         ImGui::Separator();
         chip(std::string(to_string(c.change)).c_str(), change_color(c.change));
@@ -1165,7 +1216,7 @@ void draw_hover_card(UiContext& ctx) {
         break;
     }
 
-    if (const ImpactedNode* in = impacted_for(ctx.store, view.level, n->id)) {
+    if (const ImpactedNode* in = impacted_for(ui.store, vs.level, n->id)) {
         ImGui::Separator();
         chip(in->changed ? "changed" : (in->direct ? "direct" : "transitive"),
              impact_color(in->min_distance));
@@ -1177,14 +1228,14 @@ void draw_hover_card(UiContext& ctx) {
         }
         if (!in->paths.empty()) {
             // One line of the reason, so the card answers "why" without a click.
-            const auto& path = in->paths[std::clamp(view.path_index, 0,
+            const auto& path = in->paths[std::clamp(ui.selection.path_index, 0,
                                                     static_cast<int>(in->paths.size()) - 1)].edges;
             std::string chain = n->name;
             NodeId      cur   = n->id;
             for (const auto& eid : path) {
-                const Edge* e = ctx.store.edge(eid);
+                const Edge* e = ui.store.edge(eid);
                 if (!e) break;
-                const Node* dst = ctx.store.node(e->to);
+                const Node* dst = ui.store.node(e->to);
                 chain += "  ->  ";
                 chain += dst ? dst->name : short_id(e->to);
                 cur = e->to;
@@ -1197,9 +1248,9 @@ void draw_hover_card(UiContext& ctx) {
 
     ImGui::Separator();
     ImGui::TextDisabled("%zu dependents   %zu dependencies",
-                        ctx.store.in_edges(n->id).size(), ctx.store.out_edges(n->id).size());
+                        ui.store.in_edges(n->id).size(), ui.store.out_edges(n->id).size());
     {
-        const auto& idx = ctx.scene.specificity();
+        const auto& idx = ui.derived.specificity;
         if (!idx.empty() && idx.population() > 1 &&
             idx.specificity(n->id) <= analysis::kHubThreshold) {
             chip("hub", theme().changed);
@@ -1215,9 +1266,10 @@ void draw_hover_card(UiContext& ctx) {
 }
 
 
-void draw_text_settings(UiContext& ctx) {
-    auto& view = ctx.scene.view;
-    if (!view.show_text_settings) return;
+void draw_text_settings(ecs::World& world) {
+    Ui ui(world);
+    auto& vs = ui.view;
+    if (!vs.show_text_settings) return;
 
     const ImGuiViewport* vp = ImGui::GetMainViewport();
 
@@ -1225,12 +1277,12 @@ void draw_text_settings(UiContext& ctx) {
     // the window fixed in place, so it cannot chase the toolbar button as the toolbar
     // reflows underneath it.
     // Placed just clear of the inspector, once, when it opens.
-    const PanelMetrics pm = panel_metrics(ctx);
+    const PanelMetrics pm = panel_metrics(ui);
     ImGui::SetNextWindowSizeConstraints(ImVec2(372.0f, 0.0f), ImVec2(372.0f, FLT_MAX));
     ImGui::SetNextWindowPos(
         ImVec2(std::max(vp->WorkPos.x + pm.left + 8.0f,
                         vp->WorkPos.x + vp->WorkSize.x - pm.right - 388.0f),
-               vp->WorkPos.y + std::max(ctx.top_bar_height, 64.0f) + 16.0f),
+               vp->WorkPos.y + std::max(ui.viewport.top_bar_height, 64.0f) + 16.0f),
         ImGuiCond_Appearing);
 
     // No title bar on purpose. Begin() computes the title bar's height from the font
@@ -1249,11 +1301,11 @@ void draw_text_settings(UiContext& ctx) {
     // that scale currently is. Applied immediately, so every item below is laid out at
     // a constant size: the panels behind update live while the control under the
     // cursor stays exactly where it is.
-    ImGui::SetWindowFontScale(1.0f / std::max(view.ui_text_scale, 0.01f));
+    ImGui::SetWindowFontScale(1.0f / std::max(vs.ui_text_scale, 0.01f));
 
     ImGui::TextUnformatted("Text size");
     ImGui::SameLine(298.0f);
-    if (ImGui::SmallButton("close")) view.show_text_settings = false;
+    if (ImGui::SmallButton("close")) vs.show_text_settings = false;
     ImGui::Separator();
     ImGui::Spacing();
 
@@ -1300,8 +1352,8 @@ void draw_text_settings(UiContext& ctx) {
     // Panel geometry is derived from this every frame, so there is nothing to
     // invalidate -- the next frame simply lays out at the new size.
     row("UI text", "ui", "Panels, inspector, event log. Larger leaves less room for the graph.",
-        &view.ui_text_scale, &commit);
-    if (commit) ctx.request_save_settings = true;
+        &vs.ui_text_scale, &commit);
+    if (commit) ui.cmd.push(ecs::SaveSettings{});
 
     ImGui::Spacing();
     ImGui::Separator();
@@ -1309,20 +1361,20 @@ void draw_text_settings(UiContext& ctx) {
 
     if (row("Graph text", "graph",
             "Node labels, and so node sizes. Larger means fewer nodes fit on screen.",
-            &view.graph_text_scale, &commit)) {
-        ctx.request_extents = true;   // node boxes are sized to hold their label
+            &vs.graph_text_scale, &commit)) {
+        ui.world.resource<ecs::SceneRequests>().refresh_extents = true;   // node boxes are sized to hold their label
     }
-    if (commit) ctx.request_save_settings = true;
+    if (commit) ui.cmd.push(ecs::SaveSettings{});
 
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
 
     if (ImGui::Button("Reset both")) {
-        view.ui_text_scale        = 1.0f;
-        view.graph_text_scale     = 1.0f;
-        ctx.request_extents       = true;
-        ctx.request_save_settings = true;
+        vs.ui_text_scale        = 1.0f;
+        vs.graph_text_scale     = 1.0f;
+        ui.world.resource<ecs::SceneRequests>().refresh_extents = true;
+        ui.cmd.push(ecs::SaveSettings{});
     }
     ImGui::SameLine();
     ImGui::TextDisabled("saved to ~/.config/rgv");

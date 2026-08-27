@@ -1,8 +1,10 @@
 // Architectural specificity (IDF) and the hub-change alert.
 #include "TestMain.h"
 
+
 #include "rgv/analysis/Specificity.h"
-#include "rgv/ecs/Scene.h"
+#include "Harness.h"
+
 #include "rgv/model/GraphStore.h"
 
 #include <cmath>
@@ -245,19 +247,22 @@ TEST(raising_the_relevance_threshold_mutes_impact_that_runs_through_a_hub) {
                         impacted("pkg:web", 1, {"e:web->log"})};
     push_impact(store, r);
 
-    ecs::Scene scene;
-    scene.view.mode  = ecs::ViewMode::Architecture;
-    scene.view.level = Level::Package;
+    rgvtest::Harness h;
+    h.world.resource<GraphStore>() = std::move(store);
+    h.view().mode  = ecs::ViewMode::Architecture;
+    h.view().level = Level::Package;
 
-    scene.view.filters.min_relevance = 0.0f;
-    scene.rebuild(store);
-    CHECK_EQ(scene.stats.impacted, 3);
-    CHECK_EQ(scene.stats.muted, 0);
+    h.filters().min_relevance = 0.0f;
+    h.request_rebuild();
+    h.tick();
+    CHECK_EQ(h.stats().impacted, 3);
+    CHECK_EQ(h.stats().muted, 0);
 
-    scene.view.filters.min_relevance = 0.5f;
-    scene.rebuild(store);
-    CHECK_EQ(scene.stats.impacted, 0);   // every path runs through the hub
-    CHECK_EQ(scene.stats.muted, 3);
+    h.filters().min_relevance = 0.5f;
+    h.request_rebuild();
+    h.tick();
+    CHECK_EQ(h.stats().impacted, 0);   // every path runs through the hub
+    CHECK_EQ(h.stats().muted, 3);
 }
 
 // The rule that makes the whole thing safe: a hub edit is the loudest event there is,
@@ -273,19 +278,21 @@ TEST(the_relevance_filter_never_mutes_the_changed_node_itself) {
     r.impacted_nodes = {impacted("pkg:log", 0, {}), impacted("pkg:web", 1, {"e:web->log"})};
     push_impact(store, r);
 
-    ecs::Scene scene;
-    scene.view.mode                  = ecs::ViewMode::Architecture;
-    scene.view.level                 = Level::Package;
-    scene.view.filters.min_relevance = 1.0f;   // maximum filtering
-    scene.rebuild(store);
+    rgvtest::Harness h;
+    h.world.resource<GraphStore>() = std::move(store);
+    h.view().mode             = ecs::ViewMode::Architecture;
+    h.view().level            = Level::Package;
+    h.filters().min_relevance = 1.0f;   // maximum filtering
+    h.request_rebuild();
+    h.tick();
 
-    const entt::entity e = scene.find_node("pkg:log");
+    const entt::entity e = h.node("pkg:log");
     CHECK(e != entt::null);
-    CHECK(scene.registry.all_of<ecs::Changed>(e));
-    const auto* imp = scene.registry.try_get<ecs::Impacted>(e);
+    CHECK(h.registry().all_of<ecs::Changed>(e));
+    const auto* imp = h.registry().try_get<ecs::Impacted>(e);
     CHECK(imp != nullptr);
     CHECK(!imp->muted);
-    CHECK_EQ(scene.stats.changed, 1);
+    CHECK_EQ(h.stats().changed, 1);
 }
 
 TEST(a_changed_hub_is_flagged_on_the_node_itself) {
@@ -302,17 +309,20 @@ TEST(a_changed_hub_is_flagged_on_the_node_itself) {
                         impacted("pkg:web", 1, {"e:web->log"})};
     push_impact(store, r);
 
-    ecs::Scene scene;
-    scene.view.mode  = ecs::ViewMode::Architecture;
-    scene.view.level = Level::Package;
-    scene.rebuild(store);
+    rgvtest::Harness h;
+    h.world.resource<GraphStore>() = std::move(store);
+    h.view().mode  = ecs::ViewMode::Architecture;
+    h.view().level = Level::Package;
+    h.request_rebuild();
+    h.tick();
 
-    CHECK_EQ(scene.hub_alerts().size(), std::size_t{1});
-    const auto* hub = scene.registry.try_get<ecs::HubSeed>(scene.find_node("pkg:log"));
+    const auto& derived = h.world.resource<ecs::DerivedState>();
+    CHECK_EQ(derived.hub_alerts.size(), std::size_t{1});
+    const auto* hub = h.registry().try_get<ecs::HubSeed>(h.node("pkg:log"));
     CHECK(hub != nullptr);
     CHECK_EQ(hub->dependents, 3);
     CHECK(hub->reach_fraction > 0.7f);
 
     // An ordinary changed package carries no such flag.
-    CHECK(scene.registry.try_get<ecs::HubSeed>(scene.find_node("pkg:auth")) == nullptr);
+    CHECK(h.registry().try_get<ecs::HubSeed>(h.node("pkg:auth")) == nullptr);
 }
