@@ -12,6 +12,8 @@
 //
 // Linux-only (inotify). The transport and the walk are portable; only `Watcher` is not.
 
+#include "Packages.h"
+
 #include <nlohmann/json.hpp>
 
 #include <cerrno>
@@ -111,15 +113,92 @@ void walk(const fs::path& root, const fs::path& dir, Tree& tree) {
     }
 }
 
-json node_for(const fs::path& root, const std::string& rel, bool is_dir) {
-    const fs::path    p      = root / rel;
-    const fs::path    parent = fs::path(rel).parent_path();
-    const std::string parent_id = dir_id(parent.generic_string());
+// rel directory -> the package that occupies it. A package node REPLACES the directory
+// node at its path rather than sitting beside it, so `packages/auth` is one node, and
+// everything inside it parents onto the package. That is what makes "which package owns
+// this file" a walk up the containment tree rather than a path-prefix search (FR-11).
+using PackageDirs = std::map<std::string, std::string>;   // rel dir -> package id
+
+std::string parent_id_for(const std::string& rel, const PackageDirs& pkg_dirs) {
+    const std::string parent = fs::path(rel).parent_path().generic_string();
+    auto              it     = pkg_dirs.find(parent);
+    return it != pkg_dirs.end() ? it->second : dir_id(parent);
+}
+
+json node_for(const fs::path& root, const std::string& rel, bool is_dir,
+              const PackageDirs& pkg_dirs) {
+    const fs::path    p         = root / rel;
+    const std::string parent_id = parent_id_for(rel, pkg_dirs);
+
     if (is_dir) {
+        // The package node for this directory is emitted separately, with its own kind
+        // and attributes; there must not also be a directory node for the same path.
+        if (pkg_dirs.count(rel)) return json();
         return node_json(dir_id(rel), "directory", p.filename().string(), rel, parent_id, {});
     }
     return node_json(file_id(rel), "file", p.filename().string(), rel, parent_id,
                      language_of(p));
+}
+
+// Packages, the external packages they name, and the depends_on edges between them.
+//
+// Direction is dependent -> dependency (contract §3.2); blast radius traverses it in
+// reverse, which is what makes "I changed auth, what breaks" the natural query.
+void emit_packages(const std::vector<rgv::watch::Package>& pkgs, json& nodes, json& edges,
+                   long generation) {
+    std::map<std::string, const rgv::watch::Package*> by_name;
+    for (const auto& p : pkgs) by_name[rgv::watch::normalize(p.name)] = &p;
+
+    for (const auto& p : pkgs) {
+        json n = node_json(p.id, "package", p.name, p.rel,
+                           p.rel.empty() ? "repo:root" : dir_id(fs::path(p.rel).parent_path()
+                                                                   .generic_string()),
+                           p.provider == "python" ? "python" : "");
+        json attrs{{"manifest", p.manifest}};
+        if (!p.version.empty()) attrs["version"] = p.version;
+        n["attrs"] = attrs;
+        nodes.push_back(std::move(n));
+    }
+
+    std::map<std::string, bool> externals;   // normalized name -> already emitted
+    for (const auto& p : pkgs) {
+        for (const auto& d : p.deps) {
+            const std::string key = rgv::watch::normalize(d.name);
+            auto              hit = by_name.find(key);
+
+            std::string to_id;
+            if (hit != by_name.end()) {
+                if (hit->second == &p) continue;   // a package depending on itself is noise
+                to_id = hit->second->id;
+            } else {
+                to_id = "ext:" + d.name;
+                if (!externals[key]) {
+                    externals[key] = true;
+                    // Not in the repo, so it has no path and no containment parent: it is
+                    // context for the graph, and the External filter exists to hide it.
+                    nodes.push_back(
+                        node_json(to_id, "external_package", d.name, "", "", ""));
+                }
+            }
+
+            json e{{"id", "e:dep:" + p.name + "->" + d.name},
+                   {"kind", "depends_on"},
+                   {"from", p.id},
+                   {"to", to_id},
+                   {"provider", p.provider},
+                   // The manifest says the dependency is declared, and that is all it
+                   // says. Whether any code imports it is a different question, for a
+                   // provider that reads code.
+                   {"confidence", "exact"},
+                   {"freshness", "current"},
+                   {"valid_from", generation}};
+            if (d.line > 0) {
+                e["evidence"] = json{{"artifact", d.artifact}, {"line", d.line},
+                                     {"snippet", d.snippet}};
+            }
+            edges.push_back(std::move(e));
+        }
+    }
 }
 
 // -- inotify ------------------------------------------------------------------
@@ -229,11 +308,23 @@ int main(int argc, char** argv) {
 
     long generation = 100;
 
+    std::vector<rgv::watch::Package> packages;
+    PackageDirs                 pkg_dirs;
+
     // -- baseline
     {
         json nodes = json::array();
+        json edges = json::array();
         nodes.push_back(node_json("repo:root", "repository", root.filename().string(), "", {}, {}));
-        for (const auto& [rel, is_dir] : tree.entries) nodes.push_back(node_for(root, rel, is_dir));
+
+        packages = rgv::watch::scan_packages(root, tree.entries);
+        for (const auto& p : packages) pkg_dirs[p.rel] = p.id;
+
+        for (const auto& [rel, is_dir] : tree.entries) {
+            json n = node_for(root, rel, is_dir, pkg_dirs);
+            if (!n.is_null()) nodes.push_back(std::move(n));
+        }
+        emit_packages(packages, nodes, edges, generation);
 
         json snap{{"schema", "rgv.snapshot/1"},
                   {"repo", {{"root", root.string()},
@@ -247,15 +338,20 @@ int main(int argc, char** argv) {
                                {"started_at_ms", 0}}},
                   {"generation", generation},
                   {"nodes", nodes},
-                  {"edges", json::array()}};
+                  {"edges", edges}};
         emit(json{{"type", "snapshot"}, {"snapshot", snap}});
     }
 
-    emit(json{{"t_ms", 0}, {"type", "adapter.status"}, {"generation", generation},
-              {"adapter", "filesystem"}, {"state", "ready"}, {"queue_depth", 0}});
+    // Two adapters in one stream (contract §6.2): the walk, and the manifest reader.
+    // They are announced separately because the `provider` on an edge names one of them,
+    // and the inspector should be able to say which.
+    for (const char* adapter : {"filesystem", "npm", "python"}) {
+        emit(json{{"t_ms", 0}, {"type", "adapter.status"}, {"generation", generation},
+                  {"adapter", adapter}, {"state", "ready"}, {"queue_depth", 0}});
+    }
 
-    std::fprintf(stderr, "rgv-watch: %zu entries under %s\n", tree.entries.size(),
-                 root.c_str());
+    std::fprintf(stderr, "rgv-watch: %zu entries, %zu packages under %s\n",
+                 tree.entries.size(), packages.size(), root.c_str());
 
     Watcher watcher(root);
     watcher.add_recursive(root);
@@ -287,7 +383,10 @@ int main(int argc, char** argv) {
         for (const auto& [rel, is_dir] : tree.entries) {
             if (!now.entries.count(rel)) removed.push_back(is_dir ? dir_id(rel) : file_id(rel));
         }
-        for (const auto& [rel, is_dir] : fresh) added.push_back(node_for(root, rel, is_dir));
+        for (const auto& [rel, is_dir] : fresh) {
+            json n = node_for(root, rel, is_dir, pkg_dirs);
+            if (!n.is_null()) added.push_back(std::move(n));
+        }
 
         const bool structural = !added.empty() || !removed.empty();
         if (structural) {

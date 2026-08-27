@@ -107,8 +107,15 @@ if(RGV_BUILD_TESTS)
     tests/test_settings.cpp
     tests/test_specificity.cpp
     tests/test_schedule.cpp
+    tests/test_packages.cpp
+    # The manifest readers are the provider's, not the frontend's. Compiled into the
+    # tests directly rather than linked, because a provider shares no library with the
+    # frontend -- only the wire format.
+    ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/Packages.cpp
   )
-  target_include_directories(rgv-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+  target_include_directories(rgv-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests
+                                               ${CMAKE_CURRENT_SOURCE_DIR}/third_party/json
+                                               ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch)
   target_compile_definitions(rgv-tests PRIVATE RGV_FIXTURE_DIR="${RGV_FIXTURE_DIR}")
   target_link_libraries(rgv-tests PRIVATE rgv_core)
 
@@ -176,7 +183,9 @@ endif()
 add_compile_definitions(RGV_WATCH_BIN="${CMAKE_BINARY_DIR}/bin/rgv-watch"
                         RGV_TEST_TMP="${CMAKE_BINARY_DIR}/test-tmp")
 
-add_executable(rgv-watch ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/main.cpp)
+add_executable(rgv-watch
+  ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/main.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/Packages.cpp)
 target_include_directories(rgv-watch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/json)
 target_compile_features(rgv-watch PRIVATE cxx_std_20)
 target_link_libraries(rgv-watch PRIVATE rgv_warnings)

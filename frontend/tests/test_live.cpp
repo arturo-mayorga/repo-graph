@@ -259,3 +259,59 @@ TEST(an_explicit_provider_path_is_used_as_given) {
     CHECK_EQ(live::resolve_provider("./build/bin/rgv-watch"), std::string("./build/bin/rgv-watch"));
     CHECK_EQ(live::resolve_provider(RGV_WATCH_BIN), std::string(RGV_WATCH_BIN));
 }
+
+// A package node REPLACES the directory node at its path rather than sitting beside it,
+// and everything inside reparents onto it. That is what makes "which package owns this
+// file" a walk up the containment tree instead of a path-prefix search (FR-11), and two
+// nodes for one path would put the same directory on screen twice.
+TEST(a_package_replaces_the_directory_it_occupies) {
+    const std::string root = std::string(RGV_TEST_TMP) + "/provider-packages";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root + "/libs/core/src");
+    std::filesystem::create_directories(root + "/services/api/src");
+    { std::ofstream(root + "/libs/core/pyproject.toml")
+          << "[project]\nname = \"acme-core\"\ndependencies = [\"structlog\"]\n"; }
+    { std::ofstream(root + "/services/api/pyproject.toml")
+          << "[project]\nname = \"acme-api\"\ndependencies = [\"acme-core\", \"fastapi\"]\n"; }
+    { std::ofstream(root + "/libs/core/src/__init__.py") << "x = 1\n"; }
+
+    live::LiveSource src({live::resolve_provider("rgv-watch"), "--root", root}, 5000.0);
+    const auto&      base = src.baseline();
+
+    auto node = [&](const std::string& id) -> const Node* {
+        for (const auto& n : base.nodes) {
+            if (n.id == id) return &n;
+        }
+        return nullptr;
+    };
+
+    CHECK(node("pkg:acme-core") != nullptr);
+    CHECK(node("dir:libs/core") == nullptr);          // not both
+    CHECK(node("pkg:acme-core")->kind == NodeKind::Package);
+    CHECK_EQ(node("pkg:acme-core")->path, std::string("libs/core"));
+
+    // Children route through the package.
+    CHECK_EQ(node("dir:libs/core/src")->parent, std::string("pkg:acme-core"));
+    CHECK_EQ(node("file:libs/core/pyproject.toml")->parent, std::string("pkg:acme-core"));
+
+    // The dependency the Architecture view exists to draw, dependent -> dependency.
+    int internal = 0;
+    for (const auto& e : base.edges) {
+        if (e.kind != EdgeKind::DependsOn) continue;
+        if (e.from == "pkg:acme-api" && e.to == "pkg:acme-core") {
+            ++internal;
+            CHECK(e.confidence == Confidence::Exact);
+            // Evidence is what the provenance inspector shows. An edge nobody can trace
+            // back to a line in a file is an assertion taken on faith.
+            CHECK(e.evidence.has_value());
+            CHECK_EQ(e.evidence->artifact, std::string("services/api/pyproject.toml"));
+            CHECK(e.evidence->line > 0);
+        }
+    }
+    CHECK_EQ(internal, 1);
+
+    // A third-party dependency is context, not a node in the repository.
+    CHECK(node("ext:fastapi") != nullptr);
+    CHECK(node("ext:fastapi")->kind == NodeKind::ExternalPackage);
+    CHECK(node("ext:fastapi")->parent.empty());
+}

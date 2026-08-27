@@ -99,12 +99,34 @@ watch what it produces without a UI at all:
 ./build/bin/rgv-watch --root . | head -3
 ```
 
-That seam is why this is language-neutral: `rgv-watch` understands the filesystem and
-nothing else, and a dependency extractor for any given language is a *different* process
-speaking the same protocol. It reports containment only, so the dependency views stay
-empty on a live repo until such an extractor exists. Startup picks a view that has
-something in it — a baseline with no dependency edges opens on Filesystem — so you land
-somewhere useful without passing `--view`.
+The provider has two adapters. The **filesystem** adapter reports containment: which
+files and directories exist and when they change. The **manifest** adapter finds packages
+and their declared dependencies, which is what populates the Architecture view:
+
+| Ecosystem | Manifest | Reads |
+|---|---|---|
+| npm / pnpm / yarn | `package.json` | `name`, `dependencies`, `peerDependencies`, `devDependencies` |
+| Python | `pyproject.toml` | PEP 621 `[project]` and Poetry `[tool.poetry]` |
+
+A package node *replaces* the directory node at its path, and everything inside reparents
+onto it — so walking up the containment tree answers "which package owns this file"
+(FR-11). A dependency naming a package in the repo becomes a `depends_on` edge between
+them; anything else becomes an `external_package`, which the `External` filter hides by
+default. Every edge carries the manifest path, line number and snippet that declared it,
+which is what the provenance inspector shows.
+
+Declared dependencies, not used ones. A manifest states what a package is *allowed* to
+depend on — that is `confidence: "exact"` about the declaration and says nothing about
+whether any code imports it. Import-level truth needs a parser per language and is a
+different provider.
+
+Startup picks a view that has something in it — a baseline with no dependency edges opens
+on Filesystem — so you land somewhere useful without passing `--view`.
+
+Adding an ecosystem is adding a reader in `provider/watch/Packages.cpp`; nothing else in
+the provider knows that npm or Python exist. Cargo, Go and CMake are not read yet, so
+this repo's own Architecture view stays empty — point `--watch` at a JS or Python project
+to see it populated.
 
 `--scenario N --at MS --select NODE --hover NODE --text-settings` reproduce an exact
 on-screen state,
