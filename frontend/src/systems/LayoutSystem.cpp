@@ -251,13 +251,20 @@ void LayoutSystem::radial_tree(ecs::World& world) {
         return 6.2831853f * static_cast<float>(h % 1024u) / 1024.0f;
     };
 
+    // A directory grows from phi to phi-squared times a file, by the square root of its
+    // file count -- so the difference is visible early and then flattens, rather than a
+    // handful of huge directories swamping everything else.
     auto draw_radius = [&](std::size_t files) {
-        return std::min(params_.dir_radius_max,
-                        params_.dir_radius +
-                            params_.dir_radius_per * std::sqrt(static_cast<float>(files)));
+        if (files == 0) return params_.dir_radius;
+        const float span = params_.dir_radius_max - params_.dir_radius;
+        const float t    = std::min(1.0f, std::sqrt(static_cast<float>(files)) / 7.0f);
+        return params_.dir_radius + span * t;
     };
 
     // Explicit stack rather than recursion: a vendored dependency tree gets deep.
+    std::unordered_map<std::uint32_t, Vec2>  outward;
+    std::unordered_map<std::uint32_t, float> halo;
+
     struct Frame { entt::entity node; std::size_t next; std::vector<Sub> done; };
     std::vector<Frame>                            stack;
     std::unordered_map<std::uint32_t, Sub>        built;
@@ -292,26 +299,51 @@ void LayoutSystem::radial_tree(ecs::World& world) {
                 const float draw = draw_radius(files);
                 out.nodes.push_back({f.node, Vec2{0.0f, 0.0f}});
 
-                // Files orbit clear of the disc, on a ring long enough to seat them
-                // all without crowding. The halo's size is the file count made visible.
+                // Files fill concentric orbits rather than one enormous ring.
+                //
+                // A single orbit sized to seat every file puts 57 icons on a circle of
+                // radius 160 around a disc of radius 16 -- a vast empty annulus. Gource
+                // packs children onto successive orbits for exactly this reason, and it
+                // is what keeps a wide directory compact enough to read.
                 float hull = draw;
                 if (files > 0) {
-                    const float per   = 2.0f * params_.file_radius + params_.file_gap;
-                    const float seat  = static_cast<float>(files) * per / 6.2831853f;
-                    const float orbit = std::max(draw + params_.file_radius + params_.orbit_gap,
-                                                 seat);
-                    const float base  = phase_of(f.node);
-                    std::size_t i     = 0;
+                    std::vector<entt::entity> to_place;
+                    to_place.reserve(files);
                     for (auto c : ch) {
-                        if (!is_file(c)) continue;
-                        const float a = base + 6.2831853f * static_cast<float>(i++) /
-                                                   static_cast<float>(files);
-                        out.nodes.push_back(
-                            {c, Vec2{std::cos(a) * orbit, std::sin(a) * orbit}});
+                        if (is_file(c)) to_place.push_back(c);
                     }
-                    hull = orbit + params_.file_radius;
+
+                    const float per  = 2.0f * params_.file_radius + params_.file_gap;
+                    const float base = phase_of(f.node);
+                    float       r    = draw + params_.file_radius + params_.orbit_gap;
+                    float       last = r;
+
+                    std::size_t placed = 0;
+                    int         orbit  = 0;
+                    while (placed < to_place.size()) {
+                        // How many fit on this orbit without crowding, and never zero.
+                        const auto seats = static_cast<std::size_t>(
+                            std::max(1.0f, std::floor(6.2831853f * r / per)));
+                        const std::size_t n = std::min(seats, to_place.size() - placed);
+
+                        // Each orbit is rotated off the last so the dots interleave
+                        // instead of forming radial spokes.
+                        const float spin = base + 0.5f * static_cast<float>(orbit++);
+                        for (std::size_t k = 0; k < n; ++k) {
+                            const float a = spin + 6.2831853f * static_cast<float>(k) /
+                                                       static_cast<float>(n);
+                            const Vec2  u{std::cos(a), std::sin(a)};
+                            out.nodes.push_back({to_place[placed + k], u * r});
+                            outward[to_raw(to_place[placed + k])] = u;
+                        }
+                        placed += n;
+                        last = r;
+                        r += per;
+                    }
+                    hull = last + params_.file_radius;
                 }
-                out.radius = hull;
+                halo[to_raw(f.node)] = hull;
+                out.radius           = hull;
 
                 // Child subtrees, largest first, packed into shells that fill outward.
                 // One shell would put every sibling at the same radius; at 240 siblings
@@ -366,6 +398,10 @@ void LayoutSystem::radial_tree(ecs::World& world) {
                         for (const auto& [e, off] : subs[k].nodes) {
                             out.nodes.push_back({e, at + off});
                         }
+                        // Only the subtree root moves relative to this parent; the rest
+                        // already have an outward direction from their own.
+                        outward[to_raw(subs[k].nodes.front().first)] =
+                            Vec2{std::cos(mid), std::sin(mid)};
                         out.radius = std::max(out.radius, r + subs[k].radius);
                     }
                     r += 2.0f * tallest + params_.dir_gap;
@@ -398,7 +434,11 @@ void LayoutSystem::radial_tree(ecs::World& world) {
                 if (is_file(c)) ++files;
             }
             const float radius = is_file(e) ? params_.file_radius : draw_radius(files);
-            reg.emplace_or_replace<ecs::Disc>(e, ecs::Disc{radius, radius});
+            auto        dir    = outward.find(to_raw(e));
+            auto        h      = halo.find(to_raw(e));
+            reg.emplace_or_replace<ecs::Disc>(
+                e, ecs::Disc{radius, h == halo.end() ? radius : h->second,
+                             dir == outward.end() ? Vec2{0.0f, 1.0f} : dir->second});
         }
     };
 

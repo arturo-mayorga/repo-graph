@@ -37,14 +37,19 @@ struct LayoutParams {
     // them put every file dot exactly on the directory's edge, half-occluding it, and
     // made the size ratio between a file and a directory the ratio of a dot to a whole
     // orbit -- far too stark to read as "the same kind of thing, one bigger".
-    // Spacing is set relative to the node sizes: shrinking the discs without shrinking
-    // the gaps leaves the graph spatially large and every node a few pixels once it is
-    // fitted to the window.
-    float file_radius     = 5.5f;    // a file dot
+    // Node sizes step by the golden ratio: a file, a directory, and the largest a
+    // directory grows to are r, r*phi, r*phi^2. Three sizes on one geometric scale read
+    // as a family -- clearly different, obviously related -- where an arbitrary ratio
+    // reads as two unrelated shapes or as no difference at all.
+    static constexpr float kGolden = 1.6180339887f;
+
+    float file_radius     = 6.0f;                            // a file dot
+    float dir_radius      = 6.0f * kGolden;                  // a directory holding nothing
+    float dir_radius_max  = 6.0f * kGolden * kGolden;        // the largest one gets
+
+    // Spacing is set relative to those sizes: shrinking the discs without shrinking the
+    // gaps leaves the graph spatially large and every node a few pixels once fitted.
     float file_gap        = 6.0f;    // arc gap between files sharing an orbit
-    float dir_radius      = 9.0f;    // a directory holding nothing
-    float dir_radius_per  = 1.9f;    // added per sqrt(file), so size still means something
-    float dir_radius_max  = 22.0f;   // a directory never dwarfs its own files
     float orbit_gap       = 5.0f;    // clearance between a directory and its file ring
     float dir_gap         = 12.0f;   // clearance between a subtree and its neighbours
     // How wide the first ring of children may get, as a multiple of the largest child.

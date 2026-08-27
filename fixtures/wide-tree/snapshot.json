@@ -1,0 +1,3182 @@
+{
+ "schema": "rgv.snapshot/1",
+ "repo": {
+  "root": "/home/dev/component-library",
+  "name": "component-library",
+  "head": "c0ffee1234567890abcdef1234567890abcdef12",
+  "branch": "main",
+  "detached": false
+ },
+ "session": {
+  "id": "sess-wide",
+  "name": "icon sweep",
+  "baseline_generation": 100,
+  "started_at_ms": 0
+ },
+ "generation": 100,
+ "nodes": [
+  {
+   "id": "repo:root",
+   "kind": "repository",
+   "name": "component-library",
+   "path": "",
+   "parent": null,
+   "freshness": "current",
+   "attrs": {
+    "head": "c0ffee1234",
+    "branch": "main"
+   }
+  },
+  {
+   "id": "pkg:icons",
+   "kind": "package",
+   "name": "@lib/icons",
+   "path": "packages/icons",
+   "parent": "repo:root",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "version": "2.1.0",
+    "manifest": "packages/icons/package.json"
+   }
+  },
+  {
+   "id": "file:packages/icons/package.json",
+   "kind": "file",
+   "name": "package.json",
+   "path": "packages/icons/package.json",
+   "parent": "pkg:icons",
+   "language": "json",
+   "freshness": "current",
+   "attrs": {}
+  },
+  {
+   "id": "dir:packages/icons/src",
+   "kind": "directory",
+   "name": "src",
+   "path": "packages/icons/src",
+   "parent": "pkg:icons",
+   "freshness": "current",
+   "attrs": {}
+  },
+  {
+   "id": "pkg:core",
+   "kind": "package",
+   "name": "@lib/core",
+   "path": "packages/core",
+   "parent": "repo:root",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "version": "2.1.0",
+    "manifest": "packages/core/package.json"
+   }
+  },
+  {
+   "id": "file:packages/core/package.json",
+   "kind": "file",
+   "name": "package.json",
+   "path": "packages/core/package.json",
+   "parent": "pkg:core",
+   "language": "json",
+   "freshness": "current",
+   "attrs": {}
+  },
+  {
+   "id": "dir:packages/core/src",
+   "kind": "directory",
+   "name": "src",
+   "path": "packages/core/src",
+   "parent": "pkg:core",
+   "freshness": "current",
+   "attrs": {}
+  },
+  {
+   "id": "pkg:theme",
+   "kind": "package",
+   "name": "@lib/theme",
+   "path": "packages/theme",
+   "parent": "repo:root",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "version": "2.1.0",
+    "manifest": "packages/theme/package.json"
+   }
+  },
+  {
+   "id": "file:packages/theme/package.json",
+   "kind": "file",
+   "name": "package.json",
+   "path": "packages/theme/package.json",
+   "parent": "pkg:theme",
+   "language": "json",
+   "freshness": "current",
+   "attrs": {}
+  },
+  {
+   "id": "dir:packages/theme/src",
+   "kind": "directory",
+   "name": "src",
+   "path": "packages/theme/src",
+   "parent": "pkg:theme",
+   "freshness": "current",
+   "attrs": {}
+  },
+  {
+   "id": "pkg:docs",
+   "kind": "package",
+   "name": "@app/docs",
+   "path": "apps/docs",
+   "parent": "repo:root",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "version": "2.1.0",
+    "manifest": "apps/docs/package.json"
+   }
+  },
+  {
+   "id": "file:apps/docs/package.json",
+   "kind": "file",
+   "name": "package.json",
+   "path": "apps/docs/package.json",
+   "parent": "pkg:docs",
+   "language": "json",
+   "freshness": "current",
+   "attrs": {}
+  },
+  {
+   "id": "dir:apps/docs/src",
+   "kind": "directory",
+   "name": "src",
+   "path": "apps/docs/src",
+   "parent": "pkg:docs",
+   "freshness": "current",
+   "attrs": {}
+  },
+  {
+   "id": "file:packages/icons/src/alert.tsx",
+   "kind": "file",
+   "name": "alert.tsx",
+   "path": "packages/icons/src/alert.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "103"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/archive.tsx",
+   "kind": "file",
+   "name": "archive.tsx",
+   "path": "packages/icons/src/archive.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "117"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/arrow-down.tsx",
+   "kind": "file",
+   "name": "arrow-down.tsx",
+   "path": "packages/icons/src/arrow-down.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "48"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/arrow-left.tsx",
+   "kind": "file",
+   "name": "arrow-left.tsx",
+   "path": "packages/icons/src/arrow-left.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "48"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/arrow-right.tsx",
+   "kind": "file",
+   "name": "arrow-right.tsx",
+   "path": "packages/icons/src/arrow-right.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "55"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/arrow-up.tsx",
+   "kind": "file",
+   "name": "arrow-up.tsx",
+   "path": "packages/icons/src/arrow-up.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "124"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/bell.tsx",
+   "kind": "file",
+   "name": "bell.tsx",
+   "path": "packages/icons/src/bell.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "96"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/bookmark.tsx",
+   "kind": "file",
+   "name": "bookmark.tsx",
+   "path": "packages/icons/src/bookmark.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "124"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/calendar.tsx",
+   "kind": "file",
+   "name": "calendar.tsx",
+   "path": "packages/icons/src/calendar.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "124"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/camera.tsx",
+   "kind": "file",
+   "name": "camera.tsx",
+   "path": "packages/icons/src/camera.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "110"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/check.tsx",
+   "kind": "file",
+   "name": "check.tsx",
+   "path": "packages/icons/src/check.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "103"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/chevron-down.tsx",
+   "kind": "file",
+   "name": "chevron-down.tsx",
+   "path": "packages/icons/src/chevron-down.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "62"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/chevron-up.tsx",
+   "kind": "file",
+   "name": "chevron-up.tsx",
+   "path": "packages/icons/src/chevron-up.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "48"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/clipboard.tsx",
+   "kind": "file",
+   "name": "clipboard.tsx",
+   "path": "packages/icons/src/clipboard.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "41"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/clock.tsx",
+   "kind": "file",
+   "name": "clock.tsx",
+   "path": "packages/icons/src/clock.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "103"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/cloud.tsx",
+   "kind": "file",
+   "name": "cloud.tsx",
+   "path": "packages/icons/src/cloud.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "103"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/code.tsx",
+   "kind": "file",
+   "name": "code.tsx",
+   "path": "packages/icons/src/code.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "96"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/cog.tsx",
+   "kind": "file",
+   "name": "cog.tsx",
+   "path": "packages/icons/src/cog.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "89"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/copy.tsx",
+   "kind": "file",
+   "name": "copy.tsx",
+   "path": "packages/icons/src/copy.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "96"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/database.tsx",
+   "kind": "file",
+   "name": "database.tsx",
+   "path": "packages/icons/src/database.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "124"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/download.tsx",
+   "kind": "file",
+   "name": "download.tsx",
+   "path": "packages/icons/src/download.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "124"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/edit.tsx",
+   "kind": "file",
+   "name": "edit.tsx",
+   "path": "packages/icons/src/edit.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "96"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/eye.tsx",
+   "kind": "file",
+   "name": "eye.tsx",
+   "path": "packages/icons/src/eye.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "89"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/file.tsx",
+   "kind": "file",
+   "name": "file.tsx",
+   "path": "packages/icons/src/file.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "96"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/filter.tsx",
+   "kind": "file",
+   "name": "filter.tsx",
+   "path": "packages/icons/src/filter.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "110"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/flag.tsx",
+   "kind": "file",
+   "name": "flag.tsx",
+   "path": "packages/icons/src/flag.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "96"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/folder.tsx",
+   "kind": "file",
+   "name": "folder.tsx",
+   "path": "packages/icons/src/folder.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "110"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/gift.tsx",
+   "kind": "file",
+   "name": "gift.tsx",
+   "path": "packages/icons/src/gift.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "96"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/globe.tsx",
+   "kind": "file",
+   "name": "globe.tsx",
+   "path": "packages/icons/src/globe.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "103"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/grid.tsx",
+   "kind": "file",
+   "name": "grid.tsx",
+   "path": "packages/icons/src/grid.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "96"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/heart.tsx",
+   "kind": "file",
+   "name": "heart.tsx",
+   "path": "packages/icons/src/heart.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "103"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/home.tsx",
+   "kind": "file",
+   "name": "home.tsx",
+   "path": "packages/icons/src/home.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "96"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/image.tsx",
+   "kind": "file",
+   "name": "image.tsx",
+   "path": "packages/icons/src/image.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "103"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/inbox.tsx",
+   "kind": "file",
+   "name": "inbox.tsx",
+   "path": "packages/icons/src/inbox.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "103"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/info.tsx",
+   "kind": "file",
+   "name": "info.tsx",
+   "path": "packages/icons/src/info.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "96"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/key.tsx",
+   "kind": "file",
+   "name": "key.tsx",
+   "path": "packages/icons/src/key.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "89"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/link.tsx",
+   "kind": "file",
+   "name": "link.tsx",
+   "path": "packages/icons/src/link.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "96"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/lock.tsx",
+   "kind": "file",
+   "name": "lock.tsx",
+   "path": "packages/icons/src/lock.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "96"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/mail.tsx",
+   "kind": "file",
+   "name": "mail.tsx",
+   "path": "packages/icons/src/mail.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "96"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/map.tsx",
+   "kind": "file",
+   "name": "map.tsx",
+   "path": "packages/icons/src/map.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "89"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/menu.tsx",
+   "kind": "file",
+   "name": "menu.tsx",
+   "path": "packages/icons/src/menu.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "96"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/message.tsx",
+   "kind": "file",
+   "name": "message.tsx",
+   "path": "packages/icons/src/message.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "117"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/moon.tsx",
+   "kind": "file",
+   "name": "moon.tsx",
+   "path": "packages/icons/src/moon.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "96"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/package.tsx",
+   "kind": "file",
+   "name": "package.tsx",
+   "path": "packages/icons/src/package.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "117"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/pause.tsx",
+   "kind": "file",
+   "name": "pause.tsx",
+   "path": "packages/icons/src/pause.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "103"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/pencil.tsx",
+   "kind": "file",
+   "name": "pencil.tsx",
+   "path": "packages/icons/src/pencil.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "110"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/phone.tsx",
+   "kind": "file",
+   "name": "phone.tsx",
+   "path": "packages/icons/src/phone.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "103"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/play.tsx",
+   "kind": "file",
+   "name": "play.tsx",
+   "path": "packages/icons/src/play.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "96"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/plus.tsx",
+   "kind": "file",
+   "name": "plus.tsx",
+   "path": "packages/icons/src/plus.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "96"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/printer.tsx",
+   "kind": "file",
+   "name": "printer.tsx",
+   "path": "packages/icons/src/printer.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "117"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/refresh.tsx",
+   "kind": "file",
+   "name": "refresh.tsx",
+   "path": "packages/icons/src/refresh.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "117"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/search.tsx",
+   "kind": "file",
+   "name": "search.tsx",
+   "path": "packages/icons/src/search.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "110"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/settings.tsx",
+   "kind": "file",
+   "name": "settings.tsx",
+   "path": "packages/icons/src/settings.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "124"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/share.tsx",
+   "kind": "file",
+   "name": "share.tsx",
+   "path": "packages/icons/src/share.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "103"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/shield.tsx",
+   "kind": "file",
+   "name": "shield.tsx",
+   "path": "packages/icons/src/shield.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "110"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/star.tsx",
+   "kind": "file",
+   "name": "star.tsx",
+   "path": "packages/icons/src/star.tsx",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "96"
+   }
+  },
+  {
+   "id": "file:packages/icons/src/index.ts",
+   "kind": "file",
+   "name": "index.ts",
+   "path": "packages/icons/src/index.ts",
+   "parent": "dir:packages/icons/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "96"
+   }
+  },
+  {
+   "id": "file:packages/core/src/svg.ts",
+   "kind": "file",
+   "name": "svg.ts",
+   "path": "packages/core/src/svg.ts",
+   "parent": "dir:packages/core/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "82"
+   }
+  },
+  {
+   "id": "file:packages/core/src/props.ts",
+   "kind": "file",
+   "name": "props.ts",
+   "path": "packages/core/src/props.ts",
+   "parent": "dir:packages/core/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "96"
+   }
+  },
+  {
+   "id": "file:packages/core/src/size.ts",
+   "kind": "file",
+   "name": "size.ts",
+   "path": "packages/core/src/size.ts",
+   "parent": "dir:packages/core/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "89"
+   }
+  },
+  {
+   "id": "file:packages/core/src/index.ts",
+   "kind": "file",
+   "name": "index.ts",
+   "path": "packages/core/src/index.ts",
+   "parent": "dir:packages/core/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "96"
+   }
+  },
+  {
+   "id": "file:packages/theme/src/tokens.ts",
+   "kind": "file",
+   "name": "tokens.ts",
+   "path": "packages/theme/src/tokens.ts",
+   "parent": "dir:packages/theme/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "103"
+   }
+  },
+  {
+   "id": "file:packages/theme/src/palette.ts",
+   "kind": "file",
+   "name": "palette.ts",
+   "path": "packages/theme/src/palette.ts",
+   "parent": "dir:packages/theme/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "110"
+   }
+  },
+  {
+   "id": "file:packages/theme/src/index.ts",
+   "kind": "file",
+   "name": "index.ts",
+   "path": "packages/theme/src/index.ts",
+   "parent": "dir:packages/theme/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "96"
+   }
+  },
+  {
+   "id": "file:apps/docs/src/app.tsx",
+   "kind": "file",
+   "name": "app.tsx",
+   "path": "apps/docs/src/app.tsx",
+   "parent": "dir:apps/docs/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "89"
+   }
+  },
+  {
+   "id": "file:apps/docs/src/gallery.tsx",
+   "kind": "file",
+   "name": "gallery.tsx",
+   "path": "apps/docs/src/gallery.tsx",
+   "parent": "dir:apps/docs/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "117"
+   }
+  },
+  {
+   "id": "file:apps/docs/src/sidebar.tsx",
+   "kind": "file",
+   "name": "sidebar.tsx",
+   "path": "apps/docs/src/sidebar.tsx",
+   "parent": "dir:apps/docs/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "117"
+   }
+  },
+  {
+   "id": "file:apps/docs/src/search.tsx",
+   "kind": "file",
+   "name": "search.tsx",
+   "path": "apps/docs/src/search.tsx",
+   "parent": "dir:apps/docs/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "110"
+   }
+  },
+  {
+   "id": "file:apps/docs/src/index.ts",
+   "kind": "file",
+   "name": "index.ts",
+   "path": "apps/docs/src/index.ts",
+   "parent": "dir:apps/docs/src",
+   "language": "typescript",
+   "freshness": "current",
+   "attrs": {
+    "loc": "96"
+   }
+  }
+ ],
+ "edges": [
+  {
+   "id": "e:dep:icons->core",
+   "kind": "depends_on",
+   "from": "pkg:icons",
+   "to": "pkg:core",
+   "provider": "pnpm-workspace",
+   "provider_version": "9.6.0",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/package.json",
+    "line": 11,
+    "snippet": "\"@lib/core\": \"workspace:*\""
+   }
+  },
+  {
+   "id": "e:dep:theme->core",
+   "kind": "depends_on",
+   "from": "pkg:theme",
+   "to": "pkg:core",
+   "provider": "pnpm-workspace",
+   "provider_version": "9.6.0",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/theme/package.json",
+    "line": 11,
+    "snippet": "\"@lib/core\": \"workspace:*\""
+   }
+  },
+  {
+   "id": "e:dep:docs->icons",
+   "kind": "depends_on",
+   "from": "pkg:docs",
+   "to": "pkg:icons",
+   "provider": "pnpm-workspace",
+   "provider_version": "9.6.0",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "apps/docs/package.json",
+    "line": 11,
+    "snippet": "\"@lib/icons\": \"workspace:*\""
+   }
+  },
+  {
+   "id": "e:dep:docs->theme",
+   "kind": "depends_on",
+   "from": "pkg:docs",
+   "to": "pkg:theme",
+   "provider": "pnpm-workspace",
+   "provider_version": "9.6.0",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "apps/docs/package.json",
+    "line": 11,
+    "snippet": "\"@lib/theme\": \"workspace:*\""
+   }
+  },
+  {
+   "id": "e:dep:docs->core",
+   "kind": "depends_on",
+   "from": "pkg:docs",
+   "to": "pkg:core",
+   "provider": "pnpm-workspace",
+   "provider_version": "9.6.0",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "apps/docs/package.json",
+    "line": 11,
+    "snippet": "\"@lib/core\": \"workspace:*\""
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/alert.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/alert.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/alert.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/alert.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/alert.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'alert.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/archive.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/archive.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/archive.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/archive.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/archive.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'archive.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/arrow-down.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/arrow-down.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/arrow-down.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/arrow-down.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/arrow-down.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'arrow-down.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/arrow-left.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/arrow-left.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/arrow-left.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/arrow-left.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/arrow-left.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'arrow-left.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/arrow-right.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/arrow-right.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/arrow-right.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/arrow-right.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/arrow-right.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'arrow-right.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/arrow-up.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/arrow-up.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/arrow-up.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/arrow-up.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/arrow-up.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'arrow-up.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/bell.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/bell.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/bell.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/bell.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/bell.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'bell.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/bookmark.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/bookmark.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/bookmark.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/bookmark.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/bookmark.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'bookmark.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/calendar.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/calendar.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/calendar.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/calendar.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/calendar.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'calendar.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/camera.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/camera.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/camera.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/camera.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/camera.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'camera.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/check.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/check.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/check.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/check.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/check.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'check.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/chevron-down.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/chevron-down.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/chevron-down.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/chevron-down.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/chevron-down.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'chevron-down.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/chevron-up.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/chevron-up.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/chevron-up.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/chevron-up.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/chevron-up.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'chevron-up.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/clipboard.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/clipboard.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/clipboard.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/clipboard.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/clipboard.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'clipboard.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/clock.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/clock.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/clock.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/clock.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/clock.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'clock.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/cloud.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/cloud.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/cloud.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/cloud.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/cloud.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'cloud.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/code.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/code.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/code.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/code.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/code.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'code.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/cog.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/cog.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/cog.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/cog.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/cog.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'cog.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/copy.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/copy.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/copy.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/copy.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/copy.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'copy.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/database.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/database.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/database.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/database.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/database.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'database.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/download.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/download.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/download.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/download.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/download.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'download.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/edit.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/edit.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/edit.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/edit.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/edit.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'edit.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/eye.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/eye.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/eye.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/eye.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/eye.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'eye.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/file.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/file.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/file.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/file.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/file.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'file.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/filter.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/filter.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/filter.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/filter.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/filter.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'filter.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/flag.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/flag.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/flag.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/flag.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/flag.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'flag.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/folder.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/folder.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/folder.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/folder.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/folder.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'folder.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/gift.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/gift.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/gift.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/gift.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/gift.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'gift.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/globe.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/globe.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/globe.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/globe.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/globe.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'globe.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/grid.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/grid.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/grid.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/grid.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/grid.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'grid.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/heart.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/heart.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/heart.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/heart.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/heart.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'heart.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/home.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/home.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/home.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/home.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/home.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'home.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/image.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/image.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/image.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/image.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/image.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'image.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/inbox.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/inbox.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/inbox.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/inbox.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/inbox.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'inbox.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/info.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/info.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/info.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/info.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/info.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'info.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/key.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/key.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/key.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/key.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/key.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'key.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/link.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/link.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/link.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/link.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/link.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'link.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/lock.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/lock.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/lock.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/lock.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/lock.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'lock.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/mail.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/mail.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/mail.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/mail.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/mail.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'mail.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/map.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/map.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/map.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/map.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/map.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'map.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/menu.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/menu.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/menu.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/menu.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/menu.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'menu.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/message.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/message.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/message.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/message.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/message.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'message.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/moon.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/moon.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/moon.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/moon.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/moon.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'moon.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/package.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/package.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/package.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/package.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/package.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'package.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/pause.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/pause.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/pause.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/pause.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/pause.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'pause.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/pencil.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/pencil.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/pencil.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/pencil.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/pencil.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'pencil.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/phone.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/phone.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/phone.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/phone.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/phone.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'phone.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/play.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/play.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/play.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/play.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/play.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'play.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/plus.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/plus.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/plus.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/plus.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/plus.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'plus.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/printer.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/printer.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/printer.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/printer.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/printer.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'printer.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/refresh.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/refresh.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/refresh.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/refresh.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/refresh.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'refresh.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/search.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/search.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/search.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/search.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/search.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'search.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/settings.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/settings.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/settings.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/settings.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/settings.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'settings.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/share.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/share.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/share.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/share.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/share.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'share.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/shield.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/shield.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/shield.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/shield.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/shield.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'shield.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/star.tsx->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/icons/src/star.tsx",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/star.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../core/src/svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/icons/src/index.ts->packages/icons/src/star.tsx",
+   "kind": "imports",
+   "from": "file:packages/icons/src/index.ts",
+   "to": "file:packages/icons/src/star.tsx",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/icons/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'star.tsx'"
+   }
+  },
+  {
+   "id": "e:imp:apps/docs/src/app.tsx->packages/icons/src/index.ts",
+   "kind": "imports",
+   "from": "file:apps/docs/src/app.tsx",
+   "to": "file:packages/icons/src/index.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "apps/docs/src/app.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../../packages/icons/src/index.ts'"
+   }
+  },
+  {
+   "id": "e:imp:apps/docs/src/app.tsx->packages/theme/src/index.ts",
+   "kind": "imports",
+   "from": "file:apps/docs/src/app.tsx",
+   "to": "file:packages/theme/src/index.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "apps/docs/src/app.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../../packages/theme/src/index.ts'"
+   }
+  },
+  {
+   "id": "e:imp:apps/docs/src/gallery.tsx->packages/icons/src/index.ts",
+   "kind": "imports",
+   "from": "file:apps/docs/src/gallery.tsx",
+   "to": "file:packages/icons/src/index.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "apps/docs/src/gallery.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../../packages/icons/src/index.ts'"
+   }
+  },
+  {
+   "id": "e:imp:apps/docs/src/gallery.tsx->packages/theme/src/index.ts",
+   "kind": "imports",
+   "from": "file:apps/docs/src/gallery.tsx",
+   "to": "file:packages/theme/src/index.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "apps/docs/src/gallery.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../../packages/theme/src/index.ts'"
+   }
+  },
+  {
+   "id": "e:imp:apps/docs/src/sidebar.tsx->packages/icons/src/index.ts",
+   "kind": "imports",
+   "from": "file:apps/docs/src/sidebar.tsx",
+   "to": "file:packages/icons/src/index.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "apps/docs/src/sidebar.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../../packages/icons/src/index.ts'"
+   }
+  },
+  {
+   "id": "e:imp:apps/docs/src/sidebar.tsx->packages/theme/src/index.ts",
+   "kind": "imports",
+   "from": "file:apps/docs/src/sidebar.tsx",
+   "to": "file:packages/theme/src/index.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "apps/docs/src/sidebar.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../../packages/theme/src/index.ts'"
+   }
+  },
+  {
+   "id": "e:imp:apps/docs/src/search.tsx->packages/icons/src/index.ts",
+   "kind": "imports",
+   "from": "file:apps/docs/src/search.tsx",
+   "to": "file:packages/icons/src/index.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "apps/docs/src/search.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../../packages/icons/src/index.ts'"
+   }
+  },
+  {
+   "id": "e:imp:apps/docs/src/search.tsx->packages/theme/src/index.ts",
+   "kind": "imports",
+   "from": "file:apps/docs/src/search.tsx",
+   "to": "file:packages/theme/src/index.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "apps/docs/src/search.tsx",
+    "line": 2,
+    "snippet": "import { x } from '../../../packages/theme/src/index.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/theme/src/index.ts->packages/theme/src/tokens.ts",
+   "kind": "imports",
+   "from": "file:packages/theme/src/index.ts",
+   "to": "file:packages/theme/src/tokens.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/theme/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'tokens.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/theme/src/tokens.ts->packages/theme/src/palette.ts",
+   "kind": "imports",
+   "from": "file:packages/theme/src/tokens.ts",
+   "to": "file:packages/theme/src/palette.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/theme/src/tokens.ts",
+    "line": 2,
+    "snippet": "import { x } from 'palette.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/core/src/index.ts->packages/core/src/svg.ts",
+   "kind": "imports",
+   "from": "file:packages/core/src/index.ts",
+   "to": "file:packages/core/src/svg.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/core/src/index.ts",
+    "line": 2,
+    "snippet": "import { x } from 'svg.ts'"
+   }
+  },
+  {
+   "id": "e:imp:packages/core/src/svg.ts->packages/core/src/props.ts",
+   "kind": "imports",
+   "from": "file:packages/core/src/svg.ts",
+   "to": "file:packages/core/src/props.ts",
+   "provider": "tree-sitter",
+   "provider_version": "0.22.6",
+   "confidence": "exact",
+   "freshness": "current",
+   "valid_from": 100,
+   "valid_to": null,
+   "evidence": {
+    "artifact": "packages/core/src/svg.ts",
+    "line": 2,
+    "snippet": "import { x } from 'props.ts'"
+   }
+  }
+ ]
+}

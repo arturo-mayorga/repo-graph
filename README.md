@@ -109,9 +109,19 @@ centre; directories are discs that grow gently with the files they hold; those f
 orbit the directory that owns them, clear of it, coloured by extension; child subtrees
 fan outward.
 
+Node sizes step by the **golden ratio**: a file, a directory, and the largest a
+directory grows to are `r`, `r·φ`, `r·φ²`. Three sizes on one geometric scale read as a
+family — clearly different, obviously related — where an arbitrary ratio reads either as
+two unrelated shapes or as no difference at all.
+
 A directory's **drawn size** and the **orbit its files sit on** are separate. Conflating
 them puts every file dot exactly on its directory's edge, half-occluding it, and makes
 the size ratio between a file and a directory the ratio of a dot to a whole orbit.
+
+Children — files and subtrees alike — are packed onto **successive orbits** rather than
+one ring, which is what Gource does and for the same reason. A single orbit seating 57
+icons needs a radius of 160 around a disc of radius 16: a vast empty annulus with most
+of the screen wasted. Filling orbits outward keeps a wide directory compact.
 
 Gource pushes nodes apart with a force simulation. This does it by construction: every
 subtree is laid out in its own frame first, so its enclosing radius is exact rather than
@@ -247,6 +257,11 @@ perform. A fixture that lies is worse than no fixture.
 | `05-wide-burst` | Every file changes at once — where "changed" stops being a useful signal. |
 | `06-new-package` | A package that did not exist at baseline appears mid-session. |
 | `07-hub-change` | `@acme/logger` changes. 7 of 8 packages impacted, every result scoring 0.06 — the case the relevance filter must *not* quieten. |
+
+`fixtures/wide-tree` — a component library whose `packages/icons/src` holds 57 files.
+The shape real repositories actually have — icon sets, generated clients, migrations —
+and the case a radial layout has to handle without the ring swallowing its own
+directory.
 
 `fixtures/large-synthetic` — 240 packages / 2880 files / 5.5k edges with a deliberately
 power-law degree distribution: three hub packages (`core`, `util`, `types`) that 100–137

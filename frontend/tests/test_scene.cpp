@@ -664,8 +664,8 @@ TEST(files_orbit_their_directory_without_touching_it) {
     CHECK(length(file - dir) > dir_r + file_r);
 }
 
-// Files of one directory share a single orbit, so the halo reads as a ring.
-TEST(files_of_one_directory_share_an_orbit) {
+// A handful of files share one orbit, so a small directory reads as a simple ring.
+TEST(a_few_files_share_a_single_orbit) {
     Snapshot s = chain();
     for (int i = 0; i < 6; ++i) {
         s.nodes.push_back(mk_node("file:a/f" + std::to_string(i) + ".ts", NodeKind::File,
@@ -678,7 +678,7 @@ TEST(files_of_one_directory_share_an_orbit) {
     h.request_rebuild();
     h.settle();
 
-    const Vec2 dir = h.registry().get<ecs::LayoutTarget>(h.node("dir:a")).p;
+    const Vec2 dir   = h.registry().get<ecs::LayoutTarget>(h.node("dir:a")).p;
     float      first = -1.0f;
     for (int i = 0; i < 6; ++i) {
         const entt::entity e = h.node("file:a/f" + std::to_string(i) + ".ts");
@@ -686,6 +686,45 @@ TEST(files_of_one_directory_share_an_orbit) {
         if (first < 0.0f) first = d;
         else CHECK(std::abs(d - first) < 0.5f);
     }
+}
+
+// Many files fill concentric orbits instead of one enormous ring.
+//
+// A single orbit sized to seat them all puts 60 files on a circle of radius ~170
+// around a disc of radius ~16 -- a vast empty annulus, and most of the screen wasted.
+// Packing onto successive orbits is what keeps a wide directory compact.
+TEST(a_wide_directory_packs_its_files_onto_several_orbits) {
+    Snapshot s = chain();
+    for (int i = 0; i < 60; ++i) {
+        s.nodes.push_back(mk_node("file:a/f" + std::to_string(i) + ".ts", NodeKind::File,
+                                  "dir:a"));
+    }
+    rgvtest::Harness h;
+    h.store().reset(s);
+    h.view().mode  = ecs::ViewMode::Filesystem;
+    h.view().level = Level::File;
+    h.request_rebuild();
+    h.settle();
+
+    const Vec2         dir = h.registry().get<ecs::LayoutTarget>(h.node("dir:a")).p;
+    std::vector<float> radii;
+    for (int i = 0; i < 60; ++i) {
+        const entt::entity e = h.node("file:a/f" + std::to_string(i) + ".ts");
+        radii.push_back(length(h.registry().get<ecs::LayoutTarget>(e).p - dir));
+    }
+    std::sort(radii.begin(), radii.end());
+
+    // Several distinct orbits, not one.
+    int distinct = 1;
+    for (std::size_t i = 1; i < radii.size(); ++i) {
+        if (radii[i] - radii[i - 1] > 1.0f) ++distinct;
+    }
+    CHECK(distinct >= 3);
+
+    // And the whole halo stays far tighter than one ring would have been. One orbit
+    // seating 60 files needs a radius of roughly 60 * (2r + gap) / 2pi.
+    const float one_ring = 60.0f * (2.0f * 6.0f + 6.0f) / 6.2831853f;
+    CHECK(radii.back() < one_ring * 0.5f);
 }
 
 // A file is smaller than a directory, but recognisably the same kind of thing. The
@@ -738,4 +777,29 @@ TEST(no_two_discs_overlap) {
         }
     }
     CHECK_EQ(overlaps, 0);
+}
+
+// Node sizes step by the golden ratio: file, directory, largest directory are r, r*phi,
+// r*phi^2. Three sizes on one geometric scale read as a family.
+TEST(node_sizes_step_by_the_golden_ratio) {
+    constexpr float phi = 1.6180339887f;
+
+    Snapshot s = chain();
+    for (int i = 0; i < 80; ++i) {
+        s.nodes.push_back(mk_node("file:a/f" + std::to_string(i) + ".ts", NodeKind::File,
+                                  "dir:a"));
+    }
+    rgvtest::Harness h;
+    h.store().reset(s);
+    h.view().mode  = ecs::ViewMode::Filesystem;
+    h.view().level = Level::File;
+    h.request_rebuild();
+    h.settle();
+
+    const float file  = h.registry().get<ecs::Disc>(h.node("file:a/x.ts")).radius;
+    const float empty = h.registry().get<ecs::Disc>(h.node("pkg:c")).radius;   // no files
+    const float full  = h.registry().get<ecs::Disc>(h.node("dir:a")).radius;   // 81 files
+
+    CHECK(std::abs(empty / file - phi) < 0.02f);
+    CHECK(std::abs(full / file - phi * phi) < 0.05f);
 }

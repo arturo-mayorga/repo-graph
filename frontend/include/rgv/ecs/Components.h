@@ -69,9 +69,14 @@ struct Depth { int value = 0; };
 // Owner: LayoutSystem.
 struct Disc {
     float radius = 6.0f;
-    // How far this node's whole subtree reaches from its centre. Layout uses it to
-    // keep siblings from colliding; nothing else needs it.
-    float extent = 6.0f;
+    // Radius of everything this node holds: the outermost file orbit plus a dot. A
+    // label has to clear this, not just the disc, or a directory's own name lands on
+    // top of its files.
+    float halo = 6.0f;
+    // Unit vector pointing away from whatever this node orbits. Labels are placed
+    // along it, so the names around a ring fan outward instead of stacking on top of
+    // one another. Zero for a node with no parent.
+    Vec2 outward{0.0f, 1.0f};
 };
 
 // The user dragged this node. Layout leaves it alone. Owner: DragSystem.

@@ -1,0 +1,10 @@
+{
+  "name": "component-library (one very wide directory)",
+  "scenarios": [
+    {
+      "file": "01-icon-sweep.jsonl",
+      "name": "Icon sweep",
+      "description": "Six of 56 icons regenerated; 5 files impacted."
+    }
+  ]
+}

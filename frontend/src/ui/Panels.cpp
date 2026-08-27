@@ -1045,12 +1045,16 @@ void draw_graph_overlay(ecs::World& world, ImDrawList* dl) {
             const auto* disc     = reg.try_get<ecs::Disc>(ent);
 
             // In a disc view there are far too many files to label them all -- Gource
-            // names directories and stays quiet about the rest. The exceptions are the
-            // ones the user is asking about: what changed, and what they are pointing at.
-            const bool notable = changed || reg.all_of<ecs::Selected>(ent) ||
-                                 reg.all_of<ecs::Hovered>(ent) ||
-                                 reg.all_of<ecs::OnExplainedPath>(ent);
-            if (disc && ref.kind == NodeKind::File && !notable) continue;
+            // names directories and stays quiet about the rest.
+            //
+            // Changed files are deliberately NOT an exception. Six adjacent icons in a
+            // sweep produce six overlapping names and nothing readable, and the graph
+            // already says where they are: red dots with a halo. The session panel says
+            // which. Only what the user is actually pointing at gets named.
+            const bool asked_for = reg.all_of<ecs::Selected>(ent) ||
+                                   reg.all_of<ecs::Hovered>(ent) ||
+                                   reg.all_of<ecs::OnExplainedPath>(ent);
+            if (disc && ref.kind == NodeKind::File && !asked_for) continue;
 
             Vec4 col = t.node_text;
             if (changed) col = t.changed;
@@ -1062,16 +1066,31 @@ void draw_graph_overlay(ecs::World& world, ImDrawList* dl) {
                                          ui.camera.zoom, detail, ext.half,
                                          rgv::view::dot_px_for(changed, imp != nullptr, false));
 
-            // A disc's label sits below it rather than inside: the rim is where the
-            // files are, and text over them is unreadable.
+            // A disc's label sits outside it, along the direction it orbits away from,
+            // so the names around a ring fan outward instead of stacking. Text inside
+            // the disc would sit on top of the files themselves.
             const bool  two_lines = !disc && !label.sub.empty() &&
                                    half.y * cam.zoom > font_size * 1.15f;
             const float line_h    = font_size;
-            const float top       = disc ? s.y + half.y * cam.zoom + font_size * 0.35f
-                                         : s.y - (two_lines ? line_h * 0.98f : line_h * 0.5f);
+
+            Vec2 anchor{s.x, 0.0f};
+            if (disc) {
+                // Alternate the distance so neighbours on the same orbit do not collide.
+                std::uint32_t hash = 2166136261u;
+                for (unsigned char ch : ref.id) { hash ^= ch; hash *= 16777619u; }
+                const float stagger = (hash & 1u) ? font_size * 1.05f : 0.0f;
+                // Clear the whole cluster, not just the disc: a directory's files
+                // orbit it, so its own name has to sit outside the outermost orbit.
+                const float reach = std::max(half.y, disc->halo);
+                const float away  = reach * cam.zoom + font_size * 0.55f + stagger;
+                anchor = Vec2{s.x + disc->outward.x * away, s.y + disc->outward.y * away};
+                anchor.y -= font_size * 0.5f;
+            } else {
+                anchor.y = s.y - (two_lines ? line_h * 0.98f : line_h * 0.5f);
+            }
 
             const ImVec2 sz = font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, label.text.c_str());
-            dl->AddText(font, font_size, ImVec2(s.x - sz.x * 0.5f, top), to_u32(col),
+            dl->AddText(font, font_size, ImVec2(anchor.x - sz.x * 0.5f, anchor.y), to_u32(col),
                         label.text.c_str());
 
             if (two_lines) {
@@ -1080,7 +1099,8 @@ void draw_graph_overlay(ecs::World& world, ImDrawList* dl) {
                 const float  sub_size = font_size * 0.85f;
                 const ImVec2 ssz =
                     font->CalcTextSizeA(sub_size, FLT_MAX, 0.0f, label.sub.c_str());
-                dl->AddText(font, sub_size, ImVec2(s.x - ssz.x * 0.5f, top + line_h * 0.96f),
+                dl->AddText(font, sub_size,
+                            ImVec2(anchor.x - ssz.x * 0.5f, anchor.y + line_h * 0.96f),
                             to_u32(sub), label.sub.c_str());
             }
 
