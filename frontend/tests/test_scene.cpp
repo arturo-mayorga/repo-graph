@@ -648,20 +648,62 @@ TEST(a_directory_disc_grows_with_the_files_it_holds) {
           h.registry().get<ecs::Disc>(h.node("pkg:b")).radius);
 }
 
-// Files orbit the directory that owns them, at exactly its rim.
-TEST(files_sit_on_the_rim_of_their_directory) {
+// Files orbit the directory that owns them, clear of it.
+//
+// They used to be placed at exactly the drawn radius, so every file dot straddled its
+// directory's edge and half-occluded it. The drawn disc and the orbit are separate
+// things now, and this is the invariant that keeps them apart.
+TEST(files_orbit_their_directory_without_touching_it) {
     auto h = make_filesystem();
 
-    const Vec2  dir  = h.registry().get<ecs::LayoutTarget>(h.node("dir:a")).p;
-    const float ring = h.registry().get<ecs::Disc>(h.node("dir:a")).radius;
-    const Vec2  file = h.registry().get<ecs::LayoutTarget>(h.node("file:a/x.ts")).p;
+    const Vec2  dir       = h.registry().get<ecs::LayoutTarget>(h.node("dir:a")).p;
+    const float dir_r     = h.registry().get<ecs::Disc>(h.node("dir:a")).radius;
+    const Vec2  file      = h.registry().get<ecs::LayoutTarget>(h.node("file:a/x.ts")).p;
+    const float file_r    = h.registry().get<ecs::Disc>(h.node("file:a/x.ts")).radius;
 
-    CHECK(std::abs(length(file - dir) - ring) < 0.5f);
+    CHECK(length(file - dir) > dir_r + file_r);
+}
+
+// Files of one directory share a single orbit, so the halo reads as a ring.
+TEST(files_of_one_directory_share_an_orbit) {
+    Snapshot s = chain();
+    for (int i = 0; i < 6; ++i) {
+        s.nodes.push_back(mk_node("file:a/f" + std::to_string(i) + ".ts", NodeKind::File,
+                                  "dir:a"));
+    }
+    rgvtest::Harness h;
+    h.store().reset(s);
+    h.view().mode  = ecs::ViewMode::Filesystem;
+    h.view().level = Level::File;
+    h.request_rebuild();
+    h.settle();
+
+    const Vec2 dir = h.registry().get<ecs::LayoutTarget>(h.node("dir:a")).p;
+    float      first = -1.0f;
+    for (int i = 0; i < 6; ++i) {
+        const entt::entity e = h.node("file:a/f" + std::to_string(i) + ".ts");
+        const float d = length(h.registry().get<ecs::LayoutTarget>(e).p - dir);
+        if (first < 0.0f) first = d;
+        else CHECK(std::abs(d - first) < 0.5f);
+    }
+}
+
+// A file is smaller than a directory, but recognisably the same kind of thing. The
+// ratio used to be a dot against a whole orbit, which read as two unrelated shapes.
+TEST(a_file_is_smaller_than_a_directory_but_not_dramatically) {
+    auto h = make_filesystem();
+
+    const float file = h.registry().get<ecs::Disc>(h.node("file:a/x.ts")).radius;
+    const float dir  = h.registry().get<ecs::Disc>(h.node("dir:a")).radius;
+
+    CHECK(dir > file);
+    CHECK(dir < file * 3.0f);
 }
 
 // The claim the whole layout rests on: collisions are prevented by construction, not
-// by relaxation. Nothing overlaps except a file touching its own parent's rim, which
-// is where files are meant to be.
+// by relaxation. Every subtree is laid out in its own frame first, so its enclosing
+// radius is exact rather than estimated, and a parent packs those as rigid discs.
+// Nothing overlaps at all -- not even a file against the directory that owns it.
 TEST(no_two_discs_overlap) {
     Snapshot s = chain();
     // A lopsided tree: one fat directory and one deep chain, so the packing is tested
@@ -681,14 +723,6 @@ TEST(no_two_discs_overlap) {
     h.request_rebuild();
     h.settle();
 
-    // Parent of each node, so a file resting on its own directory's rim is allowed.
-    std::unordered_map<std::uint32_t, std::uint32_t> parent;
-    for (auto [e, ref, ends] : h.registry().view<const ecs::EdgeRef, const ecs::Endpoints>().each()) {
-        if (ref.kind == EdgeKind::Contains) {
-            parent[static_cast<std::uint32_t>(ends.from)] = static_cast<std::uint32_t>(ends.to);
-        }
-    }
-
     std::vector<std::tuple<entt::entity, Vec2, float>> discs;
     for (auto [e, t, d] : h.registry().view<const ecs::LayoutTarget, const ecs::Disc>().each()) {
         discs.emplace_back(e, t.p, d.radius);
@@ -700,10 +734,6 @@ TEST(no_two_discs_overlap) {
         for (std::size_t j = i + 1; j < discs.size(); ++j) {
             const auto [ea, pa, ra] = discs[i];
             const auto [eb, pb, rb] = discs[j];
-            const auto ia = static_cast<std::uint32_t>(ea);
-            const auto ib = static_cast<std::uint32_t>(eb);
-            if (parent.count(ia) && parent[ia] == ib) continue;   // a file on its rim
-            if (parent.count(ib) && parent[ib] == ia) continue;
             if (length(pa - pb) + 0.5f < ra + rb) ++overlaps;
         }
     }

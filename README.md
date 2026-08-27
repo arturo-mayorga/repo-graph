@@ -105,16 +105,24 @@ renderer.
 ### The filesystem view
 
 Laid out radially, inspired by [Gource](https://gource.io). The repository sits at the
-centre; directories are discs whose radius comes from how many files they hold, so size
-means something without reading a label; those files ring the directory that owns them,
-coloured by extension. Child directories pack into concentric shells inside their
-parent's wedge and fan outward.
+centre; directories are discs that grow gently with the files they hold; those files
+orbit the directory that owns them, clear of it, coloured by extension; child subtrees
+fan outward.
 
-Gource pushes nodes apart with a force simulation. This does it by construction —
-disjoint wedges, shells filling outward — so nothing overlaps, nothing drifts, and the
-same repository always draws the same way. The shells matter: a pure sector layout gives
-every one of 240 siblings the same tiny wedge and pushes them all to the same radius,
-which degenerates into a ring with a void in the middle.
+A directory's **drawn size** and the **orbit its files sit on** are separate. Conflating
+them puts every file dot exactly on its directory's edge, half-occluding it, and makes
+the size ratio between a file and a directory the ratio of a dot to a whole orbit.
+
+Gource pushes nodes apart with a force simulation. This does it by construction: every
+subtree is laid out in its own frame first, so its enclosing radius is exact rather than
+estimated, and a parent packs those subtrees as rigid discs. Nothing overlaps, nothing
+settles, and the same repository always draws identically.
+
+Where a parent's children sit decides whether it reads as a flower or a comet. They go
+on one ring when that ring is a sane size relative to the children, and spill into
+further shells when it is not. Starting as tight as possible seats a few and flings the
+rest into a distant second shell; starting wide enough to seat all of them degenerates
+into an annulus with a void in the middle once there are hundreds.
 
 Impact colouring still wins over the extension palette. The repository looks like
 Gource; the blast radius lights up on top of it.

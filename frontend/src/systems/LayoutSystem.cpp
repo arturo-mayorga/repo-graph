@@ -194,19 +194,22 @@ void LayoutSystem::order_and_place(ecs::World& world) {
 
 // Radial filesystem layout, in the spirit of Gource.
 //
-// Three ideas carry the look. A directory is a disc whose radius comes from how many
-// files it directly holds, so size means something at a glance. Those files sit on the
-// disc's rim, orbiting the thing that owns them. Child directories splay outward from
-// their parent, packed into concentric shells inside the parent's wedge.
+// Three ideas carry the look. A directory is a small disc that grows gently with the
+// files it holds, so size means something without any one node dwarfing its neighbours.
+// Those files orbit it at a distance -- clear of the disc, not sitting on its edge.
+// Child subtrees pack into concentric shells around their parent and fan outward.
 //
 // Gource pushes nodes apart with a force simulation. This does it by construction:
-// wedges are disjoint, and shells fill outward so siblings never land on one another.
-// Same result -- nothing overlaps, branches fan out organically -- but deterministic,
-// with nothing to settle and no drift between runs.
+// every subtree is laid out in its own local frame first, so its exact enclosing radius
+// is known, and a parent then packs those subtrees as rigid discs. Nothing overlaps,
+// nothing has to settle, and the same repository always draws identically.
+//
+// Laying out bottom-up is what makes that exact. Estimating a subtree's reach top-down
+// and hoping the estimate holds is how radial layouts end up with subtrees quietly
+// growing through one another.
 void LayoutSystem::radial_tree(ecs::World& world) {
     auto& reg = world.registry;
 
-    // The containment edges the filesystem view synthesises from parent links.
     std::unordered_map<std::uint32_t, std::vector<entt::entity>> kids;
     std::unordered_map<std::uint32_t, std::uint32_t>             parent;
     for (auto [ent, ref, ends] : reg.view<const ecs::EdgeRef, const ecs::Endpoints>().each()) {
@@ -233,6 +236,149 @@ void LayoutSystem::radial_tree(ecs::World& world) {
         });
     }
 
+    // A subtree, laid out in its own frame: every node's offset from the subtree root,
+    // and the exact radius of the disc that encloses all of it.
+    struct Sub {
+        float                                        radius = 0.0f;
+        std::vector<std::pair<entt::entity, Vec2>>   nodes;
+    };
+
+    // Deterministic per-node phase, so single-child chains do not all point the same
+    // way. Gource looks organic partly because nothing lines up.
+    auto phase_of = [](entt::entity e) {
+        std::uint32_t h = 2166136261u ^ static_cast<std::uint32_t>(e);
+        h *= 16777619u;
+        return 6.2831853f * static_cast<float>(h % 1024u) / 1024.0f;
+    };
+
+    auto draw_radius = [&](std::size_t files) {
+        return std::min(params_.dir_radius_max,
+                        params_.dir_radius +
+                            params_.dir_radius_per * std::sqrt(static_cast<float>(files)));
+    };
+
+    // Explicit stack rather than recursion: a vendored dependency tree gets deep.
+    struct Frame { entt::entity node; std::size_t next; std::vector<Sub> done; };
+    std::vector<Frame>                            stack;
+    std::unordered_map<std::uint32_t, Sub>        built;
+
+    auto build = [&](entt::entity root) {
+        stack.push_back({root, 0, {}});
+        while (!stack.empty()) {
+            Frame& f  = stack.back();
+            auto&  ch = kids[to_raw(f.node)];
+
+            // Descend into child directories first; files need no layout of their own.
+            bool descended = false;
+            while (f.next < ch.size()) {
+                const entt::entity c = ch[f.next];
+                if (is_file(c)) { ++f.next; continue; }
+                ++f.next;
+                stack.push_back({c, 0, {}});
+                descended = true;
+                break;
+            }
+            if (descended) continue;
+
+            Sub out;
+            if (is_file(f.node)) {
+                out.radius = params_.file_radius;
+                out.nodes.push_back({f.node, Vec2{0.0f, 0.0f}});
+            } else {
+                std::size_t files = 0;
+                for (auto c : ch) {
+                    if (is_file(c)) ++files;
+                }
+                const float draw = draw_radius(files);
+                out.nodes.push_back({f.node, Vec2{0.0f, 0.0f}});
+
+                // Files orbit clear of the disc, on a ring long enough to seat them
+                // all without crowding. The halo's size is the file count made visible.
+                float hull = draw;
+                if (files > 0) {
+                    const float per   = 2.0f * params_.file_radius + params_.file_gap;
+                    const float seat  = static_cast<float>(files) * per / 6.2831853f;
+                    const float orbit = std::max(draw + params_.file_radius + params_.orbit_gap,
+                                                 seat);
+                    const float base  = phase_of(f.node);
+                    std::size_t i     = 0;
+                    for (auto c : ch) {
+                        if (!is_file(c)) continue;
+                        const float a = base + 6.2831853f * static_cast<float>(i++) /
+                                                   static_cast<float>(files);
+                        out.nodes.push_back(
+                            {c, Vec2{std::cos(a) * orbit, std::sin(a) * orbit}});
+                    }
+                    hull = orbit + params_.file_radius;
+                }
+                out.radius = hull;
+
+                // Child subtrees, largest first, packed into shells that fill outward.
+                // One shell would put every sibling at the same radius; at 240 siblings
+                // that degenerates into a ring with a void in the middle.
+                std::vector<Sub>& subs = f.done;
+                std::sort(subs.begin(), subs.end(),
+                          [](const Sub& a, const Sub& b) { return a.radius > b.radius; });
+
+                // Where the first ring sits decides whether this looks like a flower
+                // or like a comet. Starting as tight as possible seats a few children
+                // and flings the rest into a distant second shell; starting wide
+                // enough to seat everything degenerates into an annulus once there are
+                // hundreds. So: seat them all on one ring when that ring is a sane size
+                // relative to the children, and spill into shells only when it is not.
+                float need_all = 0.0f, largest = 0.0f;
+                for (const auto& sub : subs) {
+                    need_all += 2.0f * sub.radius + params_.dir_gap;
+                    largest = std::max(largest, sub.radius);
+                }
+                const float one_ring = need_all * 1.02f / 6.2831853f;
+                const float widest   = params_.shell_spread * std::max(largest, 1.0f);
+
+                float       r = std::max(hull + params_.dir_gap + largest,
+                                         std::min(one_ring, widest));
+                std::size_t i     = 0;
+                const float base  = phase_of(f.node) * 0.5f;
+                int         shell = 0;
+                while (i < subs.size()) {
+                    r = std::max(r, hull + params_.dir_gap + subs[i].radius);
+
+                    const float arc  = r * 6.2831853f;
+                    float       used = 0.0f, tallest = 0.0f;
+                    std::size_t j    = i;
+                    while (j < subs.size()) {
+                        const float need = 2.0f * subs[j].radius + params_.dir_gap;
+                        if (j > i && used + need > arc) break;   // always seat at least one
+                        used += need;
+                        tallest = std::max(tallest, subs[j].radius);
+                        ++j;
+                    }
+
+                    // Each shell is rotated off the last, so successive rings do not
+                    // line up into spokes radiating from the parent.
+                    float a = base + 0.5f * static_cast<float>(shell++);
+                    for (std::size_t k = i; k < j; ++k) {
+                        const float need  = 2.0f * subs[k].radius + params_.dir_gap;
+                        const float share = 6.2831853f * need / std::max(1.0f, used);
+                        const float mid   = a + share * 0.5f;
+                        a += share;
+
+                        const Vec2 at{std::cos(mid) * r, std::sin(mid) * r};
+                        for (const auto& [e, off] : subs[k].nodes) {
+                            out.nodes.push_back({e, at + off});
+                        }
+                        out.radius = std::max(out.radius, r + subs[k].radius);
+                    }
+                    r += 2.0f * tallest + params_.dir_gap;
+                    i = j;
+                }
+            }
+
+            stack.pop_back();
+            if (stack.empty()) built[to_raw(f.node)] = std::move(out);
+            else stack.back().done.push_back(std::move(out));
+        }
+    };
+
     std::vector<entt::entity> roots;
     for (auto [ent, ref] : reg.view<const ecs::NodeRef>().each()) {
         if (!parent.count(to_raw(ent))) roots.push_back(ent);
@@ -240,170 +386,51 @@ void LayoutSystem::radial_tree(ecs::World& world) {
     std::sort(roots.begin(), roots.end(),
               [&](entt::entity a, entt::entity b) { return label_of(a) < label_of(b); });
 
-    // -- bottom-up: disc radius, subtree weight, and how far each subtree reaches ----
-    std::unordered_map<std::uint32_t, float> ring, extent;
-    std::unordered_map<std::uint32_t, float> weight;   // leaf count, for sector sizing
+    // -- commit -------------------------------------------------------------------
+    auto commit = [&](const Sub& sub, Vec2 origin) {
+        for (const auto& [e, off] : sub.nodes) {
+            const Vec2 at = origin + off;
+            reg.emplace_or_replace<ecs::LayoutTarget>(e, ecs::LayoutTarget{at});
+            if (!reg.all_of<ecs::Position>(e)) reg.emplace<ecs::Position>(e, ecs::Position{at});
 
-    struct Visit { entt::entity node; std::size_t next; };
-    std::vector<Visit> stack;
-
-    for (auto root : roots) {
-        stack.push_back({root, 0});
-        while (!stack.empty()) {
-            Visit& v  = stack.back();
-            auto&  ch = kids[to_raw(v.node)];
-            if (v.next < ch.size()) {
-                stack.push_back({ch[v.next++], 0});
-                continue;
+            std::size_t files = 0;
+            for (auto c : kids[to_raw(e)]) {
+                if (is_file(c)) ++files;
             }
-            const std::uint32_t id = to_raw(v.node);
-
-            if (is_file(v.node)) {
-                ring[id]   = params_.file_radius;
-                extent[id] = params_.file_radius;
-                weight[id] = 1.0f;
-            } else {
-                int   files = 0;
-                float w     = 0.0f;
-                for (auto c : ch) {
-                    if (is_file(c)) ++files;
-                    w += weight[to_raw(c)];
-                }
-                weight[id] = std::max(1.0f, w);
-
-                // The rim has to be long enough to seat every file without crowding,
-                // which is what makes a directory's size read as its file count.
-                const float per_file = 2.0f * params_.file_radius + params_.file_gap;
-                const float needed   = static_cast<float>(files) * per_file /
-                                     (2.0f * 3.14159265f);
-                ring[id] = std::max(params_.min_dir_ring, needed);
-
-                float reach = ring[id] + params_.file_radius;
-                for (auto c : ch) {
-                    if (is_file(c)) continue;
-                    // Placed just clear of this ring, so its subtree reaches this far.
-                    const float d = ring[id] + params_.dir_gap + extent[to_raw(c)];
-                    reach         = std::max(reach, d + extent[to_raw(c)]);
-                }
-                extent[id] = reach;
-            }
-            stack.pop_back();
+            const float radius = is_file(e) ? params_.file_radius : draw_radius(files);
+            reg.emplace_or_replace<ecs::Disc>(e, ecs::Disc{radius, radius});
         }
-    }
-
-    // -- top-down: place ------------------------------------------------------------
-    struct Place {
-        entt::entity node;
-        Vec2         pos;
-        float        angle;   // bisector of this node's wedge
-        float        span;    // angular width available to it
-        int          depth;
     };
-    std::vector<Place> queue;
 
-    // Normally a single root: the repository. Several only if the snapshot has no
-    // repository node, in which case they share the circle.
     if (roots.size() == 1) {
-        queue.push_back({roots[0], Vec2{0.0f, 0.0f}, 0.0f, 6.2831853f, 0});
+        build(roots[0]);
+        commit(built[to_raw(roots[0])], Vec2{0.0f, 0.0f});
     } else {
-        float span_total = 0.0f;
-        for (auto r : roots) span_total += 2.0f * extent[to_raw(r)] + params_.dir_gap;
-        const float ring_r = std::max(1.0f, span_total / 6.2831853f);
-
-        float a = 0.0f;
+        // Normally a single root: the repository. Several only if the snapshot has no
+        // repository node, in which case they share a ring.
+        float total = 0.0f;
         for (auto r : roots) {
-            const float need  = 2.0f * extent[to_raw(r)] + params_.dir_gap;
-            const float share = 6.2831853f * need / span_total;
+            build(r);
+            total += 2.0f * built[to_raw(r)].radius + params_.dir_gap;
+        }
+        const float ring = std::max(1.0f, total / 6.2831853f);
+        float       a    = 0.0f;
+        for (auto r : roots) {
+            const Sub&  sub   = built[to_raw(r)];
+            const float need  = 2.0f * sub.radius + params_.dir_gap;
+            const float share = 6.2831853f * need / std::max(1.0f, total);
             const float mid   = a + share * 0.5f;
             a += share;
-            queue.push_back({r, Vec2{std::cos(mid) * ring_r, std::sin(mid) * ring_r}, mid,
-                             share, 1});
+            commit(sub, Vec2{std::cos(mid) * ring, std::sin(mid) * ring});
         }
     }
 
-    while (!queue.empty()) {
-        const Place p = queue.back();
-        queue.pop_back();
-        const std::uint32_t id = to_raw(p.node);
-
-        reg.emplace_or_replace<ecs::LayoutTarget>(p.node, ecs::LayoutTarget{p.pos});
-        if (!reg.all_of<ecs::Position>(p.node)) {
-            reg.emplace<ecs::Position>(p.node, ecs::Position{p.pos});
-        }
-        reg.emplace_or_replace<ecs::Depth>(p.node, ecs::Depth{p.depth});
-        reg.emplace_or_replace<ecs::Disc>(p.node, ecs::Disc{ring[id], extent[id]});
-
-        auto& ch = kids[id];
-        if (ch.empty()) continue;
-
-        std::vector<entt::entity> files, dirs;
-        for (auto c : ch) (is_file(c) ? files : dirs).push_back(c);
-
-        // Files ring the directory that owns them. They take the whole circle rather
-        // than the node's wedge -- that halo is the shape Gource is recognisable by,
-        // and the ring is small enough to stay inside the subtree's own extent.
-        for (std::size_t i = 0; i < files.size(); ++i) {
-            const float a = 6.2831853f * static_cast<float>(i) /
-                            static_cast<float>(files.size());
-            const Vec2 at{p.pos.x + std::cos(a) * ring[id], p.pos.y + std::sin(a) * ring[id]};
-            reg.emplace_or_replace<ecs::LayoutTarget>(files[i], ecs::LayoutTarget{at});
-            if (!reg.all_of<ecs::Position>(files[i])) {
-                reg.emplace<ecs::Position>(files[i], ecs::Position{at});
-            }
-            reg.emplace_or_replace<ecs::Depth>(files[i], ecs::Depth{p.depth + 1});
-            reg.emplace_or_replace<ecs::Disc>(
-                files[i], ecs::Disc{params_.file_radius, params_.file_radius});
-        }
-
-        if (dirs.empty()) continue;
-
-        // Children are packed into concentric shells inside the wedge, not spread
-        // evenly around one circle.
-        //
-        // A single ring is what a pure sector layout gives you, and at 240 siblings it
-        // degenerates: every child gets the same tiny wedge, so every child is pushed
-        // to the same radius and the tree becomes a perfect annulus with a void in the
-        // middle. Gource avoids that because its forces let branches bunch at
-        // different distances. Filling shells outward reproduces that -- a big flat
-        // directory becomes a packed disc rather than a hoop.
-        std::sort(dirs.begin(), dirs.end(), [&](entt::entity a, entt::entity b) {
-            return extent[to_raw(a)] > extent[to_raw(b)];
-        });
-
-        float       r = ring[id] + params_.dir_gap;
-        std::size_t i = 0;
-        while (i < dirs.size()) {
-            // Far enough out to clear the parent's file ring and seat the largest
-            // child in this shell.
-            r = std::max(r, ring[id] + params_.dir_gap + extent[to_raw(dirs[i])]);
-
-            const float arc = r * p.span;
-            float       used = 0.0f, tallest = 0.0f;
-            std::size_t j = i;
-            while (j < dirs.size()) {
-                const float need = 2.0f * extent[to_raw(dirs[j])] + params_.dir_gap;
-                if (j > i && used + need > arc) break;   // always seat at least one
-                used += need;
-                tallest = std::max(tallest, extent[to_raw(dirs[j])]);
-                ++j;
-            }
-
-            float a = p.angle - p.span * 0.5f;
-            for (std::size_t k = i; k < j; ++k) {
-                const std::uint32_t cid   = to_raw(dirs[k]);
-                const float need  = 2.0f * extent[cid] + params_.dir_gap;
-                const float share = p.span * need / std::max(1.0f, used);
-                const float mid   = a + share * 0.5f;
-                a += share;
-
-                queue.push_back({dirs[k],
-                                 Vec2{p.pos.x + std::cos(mid) * r, p.pos.y + std::sin(mid) * r},
-                                 mid, share, p.depth + 1});
-            }
-
-            r += 2.0f * tallest + params_.dir_gap;
-            i = j;
-        }
+    // Depth, for anything that wants it.
+    for (auto [ent, ref] : reg.view<const ecs::NodeRef>().each()) {
+        int           d   = 0;
+        std::uint32_t cur = to_raw(ent);
+        while (parent.count(cur) && d < 64) { cur = parent[cur]; ++d; }
+        reg.emplace_or_replace<ecs::Depth>(ent, ecs::Depth{d});
     }
     energy_ = 1e9f;
 }

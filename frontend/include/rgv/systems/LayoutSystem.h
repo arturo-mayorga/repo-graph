@@ -32,10 +32,24 @@ struct LayoutParams {
     int   sweeps    = 6;        // barycentre passes; more = fewer edge crossings
 
     // Radial (filesystem) layout.
-    float file_radius   = 5.5f;    // a file dot
-    float file_gap      = 11.0f;   // arc gap between files on a directory's ring
-    float min_dir_ring  = 24.0f;   // smallest directory disc
-    float dir_gap       = 20.0f;   // clearance between a ring and a child subtree
+    //
+    // A directory's DRAWN size and the ORBIT its files sit on are separate. Conflating
+    // them put every file dot exactly on the directory's edge, half-occluding it, and
+    // made the size ratio between a file and a directory the ratio of a dot to a whole
+    // orbit -- far too stark to read as "the same kind of thing, one bigger".
+    // Spacing is set relative to the node sizes: shrinking the discs without shrinking
+    // the gaps leaves the graph spatially large and every node a few pixels once it is
+    // fitted to the window.
+    float file_radius     = 5.5f;    // a file dot
+    float file_gap        = 6.0f;    // arc gap between files sharing an orbit
+    float dir_radius      = 9.0f;    // a directory holding nothing
+    float dir_radius_per  = 1.9f;    // added per sqrt(file), so size still means something
+    float dir_radius_max  = 22.0f;   // a directory never dwarfs its own files
+    float orbit_gap       = 5.0f;    // clearance between a directory and its file ring
+    float dir_gap         = 12.0f;   // clearance between a subtree and its neighbours
+    // How wide the first ring of children may get, as a multiple of the largest child.
+    // Past this, children spill into further shells rather than one enormous ring.
+    float shell_spread    = 5.0f;
 };
 
 class LayoutSystem final : public ecs::System {
