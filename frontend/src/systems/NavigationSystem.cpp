@@ -56,7 +56,12 @@ void NavigationSystem::run(ecs::World& world, const ecs::FrameContext&) {
     drag.active = false;
     drag.delta  = Vec2{0.0f, 0.0f};
 
-    if (input.mouse_down && length_sq(input.mouse_delta) > 0.0f) {
+    // `active` means a drag is in progress, NOT that the pointer moved this frame.
+    //
+    // Gating it on movement meant that pausing mid-drag looked like a release: the node
+    // stopped being held, its springs took over, and it crawled out from under a cursor
+    // the user had not let go of. The delta is allowed to be zero.
+    if (input.mouse_down) {
         if (dragging_ != entt::null && registry.valid(dragging_)) {
             drag.node   = dragging_;
             drag.delta  = input.mouse_delta / camera.zoom;
@@ -67,7 +72,7 @@ void NavigationSystem::run(ecs::World& world, const ecs::FrameContext&) {
             // node back to the relaxation, which settles it somewhere consistent with
             // its neighbours. Pinning is still available, explicitly, on double click.
             control.auto_fit = false;
-        } else if (panning_) {
+        } else if (panning_ && length_sq(input.mouse_delta) > 0.0f) {
             camera.center -= input.mouse_delta / camera.zoom;
             control.auto_fit = false;
         }

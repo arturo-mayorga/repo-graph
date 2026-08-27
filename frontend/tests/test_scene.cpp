@@ -1000,3 +1000,45 @@ TEST(dragging_in_a_layered_view_does_not_relax) {
 
     CHECK(length(h.registry().get<ecs::Position>(a).p - before_a) < 1.0f);
 }
+
+// Pausing mid-drag is not a release.
+//
+// `active` used to be set only on frames where the pointer moved, so holding the button
+// still looked like letting go: the node stopped being held, its springs took over, and
+// it crawled out from under a cursor the user had not released.
+TEST(a_held_node_does_not_move_while_the_pointer_is_still) {
+    auto h = make_filesystem();
+    view::fit_camera(h.world, {});
+
+    const entt::entity dir = h.node("dir:a");
+    h.begin_drag(h.camera().world_to_screen(h.registry().get<ecs::Position>(dir).p));
+    for (int i = 0; i < 12; ++i) h.drag_by(Vec2{9.0f, 0.0f});
+
+    const Vec2 held = h.registry().get<ecs::Position>(dir).p;
+    h.hold_drag(120);   // two seconds of button-down and no movement
+    CHECK(length(h.registry().get<ecs::Position>(dir).p - held) < 0.01f);
+
+    // Releasing after the graph has settled around the cursor must not jump. By then
+    // the spring has reached its rest length by pulling the PARENT along, so there is
+    // nothing left for it to correct.
+    h.end_drag();
+    h.tick(1.0f / 60.0f, 120);
+    CHECK(length(h.registry().get<ecs::Position>(dir).p - held) < 5.0f);
+}
+
+// Its children keep settling while it is held, which is the point of relaxing live.
+TEST(children_keep_settling_while_a_node_is_held_still) {
+    auto h = make_filesystem();
+    view::fit_camera(h.world, {});
+
+    const entt::entity dir  = h.node("dir:a");
+    const entt::entity file = h.node("file:a/x.ts");
+
+    h.begin_drag(h.camera().world_to_screen(h.registry().get<ecs::Position>(dir).p));
+    for (int i = 0; i < 14; ++i) h.drag_by(Vec2{11.0f, 0.0f});
+
+    const Vec2 before = h.registry().get<ecs::Position>(file).p;
+    h.hold_drag(45);
+    CHECK(length(h.registry().get<ecs::Position>(file).p - before) > 0.1f);
+}
+

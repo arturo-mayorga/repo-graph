@@ -133,6 +133,14 @@ struct Harness {
         in.mouse += delta;
         tick();
     }
+    // Button still down, pointer stationary. The node must stay under the cursor.
+    void hold_drag(int frames) {
+        auto& in       = input();
+        in.mouse_down    = true;
+        in.mouse_pressed = false;
+        in.mouse_delta   = rgv::Vec2{0.0f, 0.0f};
+        tick(1.0f / 60.0f, frames);
+    }
     void end_drag() {
         auto& in       = input();
         in.mouse_down  = false;
