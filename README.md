@@ -84,8 +84,8 @@ input always wins over `--hover`, so pointing at something else just works.
 |---|---|
 | drag / wheel | pan / zoom |
 | hover a node | fades in a card: what it is, what changed, why it is impacted |
-| drag a node | pin it where you put it |
-| double click | pin / unpin |
+| drag a node | move it; it settles back into place on release |
+| double click | pin / unpin in place |
 | `F` | fit to view |
 | `space` / `.` / `R` | play-pause / step one event / restart |
 | `Esc` | clear selection |
@@ -158,9 +158,14 @@ length. The equilibrium of the simulation is the layout it started from.
 Only the node under the cursor is moved directly. Its children trail on their springs
 and settle; whatever the cluster runs into is pushed aside. The relaxation is
 position-based, with no velocity — velocity is what makes a force layout oscillate and
-drift, and drift is what the structural layout exists to avoid. It keeps running for a
-beat after release so the graph settles rather than freezing mid-motion, and the
-arrangement then sticks: nothing snaps back.
+drift, and drift is what the structural layout exists to avoid.
+
+**Releasing does not pin.** The relaxation keeps running until the graph falls quiet, so
+a dropped node travels on to a position its neighbours agree with rather than freezing
+wherever the cursor left it. A drag that pinned turned every node the user had ever
+touched into a fixed point; after a few of those the relaxation had nothing left to move
+and the graph became a static picture that stopped reacting to itself. Pinning is still
+available, explicitly, on double click.
 
 The layered views have no containment to relax, so a drag there stays rigid and the row
 structure is not shaken apart.

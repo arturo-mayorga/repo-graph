@@ -61,8 +61,11 @@ void NavigationSystem::run(ecs::World& world, const ecs::FrameContext&) {
             drag.node   = dragging_;
             drag.delta  = input.mouse_delta / camera.zoom;
             drag.active = true;
-            // Dragging pins: the user has said where this one goes.
-            registry.emplace_or_replace<ecs::Pinned>(dragging_);
+            // Deliberately does NOT pin. A drag that pins turns every node the user has
+            // ever touched into a fixed point, and after a few of those the graph stops
+            // reacting to anything and becomes a static picture. Releasing hands the
+            // node back to the relaxation, which settles it somewhere consistent with
+            // its neighbours. Pinning is still available, explicitly, on double click.
             control.auto_fit = false;
         } else if (panning_) {
             camera.center -= input.mouse_delta / camera.zoom;

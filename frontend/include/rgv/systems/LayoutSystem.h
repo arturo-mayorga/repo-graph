@@ -69,7 +69,12 @@ struct LayoutParams {
     float relax_spring = 0.30f;   // how firmly a child holds its distance from its parent
     float relax_repel  = 0.55f;   // how firmly overlapping nodes push apart
     int   relax_iters  = 3;       // relaxation passes per frame
-    float relax_settle = 1.2f;    // seconds of continued relaxation after release
+
+    // Releasing does not stop the relaxation -- it keeps running until the graph is
+    // quiet, so a dropped node travels to a position consistent with everything around
+    // it instead of being frozen wherever the cursor left it.
+    float relax_quiet = 0.20f;    // per-frame movement below which the graph is at rest
+    float relax_max   = 12.0f;    // seconds before giving up, so it can never run forever
 };
 
 class LayoutSystem final : public ecs::System {
@@ -96,8 +101,9 @@ private:
     // Live-relaxation state. `rest_` is captured when a drag starts, so the springs
     // pull toward what the structural layout produced rather than toward a guess.
     std::unordered_map<std::uint32_t, float> rest_;
-    bool  relaxing_    = false;
-    float settle_left_ = 0.0f;
+    bool  relaxing_      = false;
+    float relax_motion_  = 0.0f;   // largest displacement in the last pass
+    float relax_elapsed_ = 0.0f;
 };
 
 } // namespace rgv::systems

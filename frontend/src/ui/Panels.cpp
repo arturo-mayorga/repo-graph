@@ -834,8 +834,8 @@ void draw_inspector(ecs::World& world) {
         ImGui::TextDisabled("CONTROLS");
         ImGui::BulletText("drag           pan");
         ImGui::BulletText("wheel          zoom");
-        ImGui::BulletText("drag a node    pin it in place");
-        ImGui::BulletText("double click   pin / unpin");
+        ImGui::BulletText("drag a node    move it; it settles back");
+        ImGui::BulletText("double click   pin / unpin in place");
         ImGui::BulletText("F              fit to view");
         ImGui::BulletText("space          play / pause the scenario");
         ImGui::BulletText(".              step one event");

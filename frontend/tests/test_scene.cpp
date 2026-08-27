@@ -861,20 +861,81 @@ TEST(relaxation_keeps_a_file_at_the_distance_the_packing_gave_it) {
     CHECK(std::abs(after - rest) < rest * 0.45f);
 }
 
-// A dragged node stays where it was put rather than easing back to its layout slot.
-TEST(a_dragged_node_stays_where_it_is_dropped) {
+// Releasing hands the node back to the relaxation rather than freezing it.
+//
+// A drag used to pin. After a few drags every node the user had touched was a fixed
+// point, the relaxation had nothing left to move, and the graph became a static picture
+// that stopped reacting to its own neighbours.
+TEST(dragging_does_not_pin_a_node) {
     auto h = make_filesystem();
     view::fit_camera(h.world, {});
 
     const entt::entity dir = h.node("dir:a");
-    const Vec2 start = h.registry().get<ecs::Position>(dir).p;
-
-    h.begin_drag(h.camera().world_to_screen(start));
-    for (int i = 0; i < 12; ++i) h.drag_by(Vec2{8.0f, 0.0f});
+    h.begin_drag(h.camera().world_to_screen(h.registry().get<ecs::Position>(dir).p));
+    for (int i = 0; i < 10; ++i) h.drag_by(Vec2{8.0f, 0.0f});
     h.end_drag();
-    h.tick(1.0f / 60.0f, 150);
 
-    CHECK(length(h.registry().get<ecs::Position>(dir).p - start) > 10.0f);
+    CHECK(!h.registry().all_of<ecs::Pinned>(dir));
+}
+
+// The relaxation keeps running after the mouse comes up, so the node travels on to
+// somewhere consistent with its neighbours instead of stopping dead.
+TEST(a_dropped_node_keeps_settling_after_release) {
+    auto h = make_filesystem();
+    view::fit_camera(h.world, {});
+
+    const entt::entity dir = h.node("dir:a");
+    h.begin_drag(h.camera().world_to_screen(h.registry().get<ecs::Position>(dir).p));
+    for (int i = 0; i < 14; ++i) h.drag_by(Vec2{9.0f, 0.0f});
+    h.end_drag();
+
+    const Vec2 dropped = h.registry().get<ecs::Position>(dir).p;
+    h.tick(1.0f / 60.0f, 200);
+    const Vec2 settled = h.registry().get<ecs::Position>(dir).p;
+
+    CHECK(length(settled - dropped) > 1.0f);          // it carried on moving
+    CHECK(h.stats().layout_settled);                  // and then stopped
+}
+
+// Where it stops is a position the graph agrees with: its spring has pulled it back to
+// the distance from its parent that the packing chose.
+TEST(a_dropped_node_settles_at_a_natural_distance_from_its_parent) {
+    auto h = make_filesystem();
+    view::fit_camera(h.world, {});
+
+    const entt::entity file = h.node("file:a/x.ts");
+    const entt::entity dir  = h.node("dir:a");
+    const float rest = length(h.registry().get<ecs::Position>(file).p -
+                              h.registry().get<ecs::Position>(dir).p);
+
+    // Haul the file well away from the directory that owns it.
+    h.begin_drag(h.camera().world_to_screen(h.registry().get<ecs::Position>(file).p));
+    for (int i = 0; i < 20; ++i) h.drag_by(Vec2{14.0f, 9.0f});
+    h.end_drag();
+    h.tick(1.0f / 60.0f, 400);
+
+    const float after = length(h.registry().get<ecs::Position>(file).p -
+                               h.registry().get<ecs::Position>(dir).p);
+    CHECK(std::abs(after - rest) < rest * 0.5f);
+}
+
+// Pinning is still available -- explicitly, on double click -- and still holds.
+TEST(an_explicitly_pinned_node_is_not_moved_by_the_relaxation) {
+    auto h = make_filesystem();
+    view::fit_camera(h.world, {});
+
+    const entt::entity neighbour = h.node("pkg:b");
+    h.registry().emplace<ecs::Pinned>(neighbour);
+    const Vec2 held = h.registry().get<ecs::Position>(neighbour).p;
+
+    const entt::entity dir = h.node("dir:a");
+    h.begin_drag(h.camera().world_to_screen(h.registry().get<ecs::Position>(dir).p));
+    const Vec2 toward = (held - h.registry().get<ecs::Position>(dir).p) / 12.0f;
+    for (int i = 0; i < 12; ++i) h.drag_by(toward * h.camera().zoom);
+    h.end_drag();
+    h.tick(1.0f / 60.0f, 200);
+
+    CHECK(length(h.registry().get<ecs::Position>(neighbour).p - held) < 0.5f);
 }
 
 // A drag reflows the graph and the reflow sticks. Nothing snaps back to the packing:

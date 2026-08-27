@@ -667,8 +667,15 @@ void LayoutSystem::relax(ecs::World& world, float dt) {
         }
     }
 
-    // The arrangement the user produced is the arrangement they keep: targets follow
-    // the relaxed positions rather than dragging everything back to the packing.
+    // How far anything still moved this frame. The relaxation runs until this falls
+    // quiet rather than for a fixed time, so the graph is allowed to finish.
+    relax_motion_ = 0.0f;
+    for (auto [e, pos, target] : reg.view<const ecs::Position, ecs::LayoutTarget>().each()) {
+        relax_motion_ = std::max(relax_motion_, length(pos.p - target.p));
+    }
+
+    // The arrangement the relaxation reaches is the arrangement that is kept: targets
+    // follow the relaxed positions rather than dragging everything back to the packing.
     for (auto [e, pos, target] : reg.view<const ecs::Position, ecs::LayoutTarget>().each()) {
         target.p = pos.p;
     }
@@ -694,25 +701,35 @@ void LayoutSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
                           ? 1.0f
                           : std::clamp(frame.dt * params_.ease, 0.0f, 1.0f);
 
-    // A drag switches on live relaxation, and it keeps running briefly afterwards so
-    // the graph settles instead of freezing mid-motion.
+    // A drag switches on live relaxation. Releasing does not switch it off -- it runs
+    // until the graph is quiet, so a dropped node travels somewhere that belongs
+    // instead of being frozen where the cursor happened to leave it.
     const auto& drag = world.resource<ecs::DragState>();
     if (drag.active && !relaxing_ && tree_mode_) {
         capture_rest_lengths(world);
-        relaxing_ = true;
+        relaxing_      = true;
+        relax_motion_  = 1e9f;
+        relax_elapsed_ = 0.0f;
     }
-    if (drag.active) settle_left_ = params_.relax_settle;
-    else if (relaxing_) settle_left_ -= frame.dt;
-    if (relaxing_ && settle_left_ <= 0.0f) relaxing_ = false;
-
-    apply_drag(world);
 
     if (relaxing_) {
+        relax_elapsed_ += frame.dt;
+        apply_drag(world);
         relax(world, frame.dt);
-        stats.layout_energy  = 0.0f;
-        stats.layout_settled = true;
+
+        // Held open while the cursor is down; afterwards it ends when the motion dies
+        // away, with a hard cap so a pathological graph cannot relax forever.
+        if (!drag.active &&
+            (relax_motion_ < params_.relax_quiet || relax_elapsed_ > params_.relax_max)) {
+            relaxing_ = false;
+        }
+
+        stats.layout_energy  = relax_motion_;
+        stats.layout_settled = !relaxing_;
         return;
     }
+
+    apply_drag(world);
 
     float worst = 0.0f;
     for (auto [ent, pos, target] :
