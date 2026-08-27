@@ -29,6 +29,8 @@ bool parse_options(int argc, char** argv, const char* default_root, Options& o) 
         else if (a == "--text-settings") o.text_settings = true;
         else if (a == "--schedule") o.list_schedule = true;
         else if (a == "--fixture" && i + 1 < argc) o.fixture = argv[++i];
+        else if (a == "--watch" && i + 1 < argc) o.watch = argv[++i];
+        else if (a == "--provider" && i + 1 < argc) o.provider = argv[++i];
         else if (a == "--scenario" && i + 1 < argc) o.scenario = std::atoi(argv[++i]);
         else if (a == "--at" && i + 1 < argc) o.at = std::atof(argv[++i]);
         else if (a == "--select" && i + 1 < argc) o.select = argv[++i];

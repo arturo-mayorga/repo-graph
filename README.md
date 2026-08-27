@@ -75,6 +75,33 @@ Useful options:
 ./build/bin/rgv --fixture large-synthetic --relevance 0.5
 ```
 
+### Watching a real checkout
+
+```sh
+./build/bin/rgv --watch .                          # watch this repo, live
+./build/bin/rgv --watch ~/code/some-project --view filesystem
+./build/bin/rgv --watch . --provider ./build/bin/rgv-watch   # explicit provider path
+```
+
+`--watch` swaps the fixture player for `rgv-watch`, a provider process that walks the
+directory, emits it as a contract snapshot, and then streams deltas as files are created,
+modified and deleted. Saving a file marks it changed in the session panel and bumps the
+generation, live.
+
+The provider is a separate program that shares nothing with the frontend but the wire
+format — newline-delimited JSON on stdout, `docs/frontend-contract.md` §6 — so you can
+watch what it produces without a UI at all:
+
+```sh
+./build/bin/rgv-watch --root . | head -3
+```
+
+That seam is why this is language-neutral: `rgv-watch` understands the filesystem and
+nothing else, and a dependency extractor for any given language is a *different* process
+speaking the same protocol. It reports containment only, so the dependency views stay
+empty on a live repo until such an extractor exists — the Filesystem view is the one to
+use for now.
+
 `--scenario N --at MS --select NODE --hover NODE --text-settings` reproduce an exact
 on-screen state,
 which is what makes a screenshot or a bug report about the UX worth anything. Live
@@ -326,8 +353,14 @@ the rules it enforces and why, layout and rendering, and how the pipeline is tes
 
 ## What is not here yet
 
-No backend, no live source, no symbol level. The temporal-compare view (FR-34) is
-represented in the contract (`valid_to` on edges) but has no view mode.
+No dependency extraction from a live repo, and no symbol level. `rgv-watch` reports
+containment — which files and directories exist and when they change — so watching a real
+checkout gives you a live Filesystem view but empty Architecture and File graph views.
+Those need a language provider, which is the next process to write and the first place a
+language choice actually enters the design.
+
+The temporal-compare view (FR-34) is represented in the contract (`valid_to` on edges) but
+has no view mode.
 
 Two gaps worth knowing before building on this:
 

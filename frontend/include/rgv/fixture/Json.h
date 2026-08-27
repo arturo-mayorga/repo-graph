@@ -27,6 +27,20 @@ Snapshot load_snapshot(const std::string& path);
 std::vector<Event> parse_scenario(const std::string& text, const std::string& origin);
 std::vector<Event> load_scenario(const std::string& path);
 
+// -- live transport (contract 6) ----------------------------------------------
+//
+// A provider process frames the SAME JSON one message per line, so the codec is shared
+// rather than duplicated: a fixture and a provider differ in how the bytes arrive, not
+// in what they mean. A `snapshot` line may arrive at any point, not only first -- that
+// is how a provider resyncs when it cannot guarantee a monotonic generation.
+struct LiveMessage {
+    bool     is_snapshot = false;
+    Snapshot snapshot;
+    Event    event;
+};
+
+LiveMessage parse_live_line(const std::string& line, const std::string& origin);
+
 std::string read_file(const std::string& path);
 
 } // namespace rgv::fixture

@@ -12,7 +12,7 @@ The same contract is served by two implementations:
 | Implementation   | Purpose                            | Availability |
 |------------------|------------------------------------|--------------|
 | `FixtureSource`  | Replays authored JSON scenarios    | Now — drives all UX work |
-| `LiveSource`     | WebSocket client against `WS /events` | Later — no frontend changes required |
+| `LiveSource`     | Reads NDJSON from a provider process | Now — see §6 |
 
 > **Rule:** no frontend code may branch on which source is attached. If the UX needs a
 > capability, it becomes part of this contract and the fixture player grows to satisfy it.
@@ -343,22 +343,79 @@ layout".
 
 ---
 
-## 6. Mapping to the future live API
+## 6. The live transport
 
-The contract is deliberately isomorphic to spec §12.2, so `LiveSource` is a transport
-shim with no translation logic:
+`LiveSource` attaches to a **provider process**: a child process that writes the contract
+to its stdout as newline-delimited JSON, one message per line, UTF-8, no trailing commas.
+The frontend spawns it, reads it non-blockingly, and never writes to it except to close
+its stdin on shutdown.
 
-| Contract element | Live endpoint |
+A local subprocess rather than a WebSocket, deliberately. This is a single-user tool
+watching a checkout on the same machine; a socket server would add a dependency, a port,
+and a lifetime to manage in exchange for a capability nothing currently asks for. The
+framing below is transport-agnostic, so moving to a socket later changes how bytes are
+delivered and nothing about what they mean.
+
+### 6.1 Framing
+
+The first line is the baseline:
+
+```jsonc
+{ "type": "snapshot", "snapshot": { /* §3 */ } }
+```
+
+Every subsequent line is one event in the `§4` envelope:
+
+```jsonc
+{ "t_ms": 0, "type": "file.changed", "generation": 101, /* ... */ }
+```
+
+Rules:
+
+- **One message per line.** A message must not contain a raw newline. Readers split on
+  `\n` and parse each line independently, so a partial line at the end of a read buffer
+  is held until its terminator arrives.
+- **`t_ms` is ignored.** It is scheduling information for a replayable source. A live
+  provider should emit `0`; a frontend must not delay a live event by it.
+- **Ordering is the stream order.** There is no reordering buffer and no sequence number
+  beyond `generation`.
+- **`generation` is monotonic.** A provider that cannot guarantee that must emit
+  `source.resync` (see below) rather than going backwards.
+- **stderr is diagnostics**, never protocol. The frontend may surface it, and must not
+  parse it.
+- **Exit is end-of-stream.** `SourceStatus::ended` goes true; the graph is retained and
+  clearly marked as no longer live. A provider crash is not a frontend crash.
+
+### 6.2 Provider identity
+
+A provider announces itself with `adapter.status` before or with its first graph event,
+so the inspector can attribute edges and the UI can show what is running:
+
+```jsonc
+{ "t_ms": 0, "type": "adapter.status", "generation": 100,
+  "adapter": "filesystem", "state": "ready", "queue_depth": 0 }
+```
+
+The `provider` field on every edge (§3.2) must match an announced `adapter`. This is what
+lets several providers feed one stream — a filesystem walker and a language extractor —
+with different freshness and confidence per edge, and lets the UI say which one is behind.
+
+### 6.3 Mapping to a remote API
+
+The contract stays isomorphic to spec §12.2, so a socket or HTTP transport is a reframing
+with no translation logic:
+
+| Contract element | Remote equivalent |
 |---|---|
-| `Snapshot` | `GET /repo` + `GET /graph?generation=<baseline>` |
-| `Event` stream | `WS /events` |
-| `impact.updated` | `GET /impact` (also pushed over WS) |
+| first `snapshot` line | `GET /repo` + `GET /graph?generation=<baseline>` |
+| subsequent lines | `WS /events` |
+| `impact.updated` | `GET /impact` (also pushed) |
 | `Edge.evidence` | `GET /explain/edge/:id` (fixtures inline it; live may lazy-load) |
 | `reconcile.checkpoint` | `POST /reconcile` response echoed onto the stream |
 
-The one intentional difference: fixtures inline `evidence` on every edge, while the live
-source may fetch it on demand. The frontend therefore treats `evidence` as optional and
-shows a loading state in the inspector when absent.
+The one intentional difference: fixtures inline `evidence` on every edge, while a live
+source may omit it. The frontend therefore treats `evidence` as optional and shows a
+loading state in the inspector when absent.
 
 ---
 
@@ -378,5 +435,10 @@ shows a loading state in the inspector when absent.
    sample and the scores silently skew: a hub looks specific because most of its
    dependents were not sent. Either the backend computes and ships `specificity` per
    node, or the contract has to guarantee complete in-edge counts per level.
-5. **Path count.** `paths[]` is unbounded. Real graphs can have thousands of paths to one
+5. **Resync.** §4 says the frontend may "request a resync (`source.resync`)", but with a
+   one-way stream it has no way to ask. Either the provider pushes a fresh `snapshot`
+   line when it detects it has fallen out of sync, or the transport needs a back channel.
+   Pushed-snapshot is assumed; the frontend must therefore accept a `snapshot` line at
+   any point, not only first.
+6. **Path count.** `paths[]` is unbounded. Real graphs can have thousands of paths to one
    node. A `paths_truncated: true` flag plus a cap is probably needed.

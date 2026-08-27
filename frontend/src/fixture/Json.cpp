@@ -238,6 +238,22 @@ Event parse_event_json(const json& j, const std::string& origin) {
 
 } // namespace
 
+Snapshot parse_snapshot_json(const json& j, const std::string& origin);
+
+LiveMessage parse_live_line(const std::string& line, const std::string& origin) {
+    json j = json::parse(line);
+    if (!j.is_object()) throw ParseError(origin + ": line is not a JSON object");
+
+    LiveMessage msg;
+    if (str_or(j, "type") == "snapshot") {
+        msg.is_snapshot = true;
+        msg.snapshot    = parse_snapshot_json(require(j, "snapshot", origin), origin);
+        return msg;
+    }
+    msg.event = parse_event_json(j, origin);
+    return msg;
+}
+
 std::string read_file(const std::string& path) {
     std::ifstream in(path, std::ios::binary);
     if (!in) throw ParseError(path + ": cannot open");
@@ -246,14 +262,7 @@ std::string read_file(const std::string& path) {
     return os.str();
 }
 
-Snapshot parse_snapshot(const std::string& text, const std::string& origin) {
-    json j;
-    try {
-        j = json::parse(text, nullptr, true, /*ignore_comments=*/true);
-    } catch (const json::exception& ex) {
-        fail(origin, ex.what());
-    }
-
+Snapshot parse_snapshot_json(const json& j, const std::string& origin) {
     Snapshot s;
     s.schema = str_or(j, "schema", "rgv.snapshot/1");
     if (s.schema != "rgv.snapshot/1") {
@@ -279,6 +288,16 @@ Snapshot parse_snapshot(const std::string& text, const std::string& origin) {
         for (const auto& x : *it) s.edges.push_back(parse_edge(x, origin));
     }
     return s;
+}
+
+Snapshot parse_snapshot(const std::string& text, const std::string& origin) {
+    json j;
+    try {
+        j = json::parse(text, nullptr, true, /*ignore_comments=*/true);
+    } catch (const json::exception& ex) {
+        fail(origin, ex.what());
+    }
+    return parse_snapshot_json(j, origin);
 }
 
 Snapshot load_snapshot(const std::string& path) {

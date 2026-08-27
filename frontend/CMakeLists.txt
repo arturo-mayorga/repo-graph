@@ -54,6 +54,7 @@ add_library(rgv_core STATIC
   src/model/GraphStore.cpp
   src/fixture/Json.cpp
   src/fixture/FixtureSource.cpp
+  src/live/LiveSource.cpp
   src/sim/ImpactSim.cpp
   src/analysis/Reach.cpp
   src/analysis/Specificity.cpp
@@ -102,6 +103,7 @@ if(RGV_BUILD_TESTS)
     tests/test_store.cpp
     tests/test_timeline.cpp
     tests/test_scene.cpp
+    tests/test_live.cpp
     tests/test_settings.cpp
     tests/test_specificity.cpp
     tests/test_schedule.cpp
@@ -144,6 +146,7 @@ if(RGV_BUILD_APP)
     app/main.cpp
     app/Options.cpp
     app/FixtureBootstrap.cpp
+    app/LiveBootstrap.cpp
     src/render/GL.cpp
     src/render/GraphRenderer.cpp
     src/systems/WindowSystem.cpp
@@ -162,3 +165,18 @@ if(RGV_BUILD_APP)
 else()
   message(STATUS "rgv: app disabled (headless build: rgv_core, rgv-replay, tests)")
 endif()
+
+# -- providers ----------------------------------------------------------------
+#
+# A provider is a separate process that writes the contract to stdout (§6). It links
+# nothing from the frontend: the wire format is the only thing they share, which is what
+# lets the next one be written in another language entirely.
+# The tests run the real provider, so a provider that emits a token the parser rejects
+# fails the build rather than producing a silently empty graph at runtime.
+add_compile_definitions(RGV_WATCH_BIN="${CMAKE_BINARY_DIR}/bin/rgv-watch"
+                        RGV_TEST_TMP="${CMAKE_BINARY_DIR}/test-tmp")
+
+add_executable(rgv-watch ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/main.cpp)
+target_include_directories(rgv-watch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/json)
+target_compile_features(rgv-watch PRIVATE cxx_std_20)
+target_link_libraries(rgv-watch PRIVATE rgv_warnings)

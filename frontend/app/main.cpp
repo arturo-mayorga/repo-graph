@@ -9,6 +9,7 @@
 // Adding a capability means adding a system. Neither requires touching this file.
 
 #include "FixtureBootstrap.h"
+#include "LiveBootstrap.h"
 #include "Options.h"
 
 #include "rgv/ecs/Commands.h"
@@ -65,6 +66,10 @@ void install_resources(ecs::World& world, const app::Options& options) {
     world.add_resource<ecs::SceneRequests>();
     world.add_resource<ecs::CommandQueue>();
     world.add_resource<ecs::SourceHandle>();
+    // Installed whether or not fixtures are in play. The panels test it for emptiness
+    // -- a capability check, the same way a missing Timeline is what hides the scrubber
+    // -- and no frontend code is allowed to ask which kind of source is attached.
+    world.add_resource<ecs::FixtureLibrary>();
     world.add_resource<ecs::WindowHandle>();
     world.add_resource<Camera>();
 
@@ -181,9 +186,13 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    if (!app::attach_fixture_source(world, options.root, options.fixture, options.scenario)) {
-        return 1;
-    }
+    // The one place the application chooses a data source. Everything past this line
+    // consumes IGraphSource and cannot tell which it got.
+    const bool attached =
+        options.watch.empty()
+            ? app::attach_fixture_source(world, options.root, options.fixture, options.scenario)
+            : app::attach_live_source(world, options.provider, options.watch);
+    if (!attached) return 1;
 
     try {
         schedule.setup(world);

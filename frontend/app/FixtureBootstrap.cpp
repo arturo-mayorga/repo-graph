@@ -59,7 +59,7 @@ bool load(ecs::World& world, int index) {
 bool attach_fixture_source(ecs::World& world, const std::string& root,
                            const std::string& preferred, int scenario) {
     world.add_resource<SourceOwner>();
-    auto& library = world.add_resource<ecs::FixtureLibrary>();
+    auto& library = world.resource<ecs::FixtureLibrary>();
     library.dirs  = discover(root);
     library.load  = load;
 

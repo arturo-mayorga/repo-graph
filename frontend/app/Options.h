@@ -8,6 +8,8 @@ namespace rgv::app {
 
 struct Options {
     std::string root;            // fixture root directory
+    std::string watch;           // directory to watch live, instead of a fixture
+    std::string provider = "rgv-watch";   // provider command used by --watch
     std::string fixture;         // fixture set to start on
     std::string select;          // node selected on startup
     std::string hover;           // node whose hover card is shown on startup
