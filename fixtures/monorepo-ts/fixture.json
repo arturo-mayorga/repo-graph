@@ -1,0 +1,40 @@
+{
+  "name": "acme-monorepo (TypeScript / pnpm workspaces)",
+  "scenarios": [
+    {
+      "file": "01-import-redirect.jsonl",
+      "name": "Import redirect (spec Appendix B)",
+      "description": "auth is rewired from database to identity. Package topology moves only after both files change."
+    },
+    {
+      "file": "02-manifest-dependency-added.jsonl",
+      "name": "Manifest dependency added",
+      "description": "A package.json edit alone produces a blast radius."
+    },
+    {
+      "file": "03-invalid-intermediate.jsonl",
+      "name": "Invalid intermediate state",
+      "description": "Parse fails mid-edit. Old facts must survive as stale, not vanish."
+    },
+    {
+      "file": "04-rename-reconcile.jsonl",
+      "name": "Rename via delete + create",
+      "description": "A heuristic edge is upgraded to exact by a git reconcile checkpoint."
+    },
+    {
+      "file": "05-wide-burst.jsonl",
+      "name": "Wide refactor burst",
+      "description": "Every TypeScript file changes at once. Stress for layout and for the meaning of 'changed'."
+    },
+    {
+      "file": "06-new-package.jsonl",
+      "name": "New package appears",
+      "description": "A package absent from the baseline is created and wired in mid-session."
+    },
+    {
+      "file": "07-hub-change.jsonl",
+      "name": "Hub change (logger)",
+      "description": "@acme/logger changes. 7 of 8 packages impacted; every path runs through a hub."
+    }
+  ]
+}

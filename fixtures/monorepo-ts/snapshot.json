@@ -1,0 +1,1067 @@
+{
+  "schema": "rgv.snapshot/1",
+  "repo": {
+    "root": "/home/dev/acme-monorepo",
+    "name": "acme-monorepo",
+    "head": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+    "branch": "main",
+    "detached": false
+  },
+  "session": {
+    "id": "sess-01",
+    "name": "agent session 01",
+    "baseline_generation": 100,
+    "started_at_ms": 0
+  },
+  "generation": 100,
+  "nodes": [
+    {
+      "id": "repo:root",
+      "kind": "repository",
+      "name": "acme-monorepo",
+      "path": "",
+      "parent": null,
+      "freshness": "current",
+      "attrs": {
+        "head": "a1b2c3d4e5f6a7b8",
+        "branch": "main"
+      }
+    },
+    {
+      "id": "pkg:web",
+      "kind": "package",
+      "name": "@acme/web",
+      "path": "apps/web",
+      "parent": "repo:root",
+      "language": "typescript",
+      "freshness": "current",
+      "attrs": {
+        "version": "1.0.0",
+        "manifest": "apps/web/package.json"
+      }
+    },
+    {
+      "id": "dir:apps/web/src",
+      "kind": "directory",
+      "name": "src",
+      "path": "apps/web/src",
+      "parent": "pkg:web",
+      "freshness": "current",
+      "attrs": {}
+    },
+    {
+      "id": "file:apps/web/src/app.tsx",
+      "kind": "file",
+      "name": "app.tsx",
+      "path": "apps/web/src/app.tsx",
+      "parent": "dir:apps/web/src",
+      "language": "typescript",
+      "freshness": "current",
+      "attrs": {
+        "loc": "180"
+      }
+    },
+    {
+      "id": "file:apps/web/src/login-page.tsx",
+      "kind": "file",
+      "name": "login-page.tsx",
+      "path": "apps/web/src/login-page.tsx",
+      "parent": "dir:apps/web/src",
+      "language": "typescript",
+      "freshness": "current",
+      "attrs": {
+        "loc": "68"
+      }
+    },
+    {
+      "id": "file:apps/web/package.json",
+      "kind": "file",
+      "name": "package.json",
+      "path": "apps/web/package.json",
+      "parent": "pkg:web",
+      "language": "json",
+      "freshness": "current",
+      "attrs": {
+        "loc": "187"
+      }
+    },
+    {
+      "id": "pkg:api",
+      "kind": "package",
+      "name": "@acme/api",
+      "path": "services/api",
+      "parent": "repo:root",
+      "language": "typescript",
+      "freshness": "current",
+      "attrs": {
+        "version": "1.0.0",
+        "manifest": "services/api/package.json"
+      }
+    },
+    {
+      "id": "dir:services/api/src",
+      "kind": "directory",
+      "name": "src",
+      "path": "services/api/src",
+      "parent": "pkg:api",
+      "freshness": "current",
+      "attrs": {}
+    },
+    {
+      "id": "file:services/api/src/server.ts",
+      "kind": "file",
+      "name": "server.ts",
+      "path": "services/api/src/server.ts",
+      "parent": "dir:services/api/src",
+      "language": "typescript",
+      "freshness": "current",
+      "attrs": {
+        "loc": "61"
+      }
+    },
+    {
+      "id": "dir:services/api/src/routes",
+      "kind": "directory",
+      "name": "routes",
+      "path": "services/api/src/routes",
+      "parent": "dir:services/api/src",
+      "freshness": "current",
+      "attrs": {}
+    },
+    {
+      "id": "file:services/api/src/routes/login.ts",
+      "kind": "file",
+      "name": "login.ts",
+      "path": "services/api/src/routes/login.ts",
+      "parent": "dir:services/api/src/routes",
+      "language": "typescript",
+      "freshness": "current",
+      "attrs": {
+        "loc": "103"
+      }
+    },
+    {
+      "id": "file:services/api/package.json",
+      "kind": "file",
+      "name": "package.json",
+      "path": "services/api/package.json",
+      "parent": "pkg:api",
+      "language": "json",
+      "freshness": "current",
+      "attrs": {
+        "loc": "54"
+      }
+    },
+    {
+      "id": "pkg:billing",
+      "kind": "package",
+      "name": "@acme/billing",
+      "path": "services/billing",
+      "parent": "repo:root",
+      "language": "typescript",
+      "freshness": "current",
+      "attrs": {
+        "version": "1.0.0",
+        "manifest": "services/billing/package.json"
+      }
+    },
+    {
+      "id": "dir:services/billing/src",
+      "kind": "directory",
+      "name": "src",
+      "path": "services/billing/src",
+      "parent": "pkg:billing",
+      "freshness": "current",
+      "attrs": {}
+    },
+    {
+      "id": "file:services/billing/src/invoice.ts",
+      "kind": "file",
+      "name": "invoice.ts",
+      "path": "services/billing/src/invoice.ts",
+      "parent": "dir:services/billing/src",
+      "language": "typescript",
+      "freshness": "current",
+      "attrs": {
+        "loc": "96"
+      }
+    },
+    {
+      "id": "file:services/billing/package.json",
+      "kind": "file",
+      "name": "package.json",
+      "path": "services/billing/package.json",
+      "parent": "pkg:billing",
+      "language": "json",
+      "freshness": "current",
+      "attrs": {
+        "loc": "82"
+      }
+    },
+    {
+      "id": "pkg:auth",
+      "kind": "package",
+      "name": "@acme/auth",
+      "path": "packages/auth",
+      "parent": "repo:root",
+      "language": "typescript",
+      "freshness": "current",
+      "attrs": {
+        "version": "1.0.0",
+        "manifest": "packages/auth/package.json"
+      }
+    },
+    {
+      "id": "dir:packages/auth/src",
+      "kind": "directory",
+      "name": "src",
+      "path": "packages/auth/src",
+      "parent": "pkg:auth",
+      "freshness": "current",
+      "attrs": {}
+    },
+    {
+      "id": "file:packages/auth/src/index.ts",
+      "kind": "file",
+      "name": "index.ts",
+      "path": "packages/auth/src/index.ts",
+      "parent": "dir:packages/auth/src",
+      "language": "typescript",
+      "freshness": "current",
+      "attrs": {
+        "loc": "61"
+      }
+    },
+    {
+      "id": "file:packages/auth/src/token.ts",
+      "kind": "file",
+      "name": "token.ts",
+      "path": "packages/auth/src/token.ts",
+      "parent": "dir:packages/auth/src",
+      "language": "typescript",
+      "freshness": "current",
+      "attrs": {
+        "loc": "61"
+      }
+    },
+    {
+      "id": "file:packages/auth/src/session.ts",
+      "kind": "file",
+      "name": "session.ts",
+      "path": "packages/auth/src/session.ts",
+      "parent": "dir:packages/auth/src",
+      "language": "typescript",
+      "freshness": "current",
+      "attrs": {
+        "loc": "75"
+      }
+    },
+    {
+      "id": "file:packages/auth/package.json",
+      "kind": "file",
+      "name": "package.json",
+      "path": "packages/auth/package.json",
+      "parent": "pkg:auth",
+      "language": "json",
+      "freshness": "current",
+      "attrs": {
+        "loc": "61"
+      }
+    },
+    {
+      "id": "pkg:identity",
+      "kind": "package",
+      "name": "@acme/identity",
+      "path": "packages/identity",
+      "parent": "repo:root",
+      "language": "typescript",
+      "freshness": "current",
+      "attrs": {
+        "version": "1.0.0",
+        "manifest": "packages/identity/package.json"
+      }
+    },
+    {
+      "id": "dir:packages/identity/src",
+      "kind": "directory",
+      "name": "src",
+      "path": "packages/identity/src",
+      "parent": "pkg:identity",
+      "freshness": "current",
+      "attrs": {}
+    },
+    {
+      "id": "file:packages/identity/src/index.ts",
+      "kind": "file",
+      "name": "index.ts",
+      "path": "packages/identity/src/index.ts",
+      "parent": "dir:packages/identity/src",
+      "language": "typescript",
+      "freshness": "current",
+      "attrs": {
+        "loc": "89"
+      }
+    },
+    {
+      "id": "file:packages/identity/src/client.ts",
+      "kind": "file",
+      "name": "client.ts",
+      "path": "packages/identity/src/client.ts",
+      "parent": "dir:packages/identity/src",
+      "language": "typescript",
+      "freshness": "current",
+      "attrs": {
+        "loc": "96"
+      }
+    },
+    {
+      "id": "file:packages/identity/package.json",
+      "kind": "file",
+      "name": "package.json",
+      "path": "packages/identity/package.json",
+      "parent": "pkg:identity",
+      "language": "json",
+      "freshness": "current",
+      "attrs": {
+        "loc": "89"
+      }
+    },
+    {
+      "id": "pkg:database",
+      "kind": "package",
+      "name": "@acme/database",
+      "path": "packages/database",
+      "parent": "repo:root",
+      "language": "typescript",
+      "freshness": "current",
+      "attrs": {
+        "version": "1.0.0",
+        "manifest": "packages/database/package.json"
+      }
+    },
+    {
+      "id": "dir:packages/database/src",
+      "kind": "directory",
+      "name": "src",
+      "path": "packages/database/src",
+      "parent": "pkg:database",
+      "freshness": "current",
+      "attrs": {}
+    },
+    {
+      "id": "file:packages/database/src/index.ts",
+      "kind": "file",
+      "name": "index.ts",
+      "path": "packages/database/src/index.ts",
+      "parent": "dir:packages/database/src",
+      "language": "typescript",
+      "freshness": "current",
+      "attrs": {
+        "loc": "89"
+      }
+    },
+    {
+      "id": "file:packages/database/src/client.ts",
+      "kind": "file",
+      "name": "client.ts",
+      "path": "packages/database/src/client.ts",
+      "parent": "dir:packages/database/src",
+      "language": "typescript",
+      "freshness": "current",
+      "attrs": {
+        "loc": "96"
+      }
+    },
+    {
+      "id": "file:packages/database/src/pool.ts",
+      "kind": "file",
+      "name": "pool.ts",
+      "path": "packages/database/src/pool.ts",
+      "parent": "dir:packages/database/src",
+      "language": "typescript",
+      "freshness": "current",
+      "attrs": {
+        "loc": "82"
+      }
+    },
+    {
+      "id": "file:packages/database/package.json",
+      "kind": "file",
+      "name": "package.json",
+      "path": "packages/database/package.json",
+      "parent": "pkg:database",
+      "language": "json",
+      "freshness": "current",
+      "attrs": {
+        "loc": "89"
+      }
+    },
+    {
+      "id": "pkg:ui",
+      "kind": "package",
+      "name": "@acme/ui",
+      "path": "packages/ui",
+      "parent": "repo:root",
+      "language": "typescript",
+      "freshness": "current",
+      "attrs": {
+        "version": "1.0.0",
+        "manifest": "packages/ui/package.json"
+      }
+    },
+    {
+      "id": "dir:packages/ui/src",
+      "kind": "directory",
+      "name": "src",
+      "path": "packages/ui/src",
+      "parent": "pkg:ui",
+      "freshness": "current",
+      "attrs": {}
+    },
+    {
+      "id": "file:packages/ui/src/index.ts",
+      "kind": "file",
+      "name": "index.ts",
+      "path": "packages/ui/src/index.ts",
+      "parent": "dir:packages/ui/src",
+      "language": "typescript",
+      "freshness": "current",
+      "attrs": {
+        "loc": "47"
+      }
+    },
+    {
+      "id": "file:packages/ui/src/button.tsx",
+      "kind": "file",
+      "name": "button.tsx",
+      "path": "packages/ui/src/button.tsx",
+      "parent": "dir:packages/ui/src",
+      "language": "typescript",
+      "freshness": "current",
+      "attrs": {
+        "loc": "61"
+      }
+    },
+    {
+      "id": "file:packages/ui/package.json",
+      "kind": "file",
+      "name": "package.json",
+      "path": "packages/ui/package.json",
+      "parent": "pkg:ui",
+      "language": "json",
+      "freshness": "current",
+      "attrs": {
+        "loc": "47"
+      }
+    },
+    {
+      "id": "pkg:logger",
+      "kind": "package",
+      "name": "@acme/logger",
+      "path": "packages/logger",
+      "parent": "repo:root",
+      "language": "typescript",
+      "freshness": "current",
+      "attrs": {
+        "version": "1.0.0",
+        "manifest": "packages/logger/package.json"
+      }
+    },
+    {
+      "id": "dir:packages/logger/src",
+      "kind": "directory",
+      "name": "src",
+      "path": "packages/logger/src",
+      "parent": "pkg:logger",
+      "freshness": "current",
+      "attrs": {}
+    },
+    {
+      "id": "file:packages/logger/src/index.ts",
+      "kind": "file",
+      "name": "index.ts",
+      "path": "packages/logger/src/index.ts",
+      "parent": "dir:packages/logger/src",
+      "language": "typescript",
+      "freshness": "current",
+      "attrs": {
+        "loc": "75"
+      }
+    },
+    {
+      "id": "file:packages/logger/package.json",
+      "kind": "file",
+      "name": "package.json",
+      "path": "packages/logger/package.json",
+      "parent": "pkg:logger",
+      "language": "json",
+      "freshness": "current",
+      "attrs": {
+        "loc": "75"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e:dep:web->api",
+      "kind": "depends_on",
+      "from": "pkg:web",
+      "to": "pkg:api",
+      "provider": "pnpm-workspace",
+      "provider_version": "9.6.0",
+      "confidence": "exact",
+      "freshness": "current",
+      "valid_from": 100,
+      "valid_to": null,
+      "evidence": {
+        "artifact": "apps/web/package.json",
+        "line": 12,
+        "snippet": "\"@acme/api\": \"workspace:*\""
+      }
+    },
+    {
+      "id": "e:dep:web->ui",
+      "kind": "depends_on",
+      "from": "pkg:web",
+      "to": "pkg:ui",
+      "provider": "pnpm-workspace",
+      "provider_version": "9.6.0",
+      "confidence": "exact",
+      "freshness": "current",
+      "valid_from": 100,
+      "valid_to": null,
+      "evidence": {
+        "artifact": "apps/web/package.json",
+        "line": 12,
+        "snippet": "\"@acme/ui\": \"workspace:*\""
+      }
+    },
+    {
+      "id": "e:dep:web->logger",
+      "kind": "depends_on",
+      "from": "pkg:web",
+      "to": "pkg:logger",
+      "provider": "pnpm-workspace",
+      "provider_version": "9.6.0",
+      "confidence": "exact",
+      "freshness": "current",
+      "valid_from": 100,
+      "valid_to": null,
+      "evidence": {
+        "artifact": "apps/web/package.json",
+        "line": 12,
+        "snippet": "\"@acme/logger\": \"workspace:*\""
+      }
+    },
+    {
+      "id": "e:dep:api->auth",
+      "kind": "depends_on",
+      "from": "pkg:api",
+      "to": "pkg:auth",
+      "provider": "pnpm-workspace",
+      "provider_version": "9.6.0",
+      "confidence": "exact",
+      "freshness": "current",
+      "valid_from": 100,
+      "valid_to": null,
+      "evidence": {
+        "artifact": "services/api/package.json",
+        "line": 12,
+        "snippet": "\"@acme/auth\": \"workspace:*\""
+      }
+    },
+    {
+      "id": "e:dep:api->database",
+      "kind": "depends_on",
+      "from": "pkg:api",
+      "to": "pkg:database",
+      "provider": "pnpm-workspace",
+      "provider_version": "9.6.0",
+      "confidence": "exact",
+      "freshness": "current",
+      "valid_from": 100,
+      "valid_to": null,
+      "evidence": {
+        "artifact": "services/api/package.json",
+        "line": 12,
+        "snippet": "\"@acme/database\": \"workspace:*\""
+      }
+    },
+    {
+      "id": "e:dep:api->logger",
+      "kind": "depends_on",
+      "from": "pkg:api",
+      "to": "pkg:logger",
+      "provider": "pnpm-workspace",
+      "provider_version": "9.6.0",
+      "confidence": "exact",
+      "freshness": "current",
+      "valid_from": 100,
+      "valid_to": null,
+      "evidence": {
+        "artifact": "services/api/package.json",
+        "line": 12,
+        "snippet": "\"@acme/logger\": \"workspace:*\""
+      }
+    },
+    {
+      "id": "e:dep:billing->api",
+      "kind": "depends_on",
+      "from": "pkg:billing",
+      "to": "pkg:api",
+      "provider": "pnpm-workspace",
+      "provider_version": "9.6.0",
+      "confidence": "exact",
+      "freshness": "current",
+      "valid_from": 100,
+      "valid_to": null,
+      "evidence": {
+        "artifact": "services/billing/package.json",
+        "line": 12,
+        "snippet": "\"@acme/api\": \"workspace:*\""
+      }
+    },
+    {
+      "id": "e:dep:billing->database",
+      "kind": "depends_on",
+      "from": "pkg:billing",
+      "to": "pkg:database",
+      "provider": "pnpm-workspace",
+      "provider_version": "9.6.0",
+      "confidence": "exact",
+      "freshness": "current",
+      "valid_from": 100,
+      "valid_to": null,
+      "evidence": {
+        "artifact": "services/billing/package.json",
+        "line": 12,
+        "snippet": "\"@acme/database\": \"workspace:*\""
+      }
+    },
+    {
+      "id": "e:dep:billing->logger",
+      "kind": "depends_on",
+      "from": "pkg:billing",
+      "to": "pkg:logger",
+      "provider": "pnpm-workspace",
+      "provider_version": "9.6.0",
+      "confidence": "exact",
+      "freshness": "current",
+      "valid_from": 100,
+      "valid_to": null,
+      "evidence": {
+        "artifact": "services/billing/package.json",
+        "line": 12,
+        "snippet": "\"@acme/logger\": \"workspace:*\""
+      }
+    },
+    {
+      "id": "e:dep:auth->database",
+      "kind": "depends_on",
+      "from": "pkg:auth",
+      "to": "pkg:database",
+      "provider": "pnpm-workspace",
+      "provider_version": "9.6.0",
+      "confidence": "exact",
+      "freshness": "current",
+      "valid_from": 100,
+      "valid_to": null,
+      "evidence": {
+        "artifact": "packages/auth/package.json",
+        "line": 12,
+        "snippet": "\"@acme/database\": \"workspace:*\""
+      }
+    },
+    {
+      "id": "e:dep:auth->logger",
+      "kind": "depends_on",
+      "from": "pkg:auth",
+      "to": "pkg:logger",
+      "provider": "pnpm-workspace",
+      "provider_version": "9.6.0",
+      "confidence": "exact",
+      "freshness": "current",
+      "valid_from": 100,
+      "valid_to": null,
+      "evidence": {
+        "artifact": "packages/auth/package.json",
+        "line": 12,
+        "snippet": "\"@acme/logger\": \"workspace:*\""
+      }
+    },
+    {
+      "id": "e:dep:identity->database",
+      "kind": "depends_on",
+      "from": "pkg:identity",
+      "to": "pkg:database",
+      "provider": "pnpm-workspace",
+      "provider_version": "9.6.0",
+      "confidence": "exact",
+      "freshness": "current",
+      "valid_from": 100,
+      "valid_to": null,
+      "evidence": {
+        "artifact": "packages/identity/package.json",
+        "line": 12,
+        "snippet": "\"@acme/database\": \"workspace:*\""
+      }
+    },
+    {
+      "id": "e:dep:identity->logger",
+      "kind": "depends_on",
+      "from": "pkg:identity",
+      "to": "pkg:logger",
+      "provider": "pnpm-workspace",
+      "provider_version": "9.6.0",
+      "confidence": "exact",
+      "freshness": "current",
+      "valid_from": 100,
+      "valid_to": null,
+      "evidence": {
+        "artifact": "packages/identity/package.json",
+        "line": 12,
+        "snippet": "\"@acme/logger\": \"workspace:*\""
+      }
+    },
+    {
+      "id": "e:dep:database->logger",
+      "kind": "depends_on",
+      "from": "pkg:database",
+      "to": "pkg:logger",
+      "provider": "pnpm-workspace",
+      "provider_version": "9.6.0",
+      "confidence": "exact",
+      "freshness": "current",
+      "valid_from": 100,
+      "valid_to": null,
+      "evidence": {
+        "artifact": "packages/database/package.json",
+        "line": 12,
+        "snippet": "\"@acme/logger\": \"workspace:*\""
+      }
+    },
+    {
+      "id": "e:dep:ui->logger",
+      "kind": "depends_on",
+      "from": "pkg:ui",
+      "to": "pkg:logger",
+      "provider": "pnpm-workspace",
+      "provider_version": "9.6.0",
+      "confidence": "exact",
+      "freshness": "current",
+      "valid_from": 100,
+      "valid_to": null,
+      "evidence": {
+        "artifact": "packages/ui/package.json",
+        "line": 12,
+        "snippet": "\"@acme/logger\": \"workspace:*\""
+      }
+    },
+    {
+      "id": "e:imp:services/api/src/server.ts->services/api/src/routes/login.ts",
+      "kind": "imports",
+      "from": "file:services/api/src/server.ts",
+      "to": "file:services/api/src/routes/login.ts",
+      "provider": "tree-sitter",
+      "provider_version": "0.22.6",
+      "confidence": "exact",
+      "freshness": "current",
+      "valid_from": 100,
+      "valid_to": null,
+      "evidence": {
+        "artifact": "services/api/src/server.ts",
+        "line": 3,
+        "snippet": "import { x } from 'routes/login.ts'"
+      }
+    },
+    {
+      "id": "e:imp:services/api/src/routes/login.ts->packages/auth/src/index.ts",
+      "kind": "imports",
+      "from": "file:services/api/src/routes/login.ts",
+      "to": "file:packages/auth/src/index.ts",
+      "provider": "tree-sitter",
+      "provider_version": "0.22.6",
+      "confidence": "exact",
+      "freshness": "current",
+      "valid_from": 100,
+      "valid_to": null,
+      "evidence": {
+        "artifact": "services/api/src/routes/login.ts",
+        "line": 3,
+        "snippet": "import { x } from '../../../../packages/auth/src/index.ts'"
+      }
+    },
+    {
+      "id": "e:imp:services/api/src/routes/login.ts->packages/logger/src/index.ts",
+      "kind": "imports",
+      "from": "file:services/api/src/routes/login.ts",
+      "to": "file:packages/logger/src/index.ts",
+      "provider": "tree-sitter",
+      "provider_version": "0.22.6",
+      "confidence": "exact",
+      "freshness": "current",
+      "valid_from": 100,
+      "valid_to": null,
+      "evidence": {
+        "artifact": "services/api/src/routes/login.ts",
+        "line": 3,
+        "snippet": "import { x } from '../../../../packages/logger/src/index.ts'"
+      }
+    },
+    {
+      "id": "e:imp:packages/auth/src/index.ts->packages/auth/src/token.ts",
+      "kind": "imports",
+      "from": "file:packages/auth/src/index.ts",
+      "to": "file:packages/auth/src/token.ts",
+      "provider": "tree-sitter",
+      "provider_version": "0.22.6",
+      "confidence": "exact",
+      "freshness": "current",
+      "valid_from": 100,
+      "valid_to": null,
+      "evidence": {
+        "artifact": "packages/auth/src/index.ts",
+        "line": 3,
+        "snippet": "import { x } from 'token.ts'"
+      }
+    },
+    {
+      "id": "e:imp:packages/auth/src/index.ts->packages/auth/src/session.ts",
+      "kind": "imports",
+      "from": "file:packages/auth/src/index.ts",
+      "to": "file:packages/auth/src/session.ts",
+      "provider": "tree-sitter",
+      "provider_version": "0.22.6",
+      "confidence": "exact",
+      "freshness": "current",
+      "valid_from": 100,
+      "valid_to": null,
+      "evidence": {
+        "artifact": "packages/auth/src/index.ts",
+        "line": 3,
+        "snippet": "import { x } from 'session.ts'"
+      }
+    },
+    {
+      "id": "e:imp:packages/auth/src/token.ts->packages/database/src/client.ts",
+      "kind": "imports",
+      "from": "file:packages/auth/src/token.ts",
+      "to": "file:packages/database/src/client.ts",
+      "provider": "tree-sitter",
+      "provider_version": "0.22.6",
+      "confidence": "exact",
+      "freshness": "current",
+      "valid_from": 100,
+      "valid_to": null,
+      "evidence": {
+        "artifact": "packages/auth/src/token.ts",
+        "line": 3,
+        "snippet": "import { x } from '../../database/src/client.ts'"
+      }
+    },
+    {
+      "id": "e:imp:packages/auth/src/token.ts->packages/logger/src/index.ts",
+      "kind": "imports",
+      "from": "file:packages/auth/src/token.ts",
+      "to": "file:packages/logger/src/index.ts",
+      "provider": "tree-sitter",
+      "provider_version": "0.22.6",
+      "confidence": "exact",
+      "freshness": "current",
+      "valid_from": 100,
+      "valid_to": null,
+      "evidence": {
+        "artifact": "packages/auth/src/token.ts",
+        "line": 3,
+        "snippet": "import { x } from '../../logger/src/index.ts'"
+      }
+    },
+    {
+      "id": "e:imp:packages/auth/src/session.ts->packages/database/src/client.ts",
+      "kind": "imports",
+      "from": "file:packages/auth/src/session.ts",
+      "to": "file:packages/database/src/client.ts",
+      "provider": "tree-sitter",
+      "provider_version": "0.22.6",
+      "confidence": "exact",
+      "freshness": "current",
+      "valid_from": 100,
+      "valid_to": null,
+      "evidence": {
+        "artifact": "packages/auth/src/session.ts",
+        "line": 3,
+        "snippet": "import { x } from '../../database/src/client.ts'"
+      }
+    },
+    {
+      "id": "e:imp:packages/identity/src/index.ts->packages/identity/src/client.ts",
+      "kind": "imports",
+      "from": "file:packages/identity/src/index.ts",
+      "to": "file:packages/identity/src/client.ts",
+      "provider": "tree-sitter",
+      "provider_version": "0.22.6",
+      "confidence": "exact",
+      "freshness": "current",
+      "valid_from": 100,
+      "valid_to": null,
+      "evidence": {
+        "artifact": "packages/identity/src/index.ts",
+        "line": 3,
+        "snippet": "import { x } from 'client.ts'"
+      }
+    },
+    {
+      "id": "e:imp:packages/identity/src/client.ts->packages/database/src/pool.ts",
+      "kind": "imports",
+      "from": "file:packages/identity/src/client.ts",
+      "to": "file:packages/database/src/pool.ts",
+      "provider": "tree-sitter",
+      "provider_version": "0.22.6",
+      "confidence": "exact",
+      "freshness": "current",
+      "valid_from": 100,
+      "valid_to": null,
+      "evidence": {
+        "artifact": "packages/identity/src/client.ts",
+        "line": 3,
+        "snippet": "import { x } from '../../database/src/pool.ts'"
+      }
+    },
+    {
+      "id": "e:imp:packages/database/src/index.ts->packages/database/src/client.ts",
+      "kind": "imports",
+      "from": "file:packages/database/src/index.ts",
+      "to": "file:packages/database/src/client.ts",
+      "provider": "tree-sitter",
+      "provider_version": "0.22.6",
+      "confidence": "exact",
+      "freshness": "current",
+      "valid_from": 100,
+      "valid_to": null,
+      "evidence": {
+        "artifact": "packages/database/src/index.ts",
+        "line": 3,
+        "snippet": "import { x } from 'client.ts'"
+      }
+    },
+    {
+      "id": "e:imp:packages/database/src/client.ts->packages/database/src/pool.ts",
+      "kind": "imports",
+      "from": "file:packages/database/src/client.ts",
+      "to": "file:packages/database/src/pool.ts",
+      "provider": "tree-sitter",
+      "provider_version": "0.22.6",
+      "confidence": "exact",
+      "freshness": "current",
+      "valid_from": 100,
+      "valid_to": null,
+      "evidence": {
+        "artifact": "packages/database/src/client.ts",
+        "line": 3,
+        "snippet": "import { x } from 'pool.ts'"
+      }
+    },
+    {
+      "id": "e:imp:packages/database/src/pool.ts->packages/logger/src/index.ts",
+      "kind": "imports",
+      "from": "file:packages/database/src/pool.ts",
+      "to": "file:packages/logger/src/index.ts",
+      "provider": "tree-sitter",
+      "provider_version": "0.22.6",
+      "confidence": "exact",
+      "freshness": "current",
+      "valid_from": 100,
+      "valid_to": null,
+      "evidence": {
+        "artifact": "packages/database/src/pool.ts",
+        "line": 3,
+        "snippet": "import { x } from '../../logger/src/index.ts'"
+      }
+    },
+    {
+      "id": "e:imp:services/billing/src/invoice.ts->packages/database/src/client.ts",
+      "kind": "imports",
+      "from": "file:services/billing/src/invoice.ts",
+      "to": "file:packages/database/src/client.ts",
+      "provider": "tree-sitter",
+      "provider_version": "0.22.6",
+      "confidence": "exact",
+      "freshness": "current",
+      "valid_from": 100,
+      "valid_to": null,
+      "evidence": {
+        "artifact": "services/billing/src/invoice.ts",
+        "line": 3,
+        "snippet": "import { x } from '../../../packages/database/src/client.ts'"
+      }
+    },
+    {
+      "id": "e:imp:services/billing/src/invoice.ts->packages/logger/src/index.ts",
+      "kind": "imports",
+      "from": "file:services/billing/src/invoice.ts",
+      "to": "file:packages/logger/src/index.ts",
+      "provider": "tree-sitter",
+      "provider_version": "0.22.6",
+      "confidence": "exact",
+      "freshness": "current",
+      "valid_from": 100,
+      "valid_to": null,
+      "evidence": {
+        "artifact": "services/billing/src/invoice.ts",
+        "line": 3,
+        "snippet": "import { x } from '../../../packages/logger/src/index.ts'"
+      }
+    },
+    {
+      "id": "e:imp:apps/web/src/app.tsx->apps/web/src/login-page.tsx",
+      "kind": "imports",
+      "from": "file:apps/web/src/app.tsx",
+      "to": "file:apps/web/src/login-page.tsx",
+      "provider": "tree-sitter",
+      "provider_version": "0.22.6",
+      "confidence": "exact",
+      "freshness": "current",
+      "valid_from": 100,
+      "valid_to": null,
+      "evidence": {
+        "artifact": "apps/web/src/app.tsx",
+        "line": 3,
+        "snippet": "import { x } from 'login-page.tsx'"
+      }
+    },
+    {
+      "id": "e:imp:apps/web/src/login-page.tsx->packages/ui/src/index.ts",
+      "kind": "imports",
+      "from": "file:apps/web/src/login-page.tsx",
+      "to": "file:packages/ui/src/index.ts",
+      "provider": "tree-sitter",
+      "provider_version": "0.22.6",
+      "confidence": "exact",
+      "freshness": "current",
+      "valid_from": 100,
+      "valid_to": null,
+      "evidence": {
+        "artifact": "apps/web/src/login-page.tsx",
+        "line": 3,
+        "snippet": "import { x } from '../../../packages/ui/src/index.ts'"
+      }
+    },
+    {
+      "id": "e:imp:packages/ui/src/index.ts->packages/ui/src/button.tsx",
+      "kind": "imports",
+      "from": "file:packages/ui/src/index.ts",
+      "to": "file:packages/ui/src/button.tsx",
+      "provider": "tree-sitter",
+      "provider_version": "0.22.6",
+      "confidence": "exact",
+      "freshness": "current",
+      "valid_from": 100,
+      "valid_to": null,
+      "evidence": {
+        "artifact": "packages/ui/src/index.ts",
+        "line": 3,
+        "snippet": "import { x } from 'button.tsx'"
+      }
+    }
+  ]
+}

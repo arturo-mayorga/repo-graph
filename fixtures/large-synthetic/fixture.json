@@ -1,0 +1,10 @@
+{
+  "name": "synthetic-monorepo (240 pkgs / 2880 files)",
+  "scenarios": [
+    {
+      "file": "01-foundation-change.jsonl",
+      "name": "Foundation change",
+      "description": "A package the hubs sit on changes; 178 packages impacted, most only via a hub."
+    }
+  ]
+}
