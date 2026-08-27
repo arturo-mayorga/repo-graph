@@ -39,10 +39,12 @@ void GraphRenderSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
                                 registry.all_of<ecs::OnExplainedPath>(e);
         const auto*           d  = registry.try_get<ecs::Disc>(e);
         const auto*           sp = registry.try_get<ecs::Spacing>(e);
+        const auto*           pr = registry.try_get<ecs::Prominence>(e);
         const view::DiscShape shape{d ? d->radius : 0.0f, sp ? sp->room : 1e9f};
         return view::node_half(camera.zoom, detail, ext->half, shape,
                                view::dot_px_for(registry.all_of<ecs::Changed>(e),
-                                                registry.all_of<ecs::Impacted>(e), emphasised));
+                                                registry.all_of<ecs::Impacted>(e), emphasised,
+                                                pr ? pr->scale : 1.0f));
     };
 
     auto emit_edge = [&](entt::entity ent, const ecs::Endpoints& ends, const ecs::Style& style) {

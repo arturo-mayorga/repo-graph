@@ -20,16 +20,21 @@ NodeDetail node_detail(float zoom, float graph_text_scale) {
     return d;
 }
 
-float dot_px_for(bool changed, bool impacted, bool emphasised) {
+float dot_px_for(bool changed, bool impacted, bool emphasised, float prominence) {
     // The same golden-ratio scale the discs use: context, impacted, changed are r,
     // r*phi, r*phi^2. Three sizes on one geometric progression read as a family, and
     // what the eye should go to is unmistakably the largest.
     constexpr float kGolden = 1.6180339887f;
     constexpr float kBase   = 4.2f;
 
-    float r = kBase;
-    if (impacted) r = kBase * kGolden;
-    if (changed) r = kBase * kGolden * kGolden;
+    float step = 1.0f;
+    if (impacted) step = kGolden;
+    if (changed) step = kGolden * kGolden;
+
+    // Prominence rides the same ladder, so the two are combined by taking the larger
+    // rather than by multiplying: a changed hub is the loudest thing on screen either
+    // way, and phi^2 * phi^2 would make it seven times a leaf and swamp the picture.
+    float r = kBase * std::max(step, prominence);
     if (emphasised) r *= 1.25f;   // selected or hovered stays findable at any zoom
     return r;
 }

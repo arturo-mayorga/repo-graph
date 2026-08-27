@@ -30,7 +30,8 @@ NodeDetail node_detail(float zoom, float graph_text_scale);
 
 // Screen-space dot size, larger for what the user is meant to notice. At overview zoom
 // the blast radius should read as a constellation, not a uniform mesh.
-float dot_px_for(bool changed, bool impacted, bool emphasised);
+float dot_px_for(bool changed, bool impacted, bool emphasised,
+                 float prominence = 1.0f);
 
 // Rendered half-extent. `layout_half` is the footprint layout reserved, which never
 // changes with zoom; the drawn size collapses toward a dot of `dot_px` screen pixels.

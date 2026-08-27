@@ -92,12 +92,18 @@ private:
     void measure_spacing(ecs::World& world);
     void apply_drag(ecs::World& world);
     void relax(ecs::World& world, float dt);
+    void relax_rows(ecs::World& world, float dt);
     void capture_rest_lengths(ecs::World& world);
 
     LayoutParams params_;
     float        energy_     = 1e9f;
     int          depth_span_ = 1;
     bool         tree_mode_  = false;
+
+    // The y each depth row was placed at. A layered drag relaxes within the rows rather
+    // than freely: the rows are the depth reading, so a node that drifts off its own is
+    // no longer telling the truth about how far it sits from the change.
+    std::unordered_map<int, float> row_y_;
 
     // Live-relaxation state. `rest_` is captured when a drag starts, so the springs
     // pull toward what the structural layout produced rather than toward a guess.

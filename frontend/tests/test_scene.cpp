@@ -983,22 +983,90 @@ TEST(relaxation_separates_nodes_that_would_overlap) {
 }
 
 // The layered views have no containment to relax, so a drag there stays rigid and the
-// row structure the layout worked to produce is not shaken apart by springs.
-TEST(dragging_in_a_layered_view_does_not_relax) {
+// -- dragging in the layered views --------------------------------------------
+//
+// The radial relaxation is free in both axes because a containment tree has no
+// privileged direction. A layered graph does: the row is the depth reading. So the
+// same drag behaviour is offered -- neighbours give way, and a drop is not a pin --
+// but constrained, and the constraint is what these tests are about.
+
+// Dropping a node on top of its neighbour must not leave them overlapping. There is no
+// containment here to spring anything home, so reopening the gap is the whole job.
+TEST(dragging_a_layered_node_pushes_its_neighbours_aside) {
+    // Three packages depending on one shared base all land on the same row.
+    Snapshot s;
+    s.generation                  = 100;
+    s.session.baseline_generation = 100;
+    s.nodes = {mk_node("repo", NodeKind::Repository),
+               mk_node("pkg:base", NodeKind::Package, "repo"),
+               mk_node("pkg:p0", NodeKind::Package, "repo"),
+               mk_node("pkg:p1", NodeKind::Package, "repo"),
+               mk_node("pkg:p2", NodeKind::Package, "repo")};
+    for (int i = 0; i < 3; ++i) {
+        const std::string p = "pkg:p" + std::to_string(i);
+        s.edges.push_back(mk_edge("e:" + p, EdgeKind::DependsOn, p, "pkg:base"));
+    }
+    auto h = make(s);
+    h.settle();
+    view::fit_camera(h.world, {});
+
+    const entt::entity a    = h.node("pkg:p0");
+    const entt::entity mate = h.node("pkg:p1");
+    CHECK_EQ(h.registry().get<ecs::Depth>(a).value,
+             h.registry().get<ecs::Depth>(mate).value);
+
+    const Vec2 target = h.registry().get<ecs::Position>(mate).p;
+    const Vec2 from   = h.registry().get<ecs::Position>(a).p;
+
+    // Drop it straight on top of its neighbour.
+    h.begin_drag(h.camera().world_to_screen(from));
+    const Vec2 toward = (target - from) * (1.0f / 12.0f);
+    for (int i = 0; i < 12; ++i) h.drag_by(toward * h.camera().zoom);
+    h.end_drag();
+    h.tick(1.0f / 60.0f, 300);
+
+    const float sep  = std::abs(h.registry().get<ecs::Position>(a).p.x -
+                                h.registry().get<ecs::Position>(mate).p.x);
+    const float want = h.registry().get<ecs::Extent>(a).half.x +
+                       h.registry().get<ecs::Extent>(mate).half.x;
+    CHECK(sep > want * 0.8f);
+}
+
+// A node dragged off its row comes back to it. Depth is the one thing the layered view
+// asserts, and a node parked between rows is claiming a distance from the change that
+// is not true.
+TEST(a_layered_node_returns_to_its_row_after_a_drop) {
     auto h = make();
     h.settle();
     view::fit_camera(h.world, {});
 
-    const entt::entity b = h.node("pkg:b");
-    const entt::entity a = h.node("pkg:a");
-    const Vec2 before_a  = h.registry().get<ecs::Position>(a).p;
+    const entt::entity b   = h.node("pkg:b");
+    const float        row = h.registry().get<ecs::Position>(b).p.y;
 
     h.begin_drag(h.camera().world_to_screen(h.registry().get<ecs::Position>(b).p));
-    for (int i = 0; i < 10; ++i) h.drag_by(Vec2{6.0f, 0.0f});
+    for (int i = 0; i < 12; ++i) h.drag_by(Vec2{0.0f, 14.0f});
     h.end_drag();
-    h.tick(1.0f / 60.0f, 60);
+    h.tick(1.0f / 60.0f, 300);
 
-    CHECK(length(h.registry().get<ecs::Position>(a).p - before_a) < 1.0f);
+    CHECK(std::abs(h.registry().get<ecs::Position>(b).p.y - row) < 2.0f);
+}
+
+// Horizontal intent survives. Springing x home as well would simply undo the drag, and
+// the user moved the node there on purpose.
+TEST(a_layered_drop_keeps_where_it_was_put_horizontally) {
+    auto h = make();
+    h.settle();
+    view::fit_camera(h.world, {});
+
+    const entt::entity b      = h.node("pkg:b");
+    const float        before = h.registry().get<ecs::Position>(b).p.x;
+
+    h.begin_drag(h.camera().world_to_screen(h.registry().get<ecs::Position>(b).p));
+    for (int i = 0; i < 12; ++i) h.drag_by(Vec2{9.0f, 0.0f});
+    h.end_drag();
+    h.tick(1.0f / 60.0f, 300);
+
+    CHECK(h.registry().get<ecs::Position>(b).p.x > before + 20.0f);
 }
 
 // Pausing mid-drag is not a release.
@@ -1114,4 +1182,63 @@ TEST(a_collapsed_node_holds_its_screen_size) {
         const Vec2 h = view::node_half(zoom, d, half, {0.0f, 1e9f}, dot);
         CHECK(std::abs(h.y * zoom - dot) < 0.5f);
     }
+}
+
+// -- size carries meaning in the box views ------------------------------------
+//
+// The radial view sizes a disc by what it holds, which is what makes its overview
+// readable before a single label is. The box views had no equivalent: a footprint is
+// whatever the name needs, so a package six others import was drawn exactly like one
+// nothing imports, and blast radius -- the thing the product exists to show -- was
+// invisible until something changed.
+
+// A hub is bigger than a leaf, on the golden-ratio ladder the discs already use.
+TEST(a_hub_package_is_drawn_larger_than_a_leaf) {
+    Snapshot s;
+    s.generation                  = 100;
+    s.session.baseline_generation = 100;
+    s.nodes = {mk_node("repo", NodeKind::Repository),
+               mk_node("pkg:hub", NodeKind::Package, "repo"),
+               mk_node("pkg:leaf", NodeKind::Package, "repo")};
+    // Six of eight packages depend on the hub; nothing depends on the leaf.
+    for (int i = 0; i < 6; ++i) {
+        const std::string p = "pkg:d" + std::to_string(i);
+        s.nodes.push_back(mk_node(p, NodeKind::Package, "repo"));
+        s.edges.push_back(mk_edge("e:" + p, EdgeKind::DependsOn, p, "pkg:hub"));
+    }
+    auto h = make(s);
+    h.settle();
+
+    const float hub  = h.registry().get<ecs::Prominence>(h.node("pkg:hub")).scale;
+    const float leaf = h.registry().get<ecs::Prominence>(h.node("pkg:leaf")).scale;
+    CHECK(hub > leaf);
+    CHECK_EQ(leaf, 1.0f);
+
+    // The footprint follows, so the layout reserves the room the bigger box needs
+    // rather than letting it grow through its neighbours at draw time.
+    CHECK(h.registry().get<ecs::Extent>(h.node("pkg:hub")).half.x >
+          h.registry().get<ecs::Extent>(h.node("pkg:leaf")).half.x);
+}
+
+// The filesystem view is left alone. Its discs are already sized by what they hold, and
+// scaling the box underneath them would count the same thing twice.
+TEST(the_filesystem_view_does_not_scale_boxes_by_prominence) {
+    auto h = make_filesystem();
+    for (auto [e, prom] : h.registry().view<const ecs::Prominence>().each()) {
+        CHECK_EQ(prom.scale, 1.0f);
+    }
+}
+
+// Prominence and impact ride the same ladder, so they combine by taking the larger.
+// Multiplying would make a changed hub seven times a leaf and swamp the picture.
+TEST(prominence_and_impact_do_not_multiply) {
+    constexpr float phi = 1.6180339887f;
+    const float leaf       = view::dot_px_for(false, false, false, 1.0f);
+    const float changed    = view::dot_px_for(true, true, false, 1.0f);
+    const float hub        = view::dot_px_for(false, false, false, phi * phi);
+    const float changed_hub = view::dot_px_for(true, true, false, phi * phi);
+
+    CHECK(hub > leaf);
+    CHECK_EQ(changed_hub, changed);              // already at the top of the ladder
+    CHECK(changed_hub < leaf * phi * phi * phi); // never compounds
 }

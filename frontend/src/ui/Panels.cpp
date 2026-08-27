@@ -1055,6 +1055,8 @@ void draw_graph_overlay(ecs::World& world, ImDrawList* dl) {
             const auto* imp     = reg.try_get<ecs::Impacted>(ent);
             const auto* disc    = reg.try_get<ecs::Disc>(ent);
             const auto* space   = reg.try_get<ecs::Spacing>(ent);
+            const auto* prom    = reg.try_get<ecs::Prominence>(ent);
+            const float pscale  = prom ? prom->scale : 1.0f;
 
             // What the user is pointing at is always named, however crowded it is.
             const bool asked_for = reg.all_of<ecs::Selected>(ent) ||
@@ -1065,7 +1067,7 @@ void draw_graph_overlay(ecs::World& world, ImDrawList* dl) {
                                              space ? space->room : 1e9f};
             const Vec2  half = rgv::view::node_half(
                 cam.zoom, detail, ext.half, shape,
-                rgv::view::dot_px_for(changed, imp != nullptr, false));
+                rgv::view::dot_px_for(changed, imp != nullptr, false, pscale));
             const float morph  = rgv::view::disc_morph(detail, shape, ext.half);
             const bool  inside = rgv::view::label_belongs_inside(morph);
 
@@ -1073,7 +1075,10 @@ void draw_graph_overlay(ecs::World& world, ImDrawList* dl) {
             if (changed) col = t.changed;
             else if (imp) col = impact_color(imp->distance);
 
-            float px    = inside ? detail.font_px : outside_px;
+            // A prominent node's box is bigger because it matters, so its name grows
+            // with it. Leaving the font alone would turn the extra size into padding,
+            // which reads as a rendering accident rather than as emphasis.
+            float px    = inside ? detail.font_px * pscale : outside_px;
             float alpha = 1.0f;
 
             if (inside) {
@@ -1234,7 +1239,9 @@ void draw_hover_card(ecs::World& world) {
     const rgv::view::NodeDetail detail = rgv::view::node_detail(ui.camera.zoom, vs.graph_text_scale);
     const Vec2            half   = rgv::view::render_half(ui.camera.zoom, detail, ext->half,
         rgv::view::dot_px_for(ui.world.registry.all_of<ecs::Changed>(ent),
-                        ui.world.registry.all_of<ecs::Impacted>(ent), true));
+                        ui.world.registry.all_of<ecs::Impacted>(ent), true,
+                        [&] { const auto* p = ui.world.registry.try_get<ecs::Prominence>(ent);
+                              return p ? p->scale : 1.0f; }()));
     const Vec2 anchor = ui.camera.world_to_screen(pos->p);
 
     // The card is chrome, not graph: it is an ImGui surface and follows the UI scale,

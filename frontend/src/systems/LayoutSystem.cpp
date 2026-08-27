@@ -166,11 +166,13 @@ void LayoutSystem::order_and_place(ecs::World& world) {
 
     // Place: rows are centred on x = 0, and depth 0 sits at the bottom so impact
     // reads upward, the way the spec draws it.
+    row_y_.clear();
     for (std::size_t l = 0; l < layers.size(); ++l) {
         const auto& row   = layers[l];
         const float total = row_width(row);
 
         const float y = -static_cast<float>(l) * layer_gap;
+        row_y_[static_cast<int>(l)] = y;
         float       x = -total * 0.5f;
         for (auto e : row) {
             const auto* ext = reg.try_get<ecs::Extent>(e);
@@ -596,6 +598,85 @@ void LayoutSystem::apply_drag(ecs::World& world) {
 // velocity. Velocity is what makes a force layout oscillate and drift, and drift is the
 // thing this codebase spent a rewrite getting rid of. Without it the graph gives way
 // under the drag and comes to rest, rather than jiggling indefinitely.
+// Live relaxation for the layered views, constrained to the rows.
+//
+// The radial relaxation is free in both axes because a containment tree has no
+// privileged direction. A layered graph does: the row IS the depth reading, and a node
+// that drifts off its own row stops telling the truth about how many hops it sits from
+// the change. So y is sprung back to the row and only x is free.
+//
+// That also decides what "settling" means here. There are no containment springs to
+// pull a dropped node home -- and pulling it back to its packed slot would simply undo
+// the drag -- so the horizontal arrangement the user made is kept, and the relaxation's
+// whole job is to reopen the gaps their drop closed.
+void LayoutSystem::relax_rows(ecs::World& world, float dt) {
+    auto&       reg  = world.registry;
+    const auto& drag = world.resource<ecs::DragState>();
+
+    const entt::entity held = drag.active ? drag.node : entt::null;
+    auto pinned_fast = [&](entt::entity e) {
+        return e == held || reg.all_of<ecs::Pinned>(e);
+    };
+
+    const float step = std::clamp(dt * 60.0f, 0.25f, 2.0f);
+
+    // Rows, in the order they are drawn. Separation is a one-dimensional problem once
+    // the nodes are sorted, so this stays linear rather than all-pairs.
+    std::unordered_map<int, std::vector<entt::entity>> rows;
+    for (auto [e, depth] : reg.view<const ecs::Depth>().each()) {
+        if (reg.all_of<ecs::Position>(e)) rows[depth.value].push_back(e);
+    }
+
+    for (int iter = 0; iter < params_.relax_iters; ++iter) {
+        for (auto& [depth, row] : rows) {
+            std::sort(row.begin(), row.end(), [&](entt::entity a, entt::entity b) {
+                return reg.get<ecs::Position>(a).p.x < reg.get<ecs::Position>(b).p.x;
+            });
+
+            // -- separation: no two boxes in a row may overlap
+            for (std::size_t i = 0; i + 1 < row.size(); ++i) {
+                const entt::entity a = row[i], b = row[i + 1];
+                auto& pa = reg.get<ecs::Position>(a);
+                auto& pb = reg.get<ecs::Position>(b);
+
+                const auto* ea = reg.try_get<ecs::Extent>(a);
+                const auto* eb = reg.try_get<ecs::Extent>(b);
+                const float want = (ea ? ea->half.x : 50.0f) + (eb ? eb->half.x : 50.0f) +
+                                   params_.node_gap;
+
+                const float gap = pb.p.x - pa.p.x;
+                if (gap >= want) continue;
+
+                // Split the correction between them, unless one is held: the node under
+                // the cursor must not be shoved out from under it.
+                const float push = (want - gap) * params_.relax_repel * step;
+                const bool  fa   = pinned_fast(a), fb = pinned_fast(b);
+                if (fa && fb) continue;
+                if (fa)      pb.p.x += push;
+                else if (fb) pa.p.x -= push;
+                else { pa.p.x -= push * 0.5f; pb.p.x += push * 0.5f; }
+            }
+
+            // -- the row itself: y springs home, so a drop lands back on its depth
+            auto it = row_y_.find(depth);
+            if (it == row_y_.end()) continue;
+            for (auto e : row) {
+                if (pinned_fast(e)) continue;
+                auto& p = reg.get<ecs::Position>(e);
+                p.p.y += (it->second - p.p.y) * std::min(1.0f, params_.relax_spring * step);
+            }
+        }
+    }
+
+    relax_motion_ = 0.0f;
+    for (auto [e, pos, target] : reg.view<const ecs::Position, ecs::LayoutTarget>().each()) {
+        relax_motion_ = std::max(relax_motion_, length(pos.p - target.p));
+    }
+    for (auto [e, pos, target] : reg.view<const ecs::Position, ecs::LayoutTarget>().each()) {
+        target.p = pos.p;
+    }
+}
+
 void LayoutSystem::relax(ecs::World& world, float dt) {
     auto&       reg  = world.registry;
     const auto& drag = world.resource<ecs::DragState>();
@@ -715,7 +796,7 @@ void LayoutSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
     // until the graph is quiet, so a dropped node travels somewhere that belongs
     // instead of being frozen where the cursor happened to leave it.
     const auto& drag = world.resource<ecs::DragState>();
-    if (drag.active && !relaxing_ && tree_mode_) {
+    if (drag.active && !relaxing_) {
         capture_rest_lengths(world);
         relaxing_      = true;
         relax_motion_  = 1e9f;
@@ -725,7 +806,8 @@ void LayoutSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
     if (relaxing_) {
         relax_elapsed_ += frame.dt;
         apply_drag(world);
-        relax(world, frame.dt);
+        if (tree_mode_) relax(world, frame.dt);
+        else relax_rows(world, frame.dt);
 
         // Held open while the cursor is down; afterwards it ends when the motion dies
         // away, with a hard cap so a pathological graph cannot relax forever.

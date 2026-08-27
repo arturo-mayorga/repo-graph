@@ -60,6 +60,16 @@ struct LayoutTarget { Vec2 p; };
 // never reflow the graph. Owner: SceneSyncSystem.
 struct Extent { Vec2 half{54.0f, 17.0f}; };
 
+// How much of the repository depends on this node, as a size multiplier on the golden
+// ratio: 1, phi, phi^2. The box views have no equivalent of the radial view's disc
+// radius -- their footprint is whatever their name needs -- so without this a hub that
+// half the repository imports is drawn exactly like a leaf nothing depends on, and the
+// blast radius the product exists to show is invisible until something changes.
+//
+// Scales up only. Shrinking below the text's own footprint would trade legibility for
+// a distinction the colour and the layout already carry. Owner: SceneSyncSystem.
+struct Prominence { float scale = 1.0f; };
+
 // Dependency depth: 0 = depends on nothing else in view. Owner: LayoutSystem.
 struct Depth { int value = 0; };
 

@@ -33,6 +33,33 @@ std::string secondary_line(const Node& n, ecs::ViewMode mode) {
     return n.path;
 }
 
+
+// Size on the golden-ratio ladder, by how much of the repository depends on this node.
+//
+// The radial view sizes a disc by what it holds, which is what makes a Gource frame
+// readable before you have read a single label. The box views had no equivalent: their
+// footprint is whatever their name needs, so a package six others import was drawn the
+// same as one nothing imports. `dependent_fraction` is the same number the relevance
+// filter already runs on, so this adds a reading of the graph rather than a new measure
+// of it.
+//
+// The filesystem view is left alone -- its discs already carry this, and scaling the
+// box underneath them would double-count.
+float prominence_of(const ecs::World& world, const NodeId& id) {
+    constexpr float kGolden = 1.6180339887f;
+
+    const auto& view = world.resource<ecs::ViewSettings>();
+    if (view.mode == ecs::ViewMode::Filesystem) return 1.0f;
+
+    const auto& spec = world.resource<ecs::DerivedState>().specificity;
+    if (spec.population() <= 1) return 1.0f;
+
+    const float frac = spec.dependent_fraction(id);
+    if (frac >= 0.55f) return kGolden * kGolden;   // most of the repository depends on it
+    if (frac >= 0.20f) return kGolden;             // a shared dependency, not a hub
+    return 1.0f;
+}
+
 } // namespace
 
 void SceneSyncSystem::setup(ecs::World& world) {
@@ -232,8 +259,10 @@ void SceneSyncSystem::upsert_node(ecs::World& world, const Node& n) {
 
     const std::string sub = secondary_line(n, view.mode);
     registry.emplace_or_replace<ecs::Label>(ent, ecs::Label{n.name, sub});
+    const float prom = prominence_of(world, n.id);
+    registry.emplace_or_replace<ecs::Prominence>(ent, ecs::Prominence{prom});
     registry.emplace_or_replace<ecs::Extent>(
-        ent, ecs::Extent{view::text_extent(n.kind, n.name, sub, view.graph_text_scale)});
+        ent, ecs::Extent{view::text_extent(n.kind, n.name, sub, view.graph_text_scale) * prom});
     registry.emplace_or_replace<ecs::FreshnessState>(ent, ecs::FreshnessState{n.freshness});
 }
 
@@ -360,7 +389,9 @@ void SceneSyncSystem::refresh_extents(ecs::World& world) {
     const auto& view = world.resource<ecs::ViewSettings>();
     for (auto [ent, ref, label, ext] :
          world.registry.view<const ecs::NodeRef, const ecs::Label, ecs::Extent>().each()) {
-        ext.half = view::text_extent(ref.kind, label.text, label.sub, view.graph_text_scale);
+        const float prom = prominence_of(world, ref.id);
+        world.registry.emplace_or_replace<ecs::Prominence>(ent, ecs::Prominence{prom});
+        ext.half = view::text_extent(ref.kind, label.text, label.sub, view.graph_text_scale) * prom;
     }
     // Boxes changed size, so the row packing layout computed is now wrong.
     world.resource<ecs::SceneRequests>().relayout = true;

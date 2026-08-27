@@ -75,6 +75,25 @@ stopped drifting, and Gource's own force-based spreading was replaced with struc
 packing for the same reason. Rows run so a package depending on nothing sits at the
 bottom and its dependents stack above — impact rises, the way the spec draws it.
 
+Node size means the same thing in every view: how much depends on this. The radial view
+says it with a disc radius, the box views with a `Prominence` multiplier on the golden
+ratio (1, φ, φ²) applied to the footprint and to the label inside it. Without it a box
+view sizes a node by the length of its name, so a package six others import is drawn
+like one nothing imports and blast radius is invisible until something changes. It scales
+up only — shrinking below what the text needs would trade legibility for a distinction
+colour and layout already carry — and it is off in the filesystem view, whose discs
+already carry it.
+
+A drag switches on a live relaxation and releasing does not switch it off: it runs until
+the graph is quiet, so a dropped node travels somewhere that belongs instead of freezing
+under the cursor. Dropping never pins. The two layouts relax differently because they
+mean different things. A containment tree has no privileged direction, so the radial
+relaxation is free in both axes, springs along containment holding the distances the
+packing chose. A layered graph does have one — the row *is* the depth reading — so there
+`relax_rows` springs y back to the row and leaves x alone: neighbours slide apart to
+reopen the gap a drop closed, and the horizontal position the user chose is kept, because
+springing x home too would simply undo the drag.
+
 Text is drawn through ImGui's draw list rather than the GL renderer: a glyph atlas is a
 subsystem, and ImGui already ships one. Nodes, edges, and arrowheads are three
 instanced draw calls with rounded-rectangle SDFs in the fragment shader.
