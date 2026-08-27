@@ -20,6 +20,7 @@ public:
 private:
     void rebuild(ecs::World& world);
     void incremental(ecs::World& world);
+    void revisit(ecs::World& world);
     void refresh_extents(ecs::World& world);
 
     bool node_visible(const ecs::World& world, const Node& n) const;

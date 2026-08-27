@@ -95,6 +95,22 @@ like one nothing imports. It scales up only — shrinking below what the text ne
 trade legibility for a distinction colour and layout already carry — and it is off in the
 filesystem view, whose discs already carry it.
 
+Layout runs in full only when the user asks for it — the `Re-layout` button, a view-mode
+change, or a fresh source. Everything else is a delta. A filter moving is a `revisit`: the
+visibility predicate is re-tested against every node and only the difference is applied,
+so entities that stay visible keep their positions. A node that arrives is tagged
+`Unplaced`, and layout seats it on the ring its reach earns at the circular mean of the
+neighbours already on screen, then leaves it to the relaxation. A node that leaves moves
+nothing at all.
+
+This matters because the controls that change visibility are *dragged*. Every filter used
+to set `rebuild`, which clears the registry and reseeds every position from scratch, so
+the relevance slider tore the graph down and rebuilt it on every frame it moved. Even a
+plain relayout is too much: ring membership and radii are global, so one node appearing
+moves every other node. Resizing text is the same shape of problem and gets the same
+answer — `resettle` wakes the relaxation to push newly-overlapping neighbours apart rather
+than rearranging anything.
+
 A drag switches on a live relaxation and releasing does not switch it off: it runs until
 the graph is quiet, so a dropped node travels somewhere that belongs instead of freezing
 under the cursor. Dropping never pins. The two layouts relax differently because they mean

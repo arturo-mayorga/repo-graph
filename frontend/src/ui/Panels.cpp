@@ -269,6 +269,22 @@ void draw_top_bar(ecs::World& world) {
     if (ImGui::Button("Fit")) ui.cmd.push(ecs::FitView{});
     flow.placed();
 
+    // A full layout moves every node on screen, so it is something the user asks for
+    // rather than something that happens to them. Nodes coming and going are seated
+    // where they belong and left to the relaxation instead.
+    flow.item(button_w("Re-layout"));
+    if (ImGui::Button("Re-layout")) {
+        ui.world.resource<ecs::SceneRequests>().relayout = true;
+        ui.cmd.push(ecs::FitView{});
+    }
+    flow.placed();
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Lay the whole graph out again from scratch.\n\n"
+                          "Filters and edits place what arrives and leave the rest\n"
+                          "where it is, so the picture can drift from what a clean\n"
+                          "layout would give you. This is the reset.");
+    }
+
     flow.item(button_w("Focus impact"));
     if (ImGui::Button("Focus impact")) {
         std::vector<NodeId> ids;
@@ -303,7 +319,7 @@ void draw_top_bar(ecs::World& world) {
     };
     for (const auto& tg : toggles) {
         flow.item(checkbox_w(tg.name));
-        if (ImGui::Checkbox(tg.name, tg.value)) ui.world.resource<ecs::SceneRequests>().rebuild = true;
+        if (ImGui::Checkbox(tg.name, tg.value)) ui.world.resource<ecs::SceneRequests>().revisit = true;
         flow.placed();
         if (tg.tip && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tg.tip);
     }
@@ -314,7 +330,7 @@ void draw_top_bar(ecs::World& world) {
         ImGui::SetNextItemWidth(w);
         if (ImGui::SliderInt("depth", &f.max_impact_depth, 1, 12)) {
             
-            if (!f.show_unaffected) ui.world.resource<ecs::SceneRequests>().rebuild = true;
+            if (!f.show_unaffected) ui.world.resource<ecs::SceneRequests>().revisit = true;
         }
         flow.placed();
 
@@ -324,8 +340,9 @@ void draw_top_bar(ecs::World& world) {
         flow.item(w);
         ImGui::SetNextItemWidth(w);
         if (ImGui::SliderFloat("relevance", &f.min_relevance, 0.0f, 1.0f, "%.2f")) {
-            // Visibility depends on this now, not just emphasis.
-            ui.world.resource<ecs::SceneRequests>().rebuild = true;
+            // Visibility depends on this now, not just emphasis. A revisit rather than
+            // a rebuild: this is dragged, so what stays visible must not move.
+            ui.world.resource<ecs::SceneRequests>().revisit = true;
         }
         flow.placed();
         if (ImGui::IsItemHovered()) {
@@ -346,7 +363,7 @@ void draw_top_bar(ecs::World& world) {
         std::snprintf(buf, sizeof(buf), "%s", f.text.c_str());
         if (ImGui::InputTextWithHint("##search", "filter by name or path", buf, sizeof(buf))) {
             f.text              = buf;
-            ui.world.resource<ecs::SceneRequests>().rebuild = true;
+            ui.world.resource<ecs::SceneRequests>().revisit = true;
         }
         flow.placed();
     }

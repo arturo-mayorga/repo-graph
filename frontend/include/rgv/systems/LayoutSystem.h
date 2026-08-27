@@ -94,6 +94,7 @@ private:
     void apply_drag(ecs::World& world);
     void relax(ecs::World& world, float dt);
     void relax_rings(ecs::World& world, float dt);
+    bool seat_newcomers(ecs::World& world);
     void capture_rest_lengths(ecs::World& world);
 
     LayoutParams params_;

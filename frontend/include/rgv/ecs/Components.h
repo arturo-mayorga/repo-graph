@@ -108,6 +108,12 @@ struct Disc {
 };
 
 // The user dragged this node. Layout leaves it alone. Owner: DragSystem.
+// A node that has appeared but has not been given a place yet. Layout claims these,
+// seats them next to whatever they are connected to, and clears the tag -- which is how
+// a filter change costs one node's placement instead of the whole graph's.
+// Written by SceneSyncSystem on creation, cleared by LayoutSystem.
+struct Unplaced {};
+
 struct Pinned {};
 
 // -- presentation -------------------------------------------------------------

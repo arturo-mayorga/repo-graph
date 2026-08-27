@@ -226,10 +226,29 @@ struct SettingsResource {
 // Set by any system that needs the scene rebuilt or refitted before the next frame.
 // Distinct from CommandQueue: these are idempotent flags, not an ordered log.
 struct SceneRequests {
-    bool rebuild         = false;  // the visible node set may have changed
+    // Teardown. The visible node set is a function of the view MODE, so switching mode
+    // is not a delta -- nothing on screen survives it. Everything else should not be
+    // doing this: clearing the registry throws away every position, and doing it while
+    // a slider is being dragged is what jitter looks like.
+    bool rebuild = false;
+
+    // The filters moved. Re-evaluate what is visible and add or drop the difference,
+    // keeping every entity that survives -- and with it, where it already is.
+    bool revisit = false;
+
     bool refresh_extents = false;  // text scale moved; node boxes need resizing
-    bool relayout        = false;  // entities were created or destroyed
-    bool refit           = false;
+
+    // Recompute the whole layout from scratch. Every node moves, so this is for when
+    // the user asks for it and for a mode change -- never for nodes coming and going.
+    // Newcomers are placed where they belong and left to the relaxation instead.
+    bool relayout = false;
+
+    // Something changed the size of what is already placed. Nothing needs to move to a
+    // new home, but neighbours may now overlap, so the relaxation is woken to push them
+    // apart -- which is a nudge, not a rearrangement.
+    bool resettle = false;
+
+    bool refit = false;
 };
 
 } // namespace rgv::ecs

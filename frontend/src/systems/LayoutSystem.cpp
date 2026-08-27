@@ -860,12 +860,112 @@ void LayoutSystem::relax(ecs::World& world, float dt) {
     }
 }
 
+// Seat nodes that have just appeared, without disturbing anything already placed.
+//
+// A full layout is the honest answer to "where does everything go", but it is the wrong
+// answer to "where does THIS go": it moves every node on screen, and a filter the user
+// is dragging asks the question many times a second. So a newcomer is dropped where it
+// belongs -- on its ring, at the angle of whatever it is connected to -- and the
+// relaxation takes it from there, which is the same mechanism a drag already uses.
+//
+// Returns whether anything was seated, so the caller can start the relaxation.
+bool LayoutSystem::seat_newcomers(ecs::World& world) {
+    auto& reg = world.registry;
+
+    std::vector<entt::entity> fresh;
+    for (auto [e] : reg.view<ecs::Unplaced>().each()) fresh.push_back(e);
+    if (fresh.empty()) return false;
+
+    // A containment layout has no meaningful "near": a file belongs on its parent's
+    // orbit, and the orbits are packed as a whole. Repacking the tree is cheap and
+    // stable, so the tree view keeps taking the full path.
+    if (tree_mode_) {
+        reset(world);
+        return false;
+    }
+
+    const auto& reach = world.resource<ecs::DerivedState>().reach;
+
+    // Neighbours first: an arriving node almost always has an edge to something that is
+    // already on screen, and that is the only cue worth having.
+    std::unordered_map<std::uint32_t, std::vector<entt::entity>> nbrs;
+    for (auto [ent, ref, ends] : reg.view<const ecs::EdgeRef, const ecs::Endpoints>().each()) {
+        if (ref.kind == EdgeKind::Contains) continue;
+        nbrs[to_raw(ends.from)].push_back(ends.to);
+        nbrs[to_raw(ends.to)].push_back(ends.from);
+    }
+
+    // The rings that exist, so a newcomer joins one rather than inventing its own.
+    int inner = 0, outer = 0;
+    for (const auto& [idx, r] : ring_radius_) {
+        inner = std::min(inner, idx);
+        outer = std::max(outer, idx);
+    }
+
+    for (auto e : fresh) {
+        const auto* ref = reg.try_get<ecs::NodeRef>(e);
+        if (!ref) { reg.remove<ecs::Unplaced>(e); continue; }
+
+        // Which ring: the same reach bucket the layout would have given it, expressed
+        // against the rings that are actually on screen.
+        const int   widest = std::max(1, reach.widest());
+        const float t = 1.0f - std::sqrt(static_cast<float>(reach.dependents(ref->id)) /
+                                         static_cast<float>(widest));
+        const int   span = std::max(0, outer - inner);
+        const int   idx  = std::clamp(inner + static_cast<int>(std::lround(
+                                          t * static_cast<float>(span))), inner, outer);
+
+        auto rit = ring_radius_.find(idx);
+        const float radius = rit == ring_radius_.end() ? 0.0f : rit->second;
+
+        // Which angle: the circular mean of the neighbours already placed, so it lands
+        // beside what it relates to instead of somewhere it has to travel from.
+        float sx = 0.0f, sy = 0.0f;
+        auto  it = nbrs.find(to_raw(e));
+        if (it != nbrs.end()) {
+            for (auto nb : it->second) {
+                if (nb == e || reg.all_of<ecs::Unplaced>(nb)) continue;
+                const auto* np = reg.try_get<ecs::Position>(nb);
+                if (!np || (np->p.x == 0.0f && np->p.y == 0.0f)) continue;
+                const float a = std::atan2(np->p.y, np->p.x);
+                sx += std::cos(a);
+                sy += std::sin(a);
+            }
+        }
+        // Nothing to go beside: spread on the node's own id rather than piling every
+        // orphan onto angle zero.
+        float angle;
+        if (sx == 0.0f && sy == 0.0f) {
+            std::uint32_t h = 2166136261u;
+            for (unsigned char c : ref->id) { h ^= c; h *= 16777619u; }
+            angle = 6.2831853f * static_cast<float>(h % 4096u) / 4096.0f;
+        } else {
+            angle = std::atan2(sy, sx);
+        }
+
+        const Vec2 at{std::cos(angle) * radius, std::sin(angle) * radius};
+        reg.emplace_or_replace<ecs::Ring>(e, ecs::Ring{idx, radius, angle});
+        reg.emplace_or_replace<ecs::Position>(e, ecs::Position{at});
+        reg.emplace_or_replace<ecs::LayoutTarget>(e, ecs::LayoutTarget{at});
+        reg.remove<ecs::Unplaced>(e);
+    }
+    return true;
+}
+
 void LayoutSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
     auto& requests = world.resource<ecs::SceneRequests>();
     if (requests.relayout) {
         reset(world);
         requests.relayout = false;
+        world.registry.clear<ecs::Unplaced>();
+    } else if ((seat_newcomers(world) | requests.resettle) && !relaxing_ && !tree_mode_) {
+        // Let the arrivals settle against what is already there, the same way a drop
+        // does. Without this they sit exactly on top of whatever shares their angle.
+        relaxing_      = true;
+        relax_motion_  = 1e9f;
+        relax_elapsed_ = 0.0f;
     }
+    requests.resettle = false;
 
     auto&       stats = world.resource<ecs::SceneStats>();
     const auto& view  = world.resource<ecs::ViewSettings>();

@@ -5,6 +5,7 @@
 #include "rgv/model/GraphStore.h"
 #include "rgv/view/SemanticZoom.h"
 
+#include <vector>
 #include <algorithm>
 #include <cctype>
 
@@ -85,10 +86,45 @@ void SceneSyncSystem::run(ecs::World& world, const ecs::FrameContext&) {
         return;
     }
 
+    if (requests.revisit) {
+        revisit(world);
+        requests.revisit = false;
+    }
+
     if (store.dirty().any()) {
         incremental(world);
         store.clear_dirty();
     }
+}
+
+// The filters moved. Every node is re-tested and the difference applied, which is O(N)
+// predicate calls and no allocation -- against a rebuild, which destroys the registry
+// and reseeds every position from scratch. Dragging the relevance slider does this on
+// every frame it moves, so what survives has to survive untouched.
+void SceneSyncSystem::revisit(ecs::World& world) {
+    const auto& store = world.resource<GraphStore>();
+    auto&       index = world.resource<ecs::EntityIndex>();
+
+    std::vector<NodeId> gone;
+    for (const auto& [id, n] : store.nodes()) {
+        const bool visible = node_visible(world, n);
+        const bool present = index.node(id) != entt::null;
+        if (visible && !present) upsert_node(world, n);
+        else if (!visible && present) gone.push_back(id);
+    }
+    for (const auto& id : gone) drop_node(world, id);
+
+    // Edges follow: one may have become visible because its endpoint just arrived.
+    std::vector<EdgeId> dead;
+    for (const auto& [id, e] : store.edges()) {
+        const bool visible = edge_visible(world, e);
+        const bool present = index.edge(id) != entt::null;
+        if (visible && !present) upsert_edge(world, e);
+        else if (!visible && present) dead.push_back(id);
+    }
+    for (const auto& id : dead) drop_edge(world, id);
+
+    count_hidden(world);
 }
 
 // -- visibility ---------------------------------------------------------------
@@ -251,8 +287,8 @@ void SceneSyncSystem::upsert_node(ecs::World& world, const Node& n) {
         registry.emplace<ecs::NodeRef>(ent, ecs::NodeRef{n.id, n.kind});
         registry.emplace<ecs::Depth>(ent);
         registry.emplace<ecs::Style>(ent);
+        registry.emplace<ecs::Unplaced>(ent);
         seed_position(world, ent, n);
-        world.resource<ecs::SceneRequests>().relayout = true;
     } else {
         registry.get<ecs::NodeRef>(ent).kind = n.kind;
     }
@@ -280,7 +316,6 @@ void SceneSyncSystem::upsert_edge(ecs::World& world, const Edge& e) {
         index.edges[e.id] = ent;
         registry.emplace<ecs::EdgeRef>(ent, ecs::EdgeRef{e.id, e.kind});
         registry.emplace<ecs::Style>(ent);
-        world.resource<ecs::SceneRequests>().relayout = true;
     } else {
         registry.get<ecs::EdgeRef>(ent).kind = e.kind;
     }
@@ -307,7 +342,6 @@ void SceneSyncSystem::drop_node(ecs::World& world, const NodeId& id) {
 
     registry.destroy(ent);
     index.nodes.erase(id);
-    world.resource<ecs::SceneRequests>().relayout = true;
 }
 
 void SceneSyncSystem::drop_edge(ecs::World& world, const EdgeId& id) {
@@ -393,8 +427,10 @@ void SceneSyncSystem::refresh_extents(ecs::World& world) {
         world.registry.emplace_or_replace<ecs::Prominence>(ent, ecs::Prominence{prom});
         ext.half = view::text_extent(ref.kind, label.text, label.sub, view.graph_text_scale) * prom;
     }
-    // Boxes changed size, so the row packing layout computed is now wrong.
-    world.resource<ecs::SceneRequests>().relayout = true;
+    // Boxes changed size, so neighbours that used to clear each other may not any
+    // more. That is a reason to let them push apart, not a reason to move every node in
+    // the graph -- this slider is dragged, and a relayout per frame is the jitter.
+    world.resource<ecs::SceneRequests>().resettle = true;
 }
 
 } // namespace rgv::systems

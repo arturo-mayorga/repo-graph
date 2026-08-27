@@ -468,7 +468,7 @@ TEST(graph_text_scale_resizes_node_boxes_without_losing_positions) {
     h.settle();
     const entt::entity e      = h.node("pkg:b");
     const Vec2         before = h.registry().get<ecs::Extent>(e).half;
-    const float        row_y  = h.registry().get<ecs::Position>(e).p.y;
+    const float        ring   = length(h.registry().get<ecs::Position>(e).p);
 
     h.view().graph_text_scale                                = 2.0f;
     h.world.resource<ecs::SceneRequests>().refresh_extents    = true;
@@ -477,7 +477,12 @@ TEST(graph_text_scale_resizes_node_boxes_without_losing_positions) {
     const Vec2 after = h.registry().get<ecs::Extent>(e).half;
     CHECK(after.x > before.x);
     CHECK(after.y > before.y);
-    CHECK(std::abs(h.registry().get<ecs::Position>(e).p.y - row_y) < 1.0f);
+
+    // Bigger boxes may need more room, so a node is allowed to slide along its ring to
+    // make it -- but the ring is where it lives, and nothing is reseeded from scratch.
+    // This slider is dragged: a full relayout here is what jitter is made of.
+    const float now = length(h.registry().get<ecs::Position>(e).p);
+    CHECK(std::abs(now - ring) < std::max(4.0f, ring * 0.1f));
 }
 
 // -- picking ------------------------------------------------------------------
@@ -1278,4 +1283,100 @@ TEST(prominence_and_impact_do_not_multiply) {
     CHECK(hub > leaf);
     CHECK_EQ(changed_hub, changed);              // already at the top of the ladder
     CHECK(changed_hub < leaf * phi * phi * phi); // never compounds
+}
+
+// -- filters must not move the graph ------------------------------------------
+//
+// Every filter control used to set `rebuild`, which clears the registry and reseeds
+// every position from scratch. The relevance slider is DRAGGED, so that ran on every
+// frame it moved and the whole graph jittered under the cursor. What stays visible has
+// to stay put; only the difference is applied.
+
+TEST(moving_the_relevance_filter_leaves_surviving_nodes_where_they_are) {
+    Snapshot s;
+    s.generation                  = 100;
+    s.session.baseline_generation = 100;
+    s.nodes = {mk_node("repo", NodeKind::Repository),
+               mk_node("pkg:hub", NodeKind::Package, "repo")};
+    for (int i = 0; i < 6; ++i) {
+        const std::string p = "pkg:d" + std::to_string(i);
+        s.nodes.push_back(mk_node(p, NodeKind::Package, "repo"));
+        s.edges.push_back(mk_edge("e:" + p, EdgeKind::DependsOn, p, "pkg:hub"));
+    }
+    auto h = make(s);
+    h.settle();
+
+    std::unordered_map<std::string, Vec2> before;
+    for (auto [e, ref, pos] :
+         h.registry().view<const ecs::NodeRef, const ecs::Position>().each()) {
+        before[ref.id] = pos.p;
+    }
+    CHECK(before.size() > 2);
+
+    h.filters().min_relevance = 0.6f;
+    h.world.resource<ecs::SceneRequests>().revisit = true;
+    h.tick(1.0f / 60.0f, 4);
+
+    int survived = 0;
+    for (auto [e, ref, pos] :
+         h.registry().view<const ecs::NodeRef, const ecs::Position>().each()) {
+        auto it = before.find(ref.id);
+        if (it == before.end()) continue;
+        ++survived;
+        CHECK(length(pos.p - it->second) < 1.0f);
+    }
+    CHECK(survived > 0);
+}
+
+// The escape hatch: a full layout is still available, it is just something the user
+// asks for rather than something a slider does to them.
+TEST(an_explicit_relayout_still_rearranges_everything) {
+    auto h = make();
+    h.settle();
+
+    const entt::entity b = h.node("pkg:b");
+    h.registry().get<ecs::Position>(b).p = Vec2{4000.0f, 4000.0f};
+    h.registry().get<ecs::LayoutTarget>(b).p = Vec2{4000.0f, 4000.0f};
+
+    h.world.resource<ecs::SceneRequests>().relayout = true;
+    h.settle();
+
+    CHECK(length(h.registry().get<ecs::Position>(b).p) < 3000.0f);
+}
+
+// A node that appears has to land somewhere sensible on its own, because nothing is
+// going to lay the graph out around it.
+TEST(a_node_that_appears_is_seated_next_to_what_it_connects_to) {
+    Snapshot s;
+    s.generation                  = 100;
+    s.session.baseline_generation = 100;
+    s.nodes = {mk_node("repo", NodeKind::Repository),
+               mk_node("pkg:hub", NodeKind::Package, "repo")};
+    for (int i = 0; i < 6; ++i) {
+        const std::string p = "pkg:d" + std::to_string(i);
+        s.nodes.push_back(mk_node(p, NodeKind::Package, "repo"));
+        s.edges.push_back(mk_edge("e:" + p, EdgeKind::DependsOn, p, "pkg:hub"));
+    }
+    auto h = make(s);
+    h.settle();
+
+    // A latecomer depending on the hub, arriving without a relayout.
+    Snapshot s2 = s;
+    s2.generation = 101;
+    s2.nodes.push_back(mk_node("pkg:late", NodeKind::Package, "repo"));
+    s2.edges.push_back(mk_edge("e:late", EdgeKind::DependsOn, "pkg:late", "pkg:hub"));
+    h.store().reset(s2);
+    h.world.resource<ecs::SceneRequests>().revisit = true;
+    h.tick(1.0f / 60.0f, 120);
+
+    const entt::entity late = h.node("pkg:late");
+    CHECK(late != entt::null);
+    CHECK(!h.registry().all_of<ecs::Unplaced>(late));
+
+    // On a ring, not stranded at the origin or flung off the graph.
+    const float r = length(h.registry().get<ecs::Position>(late).p);
+    const float peer =
+        length(h.registry().get<ecs::Position>(h.node("pkg:d0")).p);
+    CHECK(r > 1.0f);
+    CHECK(std::abs(r - peer) < std::max(40.0f, peer * 0.5f));
 }
