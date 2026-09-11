@@ -258,6 +258,30 @@ into an annulus with a void in the middle once there are hundreds.
 Impact colouring still wins over the extension palette. The repository looks like
 Gource; the blast radius lights up on top of it.
 
+**Hovering a node curves its dependencies over the tree.** Amber for what it depends on,
+cyan for what depends on it, an arrowhead on the dependency end either way. A directory
+answers for everything inside it, so "what does this folder need" is a hover rather than
+a query, and a dependency that stays inside what you are pointing at is not a crossing
+and is not drawn. Symbols are not in this view, so a use of one answers as the file that
+defines it.
+
+They are curved on purpose. Every line the layout itself draws is a straight radial stub
+from a child to the disc that holds it, so a bowed line cannot be mistaken for one. They
+bow toward the hub the tree grows from, which makes them follow the structure they are
+drawn over instead of cutting across it.
+
+How far they bow is capped at a fraction of the distance they span, so a curve never
+swings wider than the gap it covers. Pulling every control point a fixed fraction of the
+way to the hub makes a short hop between two neighbours arc right across the view, since
+the distance to the hub has nothing to do with how far apart the two nodes are. Nearby
+links stay gentle, long ones still bundle.
+
+And they exist only at draw time, produced from the store rather than as entities, so
+the layout never learns they exist: hovering moves nothing. That is what lets the most
+readable picture the tool draws stay a containment tree while still answering the
+dependency question. `--hover NODE` holds until the pointer actually moves, so a
+screenshot of one is reproducible.
+
 **Zooming in morphs circles into labelled boxes**, with the name rendered inside the
 box — shrunk to fit it, so a half-morphed node never draws a rectangle with its name
 floating outside. The directory bloom fades out as the node becomes a box, where a halo

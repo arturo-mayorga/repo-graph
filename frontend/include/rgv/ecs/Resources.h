@@ -117,6 +117,12 @@ struct Selection {
     // sweeping across a dense graph does not strobe.
     float hover_time = 0.0f;
 
+    // `--hover` asked for this one. It holds until the pointer actually moves, which
+    // is what makes the flag usable for a screenshot: a cursor resting wherever the
+    // window happened to open is not input, and without this it overwrote the forced
+    // hover on the first frame. Live input still wins the moment it happens.
+    bool hover_pinned = false;
+
     // Which of several alternative dependency paths is being explained.
     int path_index = 0;
 };

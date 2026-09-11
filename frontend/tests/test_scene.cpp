@@ -8,6 +8,7 @@
 
 #include "rgv/model/GraphStore.h"
 #include "rgv/view/CameraFit.h"
+#include "rgv/view/HoverLinks.h"
 #include "rgv/view/SemanticZoom.h"
 
 #include <algorithm>
@@ -1833,5 +1834,176 @@ TEST(dropping_containment_restatements_leaves_the_ranking_acyclic) {
     // api depends on app, and nothing depends on api. app is the floor.
     CHECK_EQ(h.registry().get<ecs::Depth>(h.node("pkg:app")).value, 0);
     CHECK_EQ(h.registry().get<ecs::Depth>(h.node("pkg:app.api")).value, 1);
+}
+
+// -- dependency curves on hover, over the filesystem tree ------------------------
+//
+// The filesystem view is the most legible picture the tool draws, and it is legible
+// because it draws containment and nothing else. Dependencies are shown for one node at
+// a time, as curves, and produced at draw time rather than as entities -- so the layout
+// never learns they exist.
+
+namespace {
+
+rgvtest::Harness tree_view(Snapshot s = with_symbols()) {
+    rgvtest::Harness h;
+    h.store().reset(s);
+    h.view().mode  = ecs::ViewMode::Filesystem;
+    h.view().level = Level::File;
+    h.request_rebuild();
+    h.tick();
+    return h;
+}
+
+std::vector<rgv::view::HoverLink> links_for(rgvtest::Harness& h, const std::string& id) {
+    return rgv::view::hover_links(h.store(), id, [&](const rgv::NodeId& n) {
+        return h.index().node(n) != entt::null;
+    });
+}
+
+const rgv::view::HoverLink* link_to(const std::vector<rgv::view::HoverLink>& ls,
+                                    const std::string& other) {
+    for (const auto& l : ls) {
+        if (l.other == other) return &l;
+    }
+    return nullptr;
+}
+
+} // namespace
+
+TEST(hovering_a_file_offers_what_it_depends_on_and_what_depends_on_it) {
+    auto h = tree_view(chain());
+    const auto out = links_for(h, "file:b/y.ts");   // y.ts imports x.ts
+    CHECK_EQ(out.size(), 1u);
+    CHECK_EQ(out[0].other, std::string("file:a/x.ts"));
+    CHECK(out[0].outgoing);
+
+    const auto in = links_for(h, "file:a/x.ts");
+    CHECK_EQ(in.size(), 1u);
+    CHECK_EQ(in[0].other, std::string("file:b/y.ts"));
+    CHECK(!in[0].outgoing);
+}
+
+// Symbols are not drawn in a filesystem tree, so a use of one answers as the file that
+// defines it -- and the import of that same file collapses into the one curve.
+TEST(a_link_to_a_symbol_resolves_to_the_file_that_defines_it) {
+    auto h = tree_view();
+    const auto out = links_for(h, "file:b/y.ts");
+    CHECK_EQ(out.size(), 1u);
+    CHECK_EQ(out[0].other, std::string("file:a/x.ts"));
+    CHECK(out[0].kind == EdgeKind::References);   // the most specific of the two
+}
+
+// A directory answers for everything inside it, which is what makes "what does this
+// folder need" a hover rather than a query.
+TEST(hovering_a_directory_answers_for_its_whole_subtree) {
+    auto h = tree_view(chain());
+    const auto out = links_for(h, "dir:a");   // holds x.ts, which y.ts imports
+    CHECK_EQ(out.size(), 1u);
+    CHECK_EQ(out[0].other, std::string("file:b/y.ts"));
+    CHECK(!out[0].outgoing);
+}
+
+// A dependency that stays inside the hovered node is not a crossing and is not drawn.
+TEST(a_dependency_wholly_inside_the_hovered_node_is_not_a_link) {
+    Snapshot s = with_symbols();
+    s.edges.push_back(mk_edge("e:x-uses-Foo", EdgeKind::References, "file:a/x.ts",
+                              "sym:a/x.ts#Foo"));
+    auto h = tree_view(s);
+    for (const auto& l : links_for(h, "file:a/x.ts")) {
+        CHECK(l.other != std::string("file:a/x.ts"));
+    }
+    CHECK(link_to(links_for(h, "dir:a"), "file:a/x.ts") == nullptr);
+}
+
+TEST(a_bow_keeps_its_endpoints_and_never_swings_wider_than_its_own_span) {
+    const Vec2 hub{0.0f, 4000.0f};
+    auto deflection = [&](Vec2 a, Vec2 b) {
+        const auto pts = rgv::view::sample_bow(a, b, hub, 0.55f, 12);
+        return length(pts[6] - Vec2{(a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f});
+    };
+
+    const Vec2 a{-100.0f, 0.0f}, b{100.0f, 0.0f};
+    const auto pts = rgv::view::sample_bow(a, b, hub, 0.55f, 12);
+    CHECK_EQ(pts.size(), 13u);
+    CHECK(length(pts.front() - a) < 0.01f);
+    CHECK(length(pts.back() - b) < 0.01f);
+    CHECK(pts[6].y > 0.0f);              // bowed toward the hub
+    CHECK(std::abs(pts[6].x) < 1.0f);    // and still centred between the ends
+
+    // A near pair bows a little and a far pair bows a lot, and neither swings wider
+    // than the gap it spans. A short hop beside a distant hub used to arc across the
+    // whole view, because the pull was a fraction of the distance to the hub and that
+    // has nothing to do with how far apart the two nodes are.
+    const float near_pair = deflection(Vec2{-40.0f, 0.0f}, Vec2{40.0f, 0.0f});
+    const float far_pair  = deflection(Vec2{-800.0f, 0.0f}, Vec2{800.0f, 0.0f});
+    CHECK(near_pair > 1.0f);                  // still a curve, never a straight line
+    CHECK(near_pair < 80.0f * 0.35f);         // proportionate to its 80-unit span
+    CHECK(far_pair > near_pair * 4.0f);
+
+    // The hub sitting on the line is the degenerate case: bow to one side rather than
+    // collapsing to a straight line a containment stub could be mistaken for.
+    const auto flat = rgv::view::sample_bow(a, b, Vec2{0.0f, 0.0f}, 0.55f, 12);
+    CHECK(std::abs(flat[6].y) > 5.0f);
+}
+
+// The guarantee that makes this safe to draw at all. Against a control rather than
+// against a snapshot, because the easing is still converging by fractions of a unit
+// after the layout reports itself settled, and that is not what is being measured.
+TEST(hovering_moves_nothing) {
+    auto quiet = tree_view();
+    auto hover = tree_view();
+    quiet.settle();
+    hover.settle();
+    view::fit_camera(quiet.world, {});
+    view::fit_camera(hover.world, {});
+
+    auto edge_count = [](rgvtest::Harness& h) {
+        int n = 0;
+        for ([[maybe_unused]] auto&& row : h.registry().view<const ecs::EdgeRef>().each()) ++n;
+        return n;
+    };
+    const int edges_before = edge_count(hover);
+
+    // Hovered through the real input path, so picking agrees this is the node.
+    const Vec2 at = hover.registry().get<ecs::Position>(hover.node("file:b/y.ts")).p;
+    hover.point_at(hover.camera().world_to_screen(at));
+    quiet.tick();   // the same number of frames, with the pointer left alone
+    CHECK(hover.registry().all_of<ecs::Hovered>(hover.node("file:b/y.ts")));
+
+    quiet.tick(1.0f / 60.0f, 30);
+    hover.tick(1.0f / 60.0f, 30);
+
+    // Nothing was added to the scene: the curves are produced at draw time.
+    CHECK_EQ(edge_count(hover), edges_before);
+    int compared = 0;
+    for (auto [e, ref, pos] : quiet.registry().view<const ecs::NodeRef, const ecs::Position>().each()) {
+        const auto other = hover.node(ref.id);
+        CHECK(other != entt::null);
+        CHECK(length(pos.p - hover.registry().get<ecs::Position>(other).p) < 1e-4f);
+        ++compared;
+    }
+    CHECK(compared > 3);
+}
+
+// `--hover` exists so a screenshot of a particular state is reproducible, and it was
+// not: picking overwrote it on the first frame from wherever the cursor happened to be
+// resting. A cursor that has not moved is not input.
+TEST(a_forced_hover_holds_until_the_pointer_actually_moves) {
+    auto h = tree_view(chain());
+    h.settle();
+    view::fit_camera(h.world, {});
+
+    h.selection().hovered      = "file:b/y.ts";
+    h.selection().hover_pinned = true;
+    h.tick(1.0f / 60.0f, 5);
+    CHECK_EQ(h.selection().hovered, std::string("file:b/y.ts"));
+    CHECK(h.registry().all_of<ecs::Hovered>(h.node("file:b/y.ts")));
+
+    // Moving the pointer hands control back to it at once.
+    const Vec2 other = h.registry().get<ecs::Position>(h.node("file:a/x.ts")).p;
+    h.point_at(h.camera().world_to_screen(other));
+    CHECK(!h.selection().hover_pinned);
+    CHECK_EQ(h.selection().hovered, std::string("file:a/x.ts"));
 }
 

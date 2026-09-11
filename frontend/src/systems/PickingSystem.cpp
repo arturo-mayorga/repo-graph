@@ -71,6 +71,16 @@ void PickingSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
     auto&       target   = world.resource<ecs::PointerTarget>();
     auto&       selection = world.resource<ecs::Selection>();
 
+    // A hover the command line asked for outranks a cursor that has not moved yet.
+    if (selection.hover_pinned) {
+        if (length_sq(input.mouse_delta) < 1.0f && !input.mouse_pressed) {
+            target.over_graph = !input.ui_wants_mouse && viewport.contains(input.mouse);
+            target.entity     = world.resource<ecs::EntityIndex>().node(selection.hovered);
+            return;
+        }
+        selection.hover_pinned = false;   // the pointer moved; it is the user's now
+    }
+
     target.over_graph = !input.ui_wants_mouse && viewport.contains(input.mouse);
     if (!target.over_graph) {
         // The hover state is left as it is rather than cleared: a card stays up while

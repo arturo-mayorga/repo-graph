@@ -195,8 +195,9 @@ void apply_startup_state(ecs::World& world, app::Options& options) {
     }
     if (!options.hover.empty() && index.node(options.hover) != entt::null) {
         auto& selection      = world.resource<ecs::Selection>();
-        selection.hovered    = options.hover;
-        selection.hover_time = 10.0f;   // past the dwell delay, fully faded in
+        selection.hovered      = options.hover;
+        selection.hover_time   = 10.0f;   // past the dwell delay, fully faded in
+        selection.hover_pinned = true;    // until the pointer actually moves
         options.hover.clear();
     }
     if (options.zoom > 0.0f) {

@@ -41,6 +41,12 @@ struct Theme {
     // without reading a single label.
     Vec4 writes{0.86f, 0.52f, 0.30f, 1.0f};
     Vec4 reads{0.36f, 0.58f, 0.62f, 1.0f};
+    // Dependency curves over the containment tree, drawn only for the node under the
+    // pointer. Two colours, because "what this needs" and "what needs this" are
+    // different questions and the answer is usually both at once.
+    Vec4 dep_out{0.98f, 0.72f, 0.38f, 1.0f};       // the hovered node depends on it
+    Vec4 dep_in{0.40f, 0.80f, 0.88f, 1.0f};        // it depends on the hovered node
+
     Vec4 path{1.00f, 0.85f, 0.35f, 1.0f};          // the explained dependency path
     Vec4 removed{0.55f, 0.28f, 0.32f, 1.0f};       // temporal compare: gone since baseline
     Vec4 added{0.30f, 0.65f, 0.45f, 1.0f};

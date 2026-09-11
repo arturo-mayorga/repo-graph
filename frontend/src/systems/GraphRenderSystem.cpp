@@ -3,6 +3,8 @@
 #include "rgv/ecs/Components.h"
 #include "rgv/ecs/Resources.h"
 #include "rgv/ui/Theme.h"
+#include "rgv/model/GraphStore.h"
+#include "rgv/view/HoverLinks.h"
 #include "rgv/view/SemanticZoom.h"
 
 #include <algorithm>
@@ -118,6 +120,71 @@ void GraphRenderSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
          registry.view<const ecs::Endpoints, const ecs::Style, const ecs::OnExplainedPath>()
              .each()) {
         emit_edge(ent, ends, style);
+    }
+
+    // Dependency curves for the node under the pointer.
+    //
+    // Only here. The other views draw their dependencies all the time; this one draws
+    // containment and nothing else, and that is exactly why it is the most readable
+    // picture the tool has. Adding a few hundred permanent lines to it would destroy
+    // the quality worth keeping, so they are shown one node at a time.
+    //
+    // Curved, because every line the radial layout itself draws is a straight stub from
+    // a child to the disc that holds it: a bowed line cannot be mistaken for one. They
+    // bow toward the hub the tree grows from, so they follow the structure they are
+    // drawn over instead of cutting across it. And they are produced here, from the
+    // store, rather than as entities -- so the layout never learns they exist and
+    // hovering moves nothing.
+    if (view.mode == ecs::ViewMode::Filesystem) {
+        const auto& index = world.resource<ecs::EntityIndex>();
+        const auto& store = world.resource<GraphStore>();
+
+        NodeId hovered;
+        for (auto [ent, ref] : registry.view<const ecs::NodeRef, const ecs::Hovered>().each()) {
+            hovered = ref.id;
+        }
+        const entt::entity src = hovered.empty() ? entt::null : index.node(hovered);
+        if (src != entt::null && registry.all_of<ecs::Position>(src)) {
+            Vec2 hub{0.0f, 0.0f};
+            for (auto [ent, ref, pos] :
+                 registry.view<const ecs::NodeRef, const ecs::Position>().each()) {
+                if (ref.kind == NodeKind::Repository) { hub = pos.p; break; }
+            }
+
+            const auto links = view::hover_links(store, hovered, [&](const NodeId& id) {
+                return index.node(id) != entt::null;
+            });
+            for (const auto& link : links) {
+                const entt::entity far = index.node(link.other);
+                if (far == entt::null || !registry.all_of<ecs::Position>(far)) continue;
+
+                // Always drawn dependent -> dependency, so an arrowhead means the same
+                // thing it means everywhere else. The colour says which end is hovered.
+                const entt::entity from = link.outgoing ? src : far;
+                const entt::entity to   = link.outgoing ? far : src;
+                const Vec2 a = registry.get<ecs::Position>(from).p;
+                const Vec2 b = registry.get<ecs::Position>(to).p;
+                if (length_sq(b - a) < 1e-6f) continue;
+
+                Vec4 c = link.outgoing ? theme.dep_out : theme.dep_in;
+                // Slightly translucent, so a bundle of them reads as several strands
+                // rather than one blob where they run together.
+                c.a *= 0.88f;
+                const float wpx = 1.5f / std::max(camera.zoom, 1e-4f);
+                const auto  pts = view::sample_bow(a, b, hub, 0.55f, 24);
+                for (std::size_t i = 1; i < pts.size(); ++i) {
+                    renderer_.add_edge(pts[i - 1], pts[i], c, wpx, 0.0f);
+                }
+                if (view.show_arrows) {
+                    const Vec2 dir = normalize(pts.back() - pts[pts.size() - 2]);
+                    if (length_sq(dir) > 1e-6f) {
+                        const Vec2  half = half_of(to);
+                        const float back = std::min(half.x, half.y);
+                        renderer_.add_arrow(b - dir * back, dir, 11.0f, c);
+                    }
+                }
+            }
+        }
     }
 
     for (auto [ent, ref, pos, ext, style] :

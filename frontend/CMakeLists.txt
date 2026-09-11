@@ -67,6 +67,7 @@ add_library(rgv_core STATIC
   # view policy: pure functions shared by rendering, picking, and layout
   src/view/SemanticZoom.cpp
   src/view/CameraFit.cpp
+  src/view/HoverLinks.cpp
   src/ui/Theme.cpp
 
   # systems that need neither a GPU nor a window, and are therefore testable headless

@@ -1296,6 +1296,10 @@ void draw_graph_overlay(ecs::World& world, ImDrawList* dl) {
         rows.push_back({"writes: constructs or calls", t.writes, false});
         rows.push_back({"reads: names or queries", t.reads, false});
     }
+    if (vs.mode == ecs::ViewMode::Filesystem) {
+        rows.push_back({"hover: what it depends on", t.dep_out, false});
+        rows.push_back({"hover: what depends on it", t.dep_in, false});
+    }
     // Only while the relevance filter is actually muting something: a legend entry
     // for a state nothing is in is just clutter.
     if (ui.stats.muted > 0) {
