@@ -485,7 +485,10 @@ TEST(zooming_does_not_change_the_layout_footprint) {
 // Node boxes are sized to hold their label, so the text preference changes geometry --
 // and re-laying out must keep nodes in their rows rather than reshuffling the graph.
 TEST(graph_text_scale_resizes_node_boxes_without_losing_positions) {
-    auto h = make();
+    auto h        = make(as_files(chain()));
+    h.view().mode  = ecs::ViewMode::FileGraph;
+    h.view().level = Level::File;
+    h.request_rebuild();
     h.settle();
     const entt::entity e      = h.node("pkg:b");
     const Vec2         before = h.registry().get<ecs::Extent>(e).half;
@@ -1393,14 +1396,17 @@ TEST(a_node_that_appears_is_seated_next_to_what_it_connects_to) {
         s.nodes.push_back(mk_node(p, NodeKind::Package, "repo"));
         s.edges.push_back(mk_edge("e:" + p, EdgeKind::DependsOn, p, "pkg:hub"));
     }
-    auto h = make(s);
+    auto h        = make(as_files(s));
+    h.view().mode  = ecs::ViewMode::FileGraph;
+    h.view().level = Level::File;
+    h.request_rebuild();
     h.settle();
 
     // A latecomer depending on the hub, arriving without a relayout.
-    Snapshot s2 = s;
+    Snapshot s2 = as_files(s);
     s2.generation = 101;
-    s2.nodes.push_back(mk_node("pkg:late", NodeKind::Package, "repo"));
-    s2.edges.push_back(mk_edge("e:late", EdgeKind::DependsOn, "pkg:late", "pkg:hub"));
+    s2.nodes.push_back(mk_node("pkg:late", NodeKind::File, "repo"));
+    s2.edges.push_back(mk_edge("e:late", EdgeKind::Imports, "pkg:late", "pkg:hub"));
     h.store().reset(s2);
     h.world.resource<ecs::SceneRequests>().revisit = true;
     h.tick(1.0f / 60.0f, 120);
@@ -1417,11 +1423,12 @@ TEST(a_node_that_appears_is_seated_next_to_what_it_connects_to) {
     CHECK(std::abs(r - peer) < std::max(40.0f, peer * 0.5f));
 }
 
-// -- the nested architecture view ---------------------------------------------
+// -- the architecture view ------------------------------------------------------
 //
-// A package is a box around the modules inside it. That is what makes "the code around
-// each system" visible in the view that opens by default, rather than in a view of its
-// own: the architecture of a repository is its packages AND what they hold.
+// A package is a node linked to the modules inside it, and the layout is force-directed
+// over those links: containment attracts, everything repels. That is what makes "the
+// code around each system" visible in the view that opens by default -- the modules
+// gather around their package -- without boxes that get in the way of panning.
 
 namespace {
 
@@ -1433,40 +1440,56 @@ Snapshot with_symbols() {
     return s;
 }
 
-bool inside(rgvtest::Harness& h, const std::string& child, const std::string& container) {
-    const auto c = h.index().node(child), p = h.index().node(container);
-    if (c == entt::null || p == entt::null) return false;
-    const auto* cp = h.registry().try_get<ecs::LayoutTarget>(c);
-    const auto* pp = h.registry().try_get<ecs::LayoutTarget>(p);
-    const auto* hull = h.registry().try_get<ecs::Hull>(p);
-    if (!cp || !pp || !hull) return false;
-    return std::abs(cp->p.x - pp->p.x) <= hull->half.x && std::abs(cp->p.y - pp->p.y) <= hull->half.y;
+float gap(rgvtest::Harness& h, const std::string& a, const std::string& b) {
+    return length(h.registry().get<ecs::Position>(h.index().node(a)).p -
+                  h.registry().get<ecs::Position>(h.index().node(b)).p);
 }
 
 } // namespace
 
-TEST(architecture_view_lays_modules_out_inside_their_packages) {
+TEST(architecture_view_links_modules_to_their_packages_and_keeps_them_close) {
     auto h = make();
     h.settle();
     CHECK(h.index().node("file:a/x.ts") != entt::null);
     CHECK(h.index().node("file:b/y.ts") != entt::null);
-    // The packages that hold something are containers; the empty one is a plain box.
-    CHECK(h.registry().all_of<ecs::Hull>(h.index().node("pkg:a")));
-    CHECK(h.registry().all_of<ecs::Hull>(h.index().node("pkg:b")));
-    CHECK(!h.registry().all_of<ecs::Hull>(h.index().node("pkg:c")));
-    CHECK(inside(h, "file:a/x.ts", "pkg:a"));
-    CHECK(inside(h, "file:b/y.ts", "pkg:b"));
-    CHECK(!inside(h, "file:a/x.ts", "pkg:b"));
+    // Containment is on screen as an edge, which is what the layout pulls along.
+    CHECK(h.index().edge(std::string("tree:file:a/x.ts")) != entt::null);
+    // Each module ends up nearer its own package than any other.
+    CHECK(gap(h, "file:a/x.ts", "pkg:a") < gap(h, "file:a/x.ts", "pkg:b"));
+    CHECK(gap(h, "file:a/x.ts", "pkg:a") < gap(h, "file:a/x.ts", "pkg:c"));
+    CHECK(gap(h, "file:b/y.ts", "pkg:b") < gap(h, "file:b/y.ts", "pkg:a"));
+}
 
-    // Sibling containers do not overlap.
-    const auto a = h.index().node("pkg:a"), b = h.index().node("pkg:b");
-    const auto& ta = h.registry().get<ecs::LayoutTarget>(a);
-    const auto& tb = h.registry().get<ecs::LayoutTarget>(b);
-    const auto& ha = h.registry().get<ecs::Hull>(a);
-    const auto& hb = h.registry().get<ecs::Hull>(b);
-    const bool apart = std::abs(ta.p.x - tb.p.x) >= ha.half.x + hb.half.x ||
-                       std::abs(ta.p.y - tb.p.y) >= ha.half.y + hb.half.y;
-    CHECK(apart);
+TEST(nothing_overlaps_once_the_architecture_layout_settles) {
+    auto h = make(with_symbols());
+    h.settle();
+    std::vector<entt::entity> all;
+    for (auto [e, ref] : h.registry().view<const ecs::NodeRef>().each()) all.push_back(e);
+    for (std::size_t i = 0; i < all.size(); ++i) {
+        for (std::size_t j = i + 1; j < all.size(); ++j) {
+            const auto& pa = h.registry().get<ecs::Position>(all[i]).p;
+            const auto& pb = h.registry().get<ecs::Position>(all[j]).p;
+            const auto& xa = h.registry().get<ecs::Extent>(all[i]).half;
+            const auto& xb = h.registry().get<ecs::Extent>(all[j]).half;
+            const bool apart = std::abs(pa.x - pb.x) >= (xa.x + xb.x) * 0.9f ||
+                               std::abs(pa.y - pb.y) >= (xa.y + xb.y) * 0.9f;
+            CHECK(apart);
+        }
+    }
+}
+
+// Same graph, same picture. A layout that depends on where the scene happened to leave
+// things is a layout nobody can compare across two runs.
+TEST(the_architecture_layout_is_deterministic) {
+    auto a = make(with_symbols());
+    auto b = make(with_symbols());
+    a.settle();
+    b.settle();
+    for (auto [e, ref] : a.registry().view<const ecs::NodeRef>().each()) {
+        const auto& pa = a.registry().get<ecs::Position>(e).p;
+        const auto& pb = b.registry().get<ecs::Position>(b.index().node(ref.id)).p;
+        CHECK(length(pa - pb) < 0.5f);
+    }
 }
 
 TEST(a_file_with_no_dependencies_is_not_architecture) {
@@ -1497,7 +1520,7 @@ TEST(a_symbol_use_is_drawn_between_the_files_and_wins_over_the_import) {
     CHECK(ends.to == h.index().node("file:a/x.ts"));   // the symbol's file stands for it
 }
 
-// A changed module is red inside its package, and the module that imports it is lit
+// A changed module is red beside its package, and the module that imports it is lit
 // from the file-level result even while the view reads package-level impact.
 TEST(architecture_view_colours_modules_from_the_file_level_result) {
     auto h = make();

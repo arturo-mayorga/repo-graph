@@ -7,11 +7,13 @@
 //     nothing to settle, and legible at thousands of files. A spring simulation was
 //     tried first and produced a hairball that never stopped drifting.
 //
-//   * Architecture -- nested. A package is a box drawn around the modules inside it,
-//     sized to hold them, and packages nest the same way. Children are packed into
-//     rows inside their parent, bottom-up, so every container's size is exact before
-//     its own parent packs it. That is what makes one distribution with a dozen
-//     packages read as an architecture rather than as one box or as a hairball.
+//   * Architecture -- force-directed. A package is a node with containment links to
+//     the modules and packages inside it; those links attract, everything repels, and
+//     dependency edges pull weakly. Position-based with no velocity, cooled over the
+//     passes, seeded deterministically and stopped when quiet, which is what keeps it
+//     from being the hairball that never stopped drifting -- the reason the box views
+//     were not force-directed in the first place. Boxes drawn around modules were tried
+//     instead and got in the way of panning; this is what was asked for.
 //
 //   * Filesystem -- a radial tree, inspired by Gource. Directories are discs whose
 //     radius is set by how many files they hold, files ring the directory that owns
@@ -30,6 +32,7 @@
 
 #include <cstdint>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace rgv::systems {
 
@@ -79,6 +82,16 @@ struct LayoutParams {
     // Releasing does not stop the relaxation -- it keeps running until the graph is
     // quiet, so a dropped node travels to a position consistent with everything around
     // it instead of being frozen wherever the cursor left it.
+    // Force-directed architecture layout.
+    float force_link      = 16.0f;    // clearance a module keeps from its package
+    float force_dep       = 260.0f;   // preferred length of a dependency edge
+    float force_dep_pull  = 0.0f;     // dependency edges are drawn, not pulled: containment is the structure
+    float force_range     = 700.0f;   // beyond this, nodes do not repel
+    float force_spread    = 30.0f;    // repulsion strength (k in k^2/d) between kin ...
+    float force_apart     = 230.0f;   // ... and between nodes of different packages
+    float force_gravity   = 0.0004f;  // pull toward the origin, so components stay together
+    int   force_passes    = 600;      // at most; it stops when quiet
+
     float relax_quiet = 0.20f;    // per-frame movement below which the graph is at rest
     float relax_max   = 12.0f;    // seconds before giving up, so it can never run forever
 };
@@ -94,7 +107,10 @@ private:
     void reset(ecs::World& world);
     void assign_depths(ecs::World& world);
     void concentric_place(ecs::World& world);
-    void nested_place(ecs::World& world);
+    void force_place(ecs::World& world);
+    // `gentle`: springs and overlap only -- no spreading, no gravity -- for the settling
+    // that follows a newcomer or a resize, where the rule is that nothing else moves.
+    void force_relax(ecs::World& world, float dt, int passes, float cooling, bool gentle);
     void radial_tree(ecs::World& world);
     void measure_spacing(ecs::World& world);
     void apply_drag(ecs::World& world);
@@ -107,7 +123,7 @@ private:
     float        energy_     = 1e9f;
     int          depth_span_ = 1;
     bool         tree_mode_  = false;
-    bool         nested_mode_ = false;   // architecture: packages as boxes around their modules
+    bool         force_mode_ = false;   // architecture: force-directed over containment
 
     // The radius each ring was placed at. A dependency drag relaxes within the rings
     // rather than freely: the ring is the reach reading, so a node that drifts off its
@@ -118,6 +134,9 @@ private:
     // pull toward what the structural layout produced rather than toward a guess.
     std::unordered_map<std::uint32_t, float> rest_;
     bool  relaxing_      = false;
+    // Nodes seated since the last full layout and still finding their place. While a
+    // non-drag relaxation runs, only these move (spec 11.2: a save must not reshuffle).
+    std::unordered_set<std::uint32_t> loose_;
     float relax_motion_  = 0.0f;   // largest displacement in the last pass
     float relax_elapsed_ = 0.0f;
 };

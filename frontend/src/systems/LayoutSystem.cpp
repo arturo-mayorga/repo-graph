@@ -4,6 +4,8 @@
 #include "rgv/ecs/Resources.h"
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <functional>
 #include <cmath>
 #include <unordered_map>
@@ -14,6 +16,7 @@ namespace rgv::systems {
 namespace {
 
 std::uint32_t to_raw(entt::entity e) { return static_cast<std::uint32_t>(e); }
+std::unordered_map<std::uint32_t, entt::entity> containment_parents(entt::registry& reg);
 
 } // namespace
 
@@ -269,138 +272,245 @@ void LayoutSystem::concentric_place(ecs::World& world) {
     energy_ = 1e9f;
 }
 
-// Nested architecture layout: every container packs its children into rows, then is
-// sized to hold them, bottom-up. Leaves keep the footprint their label needs.
+// The radius a node's body occupies for repulsion: a disc's own, a box's half diagonal.
+float body_radius(entt::registry& reg, entt::entity e) {
+    if (const auto* d = reg.try_get<ecs::Disc>(e)) return d->radius;
+    if (const auto* x = reg.try_get<ecs::Extent>(e)) return length(x->half) * 0.85f;
+    return 12.0f;
+}
+
+// One pass of the force-directed relaxation, `passes` times. Springs along containment
+// hold a module at a fixed clearance from its package; dependency edges pull weakly
+// toward a preferred length; every pair inside `force_range` repels, hard where they
+// overlap and softly beyond; a faint gravity keeps disconnected components on one
+// screen. Position-based -- each pass computes displacements and applies them, with no
+// velocity -- because velocity is what makes a force layout oscillate and drift.
+// `cooling` in [0, 1] scales the step down as a settle proceeds.
+void LayoutSystem::force_relax(ecs::World& world, float dt, int passes, float cooling, bool gentle) {
+    auto&       reg  = world.registry;
+    const auto& drag = world.resource<ecs::DragState>();
+
+    const entt::entity held = drag.active ? drag.node : entt::null;
+    // A gentle pass moves only the loose nodes, if there are any; a drag moves all.
+    auto held_fast = [&](entt::entity e) {
+        if (e == held || reg.all_of<ecs::Pinned>(e)) return true;
+        return gentle && !drag.active && !loose_.empty() && !loose_.count(to_raw(e));
+    };
+
+    std::vector<entt::entity> nodes;
+    for (auto [e, ref, pos] : reg.view<const ecs::NodeRef, const ecs::Position>().each()) nodes.push_back(e);
+    if (nodes.empty()) return;
+
+    std::unordered_map<std::uint32_t, float> radius;
+    for (auto e : nodes) radius[to_raw(e)] = body_radius(reg, e);
+
+    struct Link { entt::entity a, b; bool contains; };
+    std::vector<Link> links;
+    std::unordered_map<std::uint32_t, int>          degree;
+    std::unordered_map<std::uint32_t, std::uint32_t> parent_of;
+    for (auto [e, ref, ends] : reg.view<const ecs::EdgeRef, const ecs::Endpoints>().each()) {
+        if (!reg.valid(ends.from) || !reg.valid(ends.to) || ends.from == ends.to) continue;
+        links.push_back({ends.from, ends.to, ref.kind == EdgeKind::Contains});
+        ++degree[to_raw(ends.from)];
+        ++degree[to_raw(ends.to)];
+        if (ref.kind == EdgeKind::Contains) parent_of[to_raw(ends.from)] = to_raw(ends.to);
+    }
+    // Same package, or one holds the other: they belong together and spread gently.
+    auto kin = [&](entt::entity a, entt::entity b) {
+        auto pa = parent_of.find(to_raw(a));
+        auto pb = parent_of.find(to_raw(b));
+        if (pa != parent_of.end() && pa->second == to_raw(b)) return true;
+        if (pb != parent_of.end() && pb->second == to_raw(a)) return true;
+        return pa != parent_of.end() && pb != parent_of.end() && pa->second == pb->second;
+    };
+
+    const float step = std::clamp(dt * 60.0f, 0.25f, 2.0f) * std::max(0.05f, cooling);
+    const float cell = params_.force_range;
+    auto key = [](int x, int y) {
+        return (static_cast<std::int64_t>(x) << 32) ^ static_cast<std::uint32_t>(y);
+    };
+
+    for (int iter = 0; iter < passes; ++iter) {
+        // -- springs
+        for (const auto& l : links) {
+            auto* pa = reg.try_get<ecs::Position>(l.a);
+            auto* pb = reg.try_get<ecs::Position>(l.b);
+            if (!pa || !pb) continue;
+            const Vec2  d    = pa->p - pb->p;
+            const float dist = length(d);
+            if (dist < 1e-4f) continue;
+            const float want = radius[to_raw(l.a)] + radius[to_raw(l.b)] +
+                               (l.contains ? params_.force_link : params_.force_dep);
+            const float err  = dist - want;
+            const float k    = l.contains ? params_.relax_spring : params_.force_dep_pull;
+            const Vec2  push = normalize(d) * (err * k * step * 0.5f);
+            // A hub with many links moves less per link, or it is torn between them.
+            const float wa = 1.0f / std::sqrt(static_cast<float>(std::max(1, degree[to_raw(l.a)])));
+            const float wb = 1.0f / std::sqrt(static_cast<float>(std::max(1, degree[to_raw(l.b)])));
+            if (!held_fast(l.a)) pa->p -= push * wa;
+            if (!held_fast(l.b)) pb->p += push * wb;
+        }
+
+        // -- repulsion, binned so a pass is linear in the graph
+        std::unordered_map<std::int64_t, std::vector<entt::entity>> bins;
+        for (auto e : nodes) {
+            const auto& pos = reg.get<ecs::Position>(e).p;
+            bins[key(static_cast<int>(std::floor(pos.x / cell)),
+                     static_cast<int>(std::floor(pos.y / cell)))].push_back(e);
+        }
+        for (auto e : nodes) {
+            if (held_fast(e)) continue;
+            auto&       pos = reg.get<ecs::Position>(e);
+            const int   cx  = static_cast<int>(std::floor(pos.p.x / cell));
+            const int   cy  = static_cast<int>(std::floor(pos.p.y / cell));
+            const float re  = radius[to_raw(e)];
+            Vec2        shove{0.0f, 0.0f};
+            for (int dy = -1; dy <= 1; ++dy) {
+                for (int dx = -1; dx <= 1; ++dx) {
+                    auto it = bins.find(key(cx + dx, cy + dy));
+                    if (it == bins.end()) continue;
+                    for (auto other : it->second) {
+                        if (other == e) continue;
+                        const Vec2  away = pos.p - reg.get<ecs::Position>(other).p;
+                        const float dist = length(away);
+                        if (dist >= params_.force_range) continue;
+                        if (dist < 1e-4f) {
+                            // Coincident: separate deterministically by id order.
+                            shove.x += (to_raw(e) > to_raw(other)) ? 1.0f : -1.0f;
+                            continue;
+                        }
+                        const float want = re + radius[to_raw(other)] + 14.0f;
+                        const Vec2  dir  = normalize(away);
+                        if (dist < want) {
+                            shove += dir * ((want - dist) * 0.5f);   // hard: no overlap
+                        } else if (!gentle) {
+                            // Inverse-distance repulsion, the classic k^2/d, with kin
+                            // repelling gently and strangers hard: that difference is
+                            // what pulls a package's modules into a cluster of their own.
+                            const float k = kin(e, other) ? params_.force_spread : params_.force_apart;
+                            shove += dir * (k * k / dist);
+                        }
+                    }
+                }
+            }
+            pos.p += shove * (params_.relax_repel * step);
+            if (!gentle) pos.p -= pos.p * (params_.force_gravity * step);
+        }
+    }
+
+    relax_motion_ = 0.0f;
+    for (auto [e, pos, target] : reg.view<const ecs::Position, ecs::LayoutTarget>().each()) {
+        relax_motion_ = std::max(relax_motion_, length(pos.p - target.p));
+        target.p      = pos.p;
+    }
+}
+
+// Force-directed architecture layout, from a deterministic seed to a quiet state.
 //
-// Rows rather than a force layout or a treemap. A treemap fills the rectangle and
-// sizes by weight, which is the wrong reading here -- a module is not bigger because
-// it has more lines -- and it puts boxes edge to edge so nothing has a name beside it.
-// Rows keep every module the size its name needs and let a package be as wide as its
-// contents, which is exactly what "the code around each system" asks to see.
-void LayoutSystem::nested_place(ecs::World& world) {
+// Seeded by id rather than from wherever the scene happened to leave things, so the
+// same repository always draws the same way: packages on a circle in name order, each
+// module beside its package. Then relaxed until nothing moves more than the quiet
+// threshold, with the step cooling over the passes so it converges instead of
+// circling. That -- not the presence of forces -- is the difference between this and
+// the spring layout that was abandoned for drifting.
+void LayoutSystem::force_place(ecs::World& world) {
     auto& reg = world.registry;
     ring_radius_.clear();
 
-    std::unordered_map<std::uint32_t, entt::entity>              parent;
-    std::unordered_map<std::uint32_t, std::vector<entt::entity>> kids;
-    for (auto [e, ref, ends] : reg.view<const ecs::EdgeRef, const ecs::Endpoints>().each()) {
-        if (ref.kind != EdgeKind::Contains) continue;
-        parent[to_raw(ends.from)] = ends.to;
-        kids[to_raw(ends.to)].push_back(ends.from);
-    }
+    std::vector<entt::entity> nodes;
+    for (auto [e, ref] : reg.view<const ecs::NodeRef>().each()) nodes.push_back(e);
+    if (nodes.empty()) { energy_ = 1e9f; return; }
+    std::sort(nodes.begin(), nodes.end(), [&](entt::entity a, entt::entity b) {
+        return reg.get<ecs::NodeRef>(a).id < reg.get<ecs::NodeRef>(b).id;
+    });
 
-    std::vector<entt::entity> all;
-    for (auto [e, ref] : reg.view<const ecs::NodeRef>().each()) all.push_back(e);
-    if (all.empty()) { energy_ = 1e9f; return; }
-
-    const float gap    = params_.node_gap * 0.6f;
-    const float pad    = 18.0f;
-    const float header = 26.0f;
-
-    auto name_of = [&](entt::entity e) {
-        const auto* l = reg.try_get<ecs::Label>(e);
-        return l ? l->text : std::string{};
+    const auto parent = containment_parents(reg);
+    auto hash_unit = [](const std::string& s, int salt) {
+        std::uint32_t h = 2166136261u ^ static_cast<std::uint32_t>(salt * 7919);
+        for (unsigned char c : s) { h ^= c; h *= 16777619u; }
+        return static_cast<float>(h % 65536u) / 65536.0f;
     };
 
-    // Offset of each child from its parent's centre, and each node's half-size.
-    std::unordered_map<std::uint32_t, Vec2> rel;
-    std::unordered_map<std::uint32_t, Vec2> half;
-
-    // Packs boxes into rows whose width tends toward the golden ratio of the total
-    // area, so a package with forty modules is a block, not a strip. Returns the half
-    // extent of the block and writes each item's offset from the block's centre.
-    auto pack = [&](std::vector<entt::entity> items, bool with_header) -> Vec2 {
-        std::sort(items.begin(), items.end(), [&](entt::entity a, entt::entity b) {
-            const bool ca = kids.count(to_raw(a)) > 0, cb = kids.count(to_raw(b)) > 0;
-            if (ca != cb) return !ca;   // modules first, sub-packages after
-            return name_of(a) < name_of(b);
-        });
-        float area = 0.0f, widest = 0.0f;
-        for (auto e : items) {
-            const Vec2 h = half[to_raw(e)];
-            area += (h.x * 2.0f + gap) * (h.y * 2.0f + gap);
-            widest = std::max(widest, h.x * 2.0f);
-        }
-        // Wide enough for the widest item, and otherwise set by the total area so the
-        // block comes out roughly golden. One prominent module must not turn its
-        // package into a single column: the width is a floor, not the row width.
-        const float row_w = std::max(widest * 1.05f, std::sqrt(area * 1.9f));
-
-        struct Placed { entt::entity e; float cx, cy; };
-        std::vector<Placed> placed;
-        float x = 0.0f, y = 0.0f, row_h = 0.0f, block_w = 0.0f;
-        for (auto e : items) {
-            const Vec2  h = half[to_raw(e)];
-            const float w = h.x * 2.0f;
-            if (x > 0.0f && x + w > row_w) {
-                y += row_h + gap;
-                x = 0.0f;
-                row_h = 0.0f;
-            }
-            placed.push_back({e, x + h.x, y + h.y});
-            x += w + gap;
-            row_h   = std::max(row_h, h.y * 2.0f);
-            block_w = std::max(block_w, x - gap);
-        }
-        const float block_h = y + row_h;
-        // Items sharing a row are centred in it vertically.
-        std::unordered_map<int, float> row_height;
-        for (const auto& pl : placed) {
-            const int r = static_cast<int>(std::lround(pl.cy - half[to_raw(pl.e)].y));
-            row_height[r] = std::max(row_height[r], half[to_raw(pl.e)].y * 2.0f);
-        }
-        const float top = with_header ? header : 0.0f;
-        const Vec2  out{block_w * 0.5f + pad, (block_h + top) * 0.5f + pad};
-        for (const auto& pl : placed) {
-            const int   r  = static_cast<int>(std::lround(pl.cy - half[to_raw(pl.e)].y));
-            const float cy = pl.cy - half[to_raw(pl.e)].y + row_height[r] * 0.5f;
-            rel[to_raw(pl.e)] = Vec2{-block_w * 0.5f + pl.cx, -(block_h + top) * 0.5f + top + cy};
-        }
-        return out;
-    };
-
-    std::function<Vec2(entt::entity)> size_of = [&](entt::entity e) -> Vec2 {
-        auto it = kids.find(to_raw(e));
-        const auto* ext = reg.try_get<ecs::Extent>(e);
-        const Vec2  own = ext ? ext->half : Vec2{54.0f, 17.0f};
-        if (it == kids.end() || it->second.empty()) {
-            half[to_raw(e)] = own;
-            reg.remove<ecs::Hull>(e);
-            if (parent.count(to_raw(e))) reg.emplace_or_replace<ecs::WorldBox>(e);
-            return own;
-        }
-        for (auto c : it->second) size_of(c);
-        Vec2 h = pack(it->second, true);
-        // Never narrower than its own name.
-        h.x = std::max(h.x, own.x + pad);
-        half[to_raw(e)] = h;
-        reg.emplace_or_replace<ecs::Hull>(e, ecs::Hull{h, header});
-        return h;
-    };
-
+    // Roots on a circle, in id order; everything else beside its parent, offset by its
+    // own id so siblings do not start on top of one another. Top-down, so a parent is
+    // placed before its children look for it.
     std::vector<entt::entity> roots;
-    for (auto e : all) {
+    for (auto e : nodes) {
         if (!parent.count(to_raw(e))) roots.push_back(e);
     }
-    for (auto r : roots) size_of(r);
-
-    // Roots share the origin: one root sits on it, several are packed around it.
-    if (roots.size() == 1) rel[to_raw(roots[0])] = Vec2{0.0f, 0.0f};
-    else pack(roots, false);
-
-    // Absolute targets, top-down. A pinned root keeps its place; its contents follow.
-    std::function<void(entt::entity, Vec2)> place = [&](entt::entity e, Vec2 origin) {
-        Vec2 at = origin + rel[to_raw(e)];
-        if (!parent.count(to_raw(e)) && reg.all_of<ecs::Pinned>(e)) {
-            if (const auto* p = reg.try_get<ecs::Position>(e)) at = p->p;
+    const float ring = 120.0f * std::sqrt(static_cast<float>(std::max<std::size_t>(nodes.size(), 4)));
+    for (std::size_t i = 0; i < roots.size(); ++i) {
+        const float ang = 6.2831853f * static_cast<float>(i) / static_cast<float>(roots.size());
+        const Vec2  at  = roots.size() == 1 ? Vec2{0.0f, 0.0f}
+                                            : Vec2{std::cos(ang) * ring * 0.5f, std::sin(ang) * ring * 0.5f};
+        reg.emplace_or_replace<ecs::Position>(roots[i], ecs::Position{at});
+    }
+    std::unordered_map<std::uint32_t, bool> placed;
+    for (auto r : roots) placed[to_raw(r)] = true;
+    for (int round = 0; round < 64; ++round) {
+        bool any = false;
+        for (auto e : nodes) {
+            if (placed.count(to_raw(e))) continue;
+            auto it = parent.find(to_raw(e));
+            if (it == parent.end() || !placed.count(to_raw(it->second))) continue;
+            const auto& id  = reg.get<ecs::NodeRef>(e).id;
+            const float ang = 6.2831853f * hash_unit(id, 1);
+            const float r   = params_.force_link + 60.0f * hash_unit(id, 2);
+            const Vec2  at  = reg.get<ecs::Position>(it->second).p + Vec2{std::cos(ang) * r, std::sin(ang) * r};
+            reg.emplace_or_replace<ecs::Position>(e, ecs::Position{at});
+            placed[to_raw(e)] = true;
+            any               = true;
         }
-        reg.emplace_or_replace<ecs::LayoutTarget>(e, ecs::LayoutTarget{at});
-        if (!reg.all_of<ecs::Position>(e)) reg.emplace<ecs::Position>(e, ecs::Position{at});
-        auto it = kids.find(to_raw(e));
-        if (it == kids.end()) return;
-        for (auto c : it->second) place(c, at);
-    };
-    for (auto r : roots) place(r, Vec2{0.0f, 0.0f});
+        if (!any) break;
+    }
+    for (auto e : nodes) {
+        if (!placed.count(to_raw(e))) {
+            const auto& id = reg.get<ecs::NodeRef>(e).id;
+            reg.emplace_or_replace<ecs::Position>(
+                e, ecs::Position{Vec2{(hash_unit(id, 3) - 0.5f) * ring, (hash_unit(id, 4) - 0.5f) * ring}});
+        }
+        reg.emplace_or_replace<ecs::LayoutTarget>(e, ecs::LayoutTarget{reg.get<ecs::Position>(e).p});
+    }
+
+    // Settle, off screen. A pinned node keeps its place throughout.
+    std::unordered_map<std::uint32_t, Vec2> seed;
+    for (auto e : nodes) seed[to_raw(e)] = reg.get<ecs::Position>(e).p;
+    for (int pass = 0; pass < params_.force_passes; ++pass) {
+        const float cooling = 1.0f - 0.85f * static_cast<float>(pass) / static_cast<float>(params_.force_passes);
+        force_relax(world, 1.0f / 60.0f, 1, cooling, false);
+        if (pass > 40 && relax_motion_ < params_.relax_quiet) break;
+    }
+    if (std::getenv("RGV_DEBUG_LAYOUT")) {
+        // How clustered: a module's distance to its own package against the nearest
+        // other package. Below 1 means it sits with its own.
+        float ratio = 0.0f, radius_max = 0.0f;
+        int   n = 0;
+        for (auto e : nodes) {
+            const Vec2 p = reg.get<ecs::Position>(e).p;
+            radius_max   = std::max(radius_max, length(p));
+            auto it = parent.find(to_raw(e));
+            if (it == parent.end()) continue;
+            const float own = length(p - reg.get<ecs::Position>(it->second).p);
+            std::unordered_set<std::uint32_t> ancestors;
+            for (auto a = it; a != parent.end(); a = parent.find(to_raw(a->second))) ancestors.insert(to_raw(a->second));
+            float other = 1e9f;
+            for (auto q : nodes) {
+                if (q == e || ancestors.count(to_raw(q)) || reg.get<ecs::NodeRef>(q).kind != NodeKind::Package) continue;
+                other = std::min(other, length(p - reg.get<ecs::Position>(q).p));
+            }
+            if (other < 1e8f) { ratio += own / other; ++n; }
+        }
+        std::fprintf(stderr, "layout: %zu nodes, radius %.0f, mean own/other %.2f over %d\n",
+                     nodes.size(), radius_max, n ? ratio / n : 0.0f, n);
+    }
+
+    // The settled arrangement is the target; the screen eases there from the seed, the
+    // way every other layout animates in, and the camera follows the easing.
+    for (auto e : nodes) {
+        reg.get<ecs::LayoutTarget>(e).p = reg.get<ecs::Position>(e).p;
+        reg.get<ecs::Position>(e).p     = seed[to_raw(e)];
+    }
+    loose_.clear();
     energy_ = 1e9f;
 }
 
@@ -731,14 +841,13 @@ void LayoutSystem::measure_spacing(ecs::World& world) {
 
 void LayoutSystem::reset(ecs::World& world) {
     const auto mode = world.resource<ecs::ViewSettings>().mode;
-    world.registry.clear<ecs::WorldBox>();
-    tree_mode_   = mode == ecs::ViewMode::Filesystem;
-    nested_mode_ = mode == ecs::ViewMode::Architecture;
+    tree_mode_  = mode == ecs::ViewMode::Filesystem;
+    force_mode_ = mode == ecs::ViewMode::Architecture;
     if (tree_mode_) {
         radial_tree(world);
-    } else if (nested_mode_) {
+    } else if (force_mode_) {
         assign_depths(world);
-        nested_place(world);
+        force_place(world);
     } else {
         assign_depths(world);
         concentric_place(world);
@@ -1021,9 +1130,21 @@ bool LayoutSystem::seat_newcomers(ecs::World& world) {
     // A containment layout has no meaningful "near": a file belongs on its parent's
     // orbit, and the orbits are packed as a whole. Repacking the tree is cheap and
     // stable, so the tree view keeps taking the full path.
-    if (tree_mode_ || nested_mode_) {
+    if (tree_mode_) {
         reset(world);
         return false;
+    }
+    // The force layout seats a newcomer where the scene seeded it -- beside whatever
+    // it connects to -- and lets the relaxation take it from there.
+    if (force_mode_) {
+        for (auto e : fresh) {
+            if (const auto* p = reg.try_get<ecs::Position>(e)) {
+                reg.emplace_or_replace<ecs::LayoutTarget>(e, ecs::LayoutTarget{p->p});
+            }
+            reg.remove<ecs::Unplaced>(e);
+            loose_.insert(to_raw(e));
+        }
+        return true;
     }
 
     const auto& reach = world.resource<ecs::DerivedState>().reach;
@@ -1137,6 +1258,7 @@ void LayoutSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
         relax_elapsed_ += frame.dt;
         apply_drag(world);
         if (tree_mode_) relax(world, frame.dt);
+        else if (force_mode_) force_relax(world, frame.dt, params_.relax_iters, 1.0f, !drag.active);
         else relax_rings(world, frame.dt);
 
         // Held open while the cursor is down; afterwards it ends when the motion dies
@@ -1144,6 +1266,7 @@ void LayoutSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
         if (!drag.active &&
             (relax_motion_ < params_.relax_quiet || relax_elapsed_ > params_.relax_max)) {
             relaxing_ = false;
+            loose_.clear();
         }
 
         stats.layout_energy  = relax_motion_;

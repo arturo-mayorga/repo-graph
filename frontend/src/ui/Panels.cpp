@@ -1071,27 +1071,6 @@ void draw_graph_overlay(ecs::World& world, ImDrawList* dl) {
             const bool  changed = reg.all_of<ecs::Changed>(ent);
             const auto* imp     = reg.try_get<ecs::Impacted>(ent);
 
-            // A container is named along its top edge, at screen size, and only when
-            // the box is wide enough on screen to carry the name.
-            if (const auto* hull = reg.try_get<ecs::Hull>(ent)) {
-                Vec4 hc = t.node_text;
-                if (changed) hc = t.changed;
-                else if (imp) hc = impact_color(imp->distance);
-                const Vec2  tl   = cam.world_to_screen(pos.p - hull->half);
-                const float wpx  = hull->half.x * 2.0f * cam.zoom;
-                // The full dotted name when it fits, else the last component: a box
-                // called `elevators.components` inside `elevators` is `components`.
-                std::string text = label.text;
-                ImVec2      sz   = font->CalcTextSizeA(outside_px, FLT_MAX, 0.0f, text.c_str());
-                if (sz.x + 12.0f > wpx) {
-                    if (const auto dot = text.rfind('.'); dot != std::string::npos) text = text.substr(dot + 1);
-                    sz = font->CalcTextSizeA(outside_px, FLT_MAX, 0.0f, text.c_str());
-                }
-                if (sz.x + 12.0f <= wpx) {
-                    dl->AddText(font, outside_px, ImVec2(tl.x + 8.0f, tl.y + 5.0f), to_u32(hc), text.c_str());
-                }
-                continue;
-            }
             const auto* disc    = reg.try_get<ecs::Disc>(ent);
             const auto* space   = reg.try_get<ecs::Spacing>(ent);
             const auto* prom    = reg.try_get<ecs::Prominence>(ent);
@@ -1104,20 +1083,11 @@ void draw_graph_overlay(ecs::World& world, ImDrawList* dl) {
 
             const rgv::view::DiscShape shape{disc ? disc->radius : 0.0f,
                                              space ? space->room : 1e9f};
-            Vec2  half = rgv::view::node_half(
+            const Vec2  half = rgv::view::node_half(
                 cam.zoom, detail, ext.half, shape,
                 rgv::view::dot_px_for(changed, imp != nullptr, false, pscale));
-            float morph  = rgv::view::disc_morph(detail, shape, ext.half);
-            bool  inside = rgv::view::label_belongs_inside(morph);
-            if (reg.all_of<ecs::WorldBox>(ent)) {
-                // Inside its own rectangle once that is wide enough to read, otherwise
-                // unnamed: a name beside every module at overview is the clutter the
-                // container exists to avoid, and the hover card names it.
-                half   = rgv::view::world_box_half(cam.zoom, ext.half);
-                inside = true;
-                morph  = 1.0f;
-                if (half.x * 2.0f * cam.zoom < 36.0f && !asked_for) continue;
-            }
+            const float morph  = rgv::view::disc_morph(detail, shape, ext.half);
+            const bool  inside = rgv::view::label_belongs_inside(morph);
 
             Vec4 col = t.node_text;
             if (changed) col = t.changed;

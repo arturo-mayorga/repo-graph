@@ -43,10 +43,6 @@ Vec2 render_half(float zoom, const NodeDetail& detail, const Vec2& layout_half, 
 // floor is in screen space, so nothing vanishes when zoomed out.
 Vec2 disc_half(float zoom, float world_radius, float min_px = 1.6f);
 
-// A box that keeps its world size at every zoom, with a screen-space floor so it never
-// vanishes. What sits inside a container.
-Vec2 world_box_half(float zoom, const Vec2& layout_half, float min_px = 2.0f);
-
 // The drawn half-extent of a node, whichever shape the view uses. Rendering and
 // picking both call this, so a click can never land on something that is not drawn.
 // The collapsed shape of a node. A disc view supplies a world-space radius; a box view

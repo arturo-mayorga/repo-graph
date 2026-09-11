@@ -587,10 +587,7 @@ void SceneSyncSystem::incremental(ecs::World& world) {
         for (const auto& [eid, pair] : drawn_) {
             if (const Edge* e = store.edge(eid)) upsert_edge(world, *e);
         }
-        if (!dirty.nodes.empty()) {
-            sync_containment(world);
-            world.resource<ecs::SceneRequests>().relayout = true;
-        }
+        if (!dirty.nodes.empty()) sync_containment(world);
         return;
     }
     // Twice over the edges: a node may have arrived after an edge that references it,

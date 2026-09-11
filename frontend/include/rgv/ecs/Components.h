@@ -70,21 +70,6 @@ struct Extent { Vec2 half{54.0f, 17.0f}; };
 // a distinction the colour and the layout already carry. Owner: SceneSyncSystem.
 struct Prominence { float scale = 1.0f; };
 
-// A node drawn as a container: what it holds is laid out inside it, and this is the
-// size that needs. World-space and never collapsed to a dot -- a package that is a box
-// around its modules stays that box at every zoom, the way a directory disc does.
-// Present only on nodes with something inside them. Owner: LayoutSystem.
-struct Hull {
-    Vec2  half{60.0f, 40.0f};
-    float header = 26.0f;   // room at the top for the container's own name
-};
-
-// Drawn at its layout footprint at every zoom, like a disc, rather than collapsing to a
-// dot. Present on what is laid out inside a container: the container keeps its world
-// size, so a module inside it must too, or a package at overview is a box with a few
-// dots floating in it instead of a box full of modules. Owner: LayoutSystem.
-struct WorldBox {};
-
 // Dependency depth: 0 = depends on nothing else in view. Owner: LayoutSystem.
 struct Depth { int value = 0; };
 

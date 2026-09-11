@@ -203,7 +203,7 @@ input always wins over `--hover`, so pointing at something else just works.
 | Input | Action |
 |---|---|
 | drag / wheel | pan / zoom |
-| hover a module | lights every edge it has: what it reads, writes, and imports |
+| hover a node | lights every edge it has: what it reads, writes, and imports |
 | hover a node | fades in a card: what it is, what changed, why it is impacted |
 | drag a node | move it; it settles back into place on release |
 | double click | pin / unpin in place |
@@ -297,11 +297,21 @@ structure is not shaken apart.
 ### The architecture view
 
 What opens by default, and what `rgv --watch` is for: the architecture of the code.
-Not one box per distribution — a package is a box drawn around the modules inside it,
-sized to hold them, and packages nest the same way, so a single `pyproject.toml` with a
-dozen packages reads as a dozen labelled regions, each full of its named modules. A
-module that takes part in no dependency — a README, a config file — is not architecture
-and stays out.
+Not one box per distribution — a package is a node linked to the modules and packages
+inside it, and the layout is force-directed over those links: containment attracts,
+everything repels, and dependency edges pull weakly. The modules gather around their
+package, packages push apart, and a single `pyproject.toml` with a dozen packages reads
+as a dozen clusters rather than one box. A module that takes part in no dependency — a
+README, a config file — is not architecture and stays out.
+
+Force-directed is what the README used to say had been tried and abandoned, for a
+hairball that never stopped drifting. What keeps this one honest is not the forces but
+the discipline around them: position-based with no velocity, seeded by id so the same
+repository always draws the same way, cooled over the passes, and stopped when nothing
+moves more than the quiet threshold. It settles off screen and eases in. Dragging a node
+switches the relaxation back on for everything; a newcomer or a resize relaxes gently —
+springs and overlap only, and only the newcomers move — so a save never reshuffles the
+picture (spec 11.2).
 
 Edges live at their own level and are drawn between whatever stands for their
 endpoints: an import between two modules is a line between those modules; a read or a
@@ -311,22 +321,16 @@ inside them already have a drawn edge between them, in which case the package ed
 not drawn, because the modules are the explanation. Several store edges land on the
 same pair of modules (the import of `motion.py` and every read of a component in it)
 and the most specific one is drawn, so the line says *reads `CarPosition`* rather than
-*imports*. Reads and writes are differently coloured.
+*imports*. Reads and writes are differently coloured. At overview the containment lines are the readable structure and the dependency field sits well back.
 
 Hundreds of edges at once are a field, not a diagram, so the field sits back and the
 edges of the node you point at or select come forward at full strength. Point at a
 system and its reads and writes stand out; click it and the inspector lists them. The
 blast radius is drawn at two levels at once — modules from the file-level result,
-packages from the package-level one — so a saved file is red inside its package while
-the packages that depend on it light up around it.
-
-Containers keep their world size at every zoom, and so does what is laid out inside
-them: at overview a package is a box full of small rectangles rather than a box with a
-few dots in it, and zooming in reveals the names inside the rectangles. Modules are
-packed into rows inside their package, bottom-up, so every container's size is exact
-before its own parent packs it; nothing settles and the same repository always draws
-identically. `--filter TEXT` opens with the name/path filter set and `--select NODE`
-with a node selected, which is what makes a screenshot of this view reproducible.
+packages from the package-level one — so a saved file is red beside its package while
+the packages that depend on it light up around it. `--filter TEXT` opens with the
+name/path filter set and `--select NODE` with a node selected, which is what makes a
+screenshot of this view reproducible.
 
 ### Semantic zoom
 

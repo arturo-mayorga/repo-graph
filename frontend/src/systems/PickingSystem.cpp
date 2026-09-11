@@ -36,11 +36,6 @@ entt::entity pick(ecs::World& world, Vec2 screen) {
         Vec2 half = view::node_half(camera.zoom, detail, ext.half, shape,
                                     view::dot_px_for(changed, impacted, false,
                                                      pr ? pr->scale : 1.0f));
-        // A container is hit anywhere inside its hull; what it holds is smaller and
-        // so wins the tie below, which is what makes a module inside a package
-        // clickable at all.
-        if (const auto* hull = registry.try_get<ecs::Hull>(ent)) half = hull->half;
-        if (registry.all_of<ecs::WorldBox>(ent)) half = view::world_box_half(zoom, ext.half);
 
         // A dot must stay clickable even when it is a few pixels across, so the hit
         // area has a screen-space floor. Without it, overview zoom becomes a test of

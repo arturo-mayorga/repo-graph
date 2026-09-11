@@ -56,18 +56,6 @@ void StyleSystem::run(ecs::World& world, const ecs::FrameContext&) {
             style.emphasis = 0.55f;
         }
 
-        // A container is a region, not a node: a faint fill so the modules inside and
-        // the edges crossing it stay readable, and an outline that still carries impact.
-        if (registry.all_of<ecs::Hull>(ent)) {
-            style.fill   = mix(t.node_fill, t.background, 0.55f);
-            style.fill.a = 0.85f;
-            if (distance < 0) {
-                style.stroke   = mix(t.node_stroke, t.background, 0.15f);
-                style.stroke_w = 1.2f;
-                style.emphasis = 0.4f;
-            }
-        }
-
         switch (effective) {
             case Freshness::Stale:
                 // Colour plus a dashed outline: two channels, because one colour cue is
