@@ -2,11 +2,16 @@
 //
 // Two strategies, picked by view mode:
 //
-//   * Architecture / File graph -- layered. Dependency depth fixes the row; ordering
-//     within a row is solved by barycentre sweeps (the ordering phase of a Sugiyama
-//     layout), then rows are spaced evenly. Deterministic, nothing to settle, and
-//     legible at 240 packages. A spring simulation was tried first and produced a
-//     hairball that never stopped drifting.
+//   * File graph -- concentric. Reach fixes the ring; ordering within a ring is
+//     solved by barycentre sweeps (the ordering phase of a Sugiyama layout). Deterministic,
+//     nothing to settle, and legible at thousands of files. A spring simulation was
+//     tried first and produced a hairball that never stopped drifting.
+//
+//   * Architecture -- nested. A package is a box drawn around the modules inside it,
+//     sized to hold them, and packages nest the same way. Children are packed into
+//     rows inside their parent, bottom-up, so every container's size is exact before
+//     its own parent packs it. That is what makes one distribution with a dozen
+//     packages read as an architecture rather than as one box or as a hairball.
 //
 //   * Filesystem -- a radial tree, inspired by Gource. Directories are discs whose
 //     radius is set by how many files they hold, files ring the directory that owns
@@ -89,6 +94,7 @@ private:
     void reset(ecs::World& world);
     void assign_depths(ecs::World& world);
     void concentric_place(ecs::World& world);
+    void nested_place(ecs::World& world);
     void radial_tree(ecs::World& world);
     void measure_spacing(ecs::World& world);
     void apply_drag(ecs::World& world);
@@ -101,6 +107,7 @@ private:
     float        energy_     = 1e9f;
     int          depth_span_ = 1;
     bool         tree_mode_  = false;
+    bool         nested_mode_ = false;   // architecture: packages as boxes around their modules
 
     // The radius each ring was placed at. A dependency drag relaxes within the rings
     // rather than freely: the ring is the reach reading, so a node that drifts off its

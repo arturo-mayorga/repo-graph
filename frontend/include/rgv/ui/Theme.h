@@ -36,6 +36,11 @@ struct Theme {
 
     Vec4 edge{0.26f, 0.28f, 0.34f, 1.0f};
     Vec4 edge_impact{0.55f, 0.60f, 0.72f, 1.0f};
+    // Symbols view: a file that constructs or invokes a symbol writes it, one that
+    // merely names it reads it. Two edge colours, so the direction of data is visible
+    // without reading a single label.
+    Vec4 writes{0.86f, 0.52f, 0.30f, 1.0f};
+    Vec4 reads{0.36f, 0.58f, 0.62f, 1.0f};
     Vec4 path{1.00f, 0.85f, 0.35f, 1.0f};          // the explained dependency path
     Vec4 removed{0.55f, 0.28f, 0.32f, 1.0f};       // temporal compare: gone since baseline
     Vec4 added{0.30f, 0.65f, 0.45f, 1.0f};

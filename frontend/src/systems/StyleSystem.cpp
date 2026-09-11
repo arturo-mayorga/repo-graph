@@ -56,6 +56,18 @@ void StyleSystem::run(ecs::World& world, const ecs::FrameContext&) {
             style.emphasis = 0.55f;
         }
 
+        // A container is a region, not a node: a faint fill so the modules inside and
+        // the edges crossing it stay readable, and an outline that still carries impact.
+        if (registry.all_of<ecs::Hull>(ent)) {
+            style.fill   = mix(t.node_fill, t.background, 0.55f);
+            style.fill.a = 0.85f;
+            if (distance < 0) {
+                style.stroke   = mix(t.node_stroke, t.background, 0.15f);
+                style.stroke_w = 1.2f;
+                style.emphasis = 0.4f;
+            }
+        }
+
         switch (effective) {
             case Freshness::Stale:
                 // Colour plus a dashed outline: two channels, because one colour cue is
@@ -108,6 +120,15 @@ void StyleSystem::run(ecs::World& world, const ecs::FrameContext&) {
             style.stroke_w = 1.0f;
             style.emphasis = 0.3f;
         }
+        // Reads and writes are told apart by colour, on and off the impact set alike:
+        // the question this edge answers is which way the data flows.
+        if (ref.kind == EdgeKind::Calls) {
+            style.stroke   = t.writes;
+            style.emphasis = on_impact ? 0.95f : 0.55f;
+        } else if (ref.kind == EdgeKind::References) {
+            style.stroke   = t.reads;
+            style.emphasis = on_impact ? 0.95f : 0.45f;
+        }
         if (const auto* c = registry.try_get<ecs::ConfidenceState>(ent)) {
             if (c->value == Confidence::Heuristic || c->value == Confidence::Unresolved) {
                 style.stroke = t.heuristic;
@@ -122,6 +143,17 @@ void StyleSystem::run(ecs::World& world, const ecs::FrameContext&) {
                 style.stroke = t.invalid;
                 style.dash   = 4.0f;
             }
+        }
+        // What the user is pointing at or has selected has every edge lit, in the
+        // edge's own colour: point at a system and its reads and writes stand out of
+        // the field, which is how "what does this depend on" is answered without a
+        // click.
+        auto attended = [&](entt::entity n) {
+            return registry.valid(n) && (registry.all_of<ecs::Hovered>(n) || registry.all_of<ecs::Selected>(n));
+        };
+        if (attended(ends.from) || attended(ends.to)) {
+            style.stroke_w = std::max(style.stroke_w, 2.4f);
+            style.emphasis = 1.0f;
         }
         if (registry.all_of<ecs::OnExplainedPath>(ent)) {
             style.stroke   = t.path;

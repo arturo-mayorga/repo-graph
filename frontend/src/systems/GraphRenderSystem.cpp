@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
+#include <vector>
 
 namespace rgv::systems {
 
@@ -32,8 +33,12 @@ void GraphRenderSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
     const view::NodeDetail detail = view::node_detail(camera.zoom, view.graph_text_scale);
 
     auto half_of = [&](entt::entity e) -> Vec2 {
+        // A container is its world-space hull at every zoom; it never becomes a dot.
+        if (const auto* hull = registry.try_get<ecs::Hull>(e)) return hull->half;
         const auto* ext = registry.try_get<ecs::Extent>(e);
         if (!ext) return Vec2{6.0f, 6.0f};
+        // So is what sits inside one, down to a floor of a few pixels.
+        if (registry.all_of<ecs::WorldBox>(e)) return view::world_box_half(camera.zoom, ext->half);
         const bool emphasised = registry.all_of<ecs::Selected>(e) ||
                                 registry.all_of<ecs::Hovered>(e) ||
                                 registry.all_of<ecs::OnExplainedPath>(e);
@@ -69,18 +74,58 @@ void GraphRenderSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
         // Context recedes further as the view zooms out: at overview scale the edges
         // are what turn a readable graph into a hairball.
         if (!registry.all_of<ecs::OnExplainedPath>(ent)) {
-            color.a *= (0.35f + 0.65f * style.emphasis) * (0.45f + 0.55f * detail.t);
+            // The nested view keeps its boxes and names readable at overview, so its
+            // edges are not faded with the zoom the way a field of dots' are. They are
+            // a field, though -- hundreds at once -- so the unattended ones sit back
+            // and the hovered or selected node's edges come forward at full strength.
+            if (view.mode == ecs::ViewMode::Architecture) {
+                // A faint constant for the field, full strength for what is attended.
+                color.a *= style.emphasis >= 0.99f ? 1.0f : 0.04f + 0.10f * style.emphasis;
+            } else {
+                color.a *= (0.35f + 0.65f * style.emphasis) * (0.45f + 0.55f * detail.t);
+            }
         }
-        renderer_.add_edge(a, b, color, style.stroke_w, style.dash);
+        // Width is in world units, so at overview a 1.2-unit line is a fraction of a
+        // pixel and the dependencies vanish. A floor of one screen pixel keeps them.
+        const float width = std::max(style.stroke_w, 1.1f / std::max(camera.zoom, 1e-4f));
+        renderer_.add_edge(a, b, color, width, style.dash);
         if (view.show_arrows && detail.t > 0.15f) {
             renderer_.add_arrow(b, dir, style.stroke_w > 2.5f ? 13.0f : 9.0f, color);
         }
     };
 
-    // Edges first, and the explained path last within that pass, so the explanation is
-    // never buried under the graph it is explaining.
-    for (auto [ent, ends, style] :
-         registry.view<const ecs::Endpoints, const ecs::Style>().each()) {
+    // Containers first, outermost first, so what they hold and the edges between are
+    // drawn on top of them rather than hidden under a box.
+    {
+        std::vector<std::pair<float, entt::entity>> hulls;
+        for (auto [ent, hull] : registry.view<const ecs::Hull>().each()) {
+            hulls.emplace_back(hull.half.x * hull.half.y, ent);
+        }
+        std::sort(hulls.begin(), hulls.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+        for (const auto& [area, ent] : hulls) {
+            const auto* pos   = registry.try_get<ecs::Position>(ent);
+            const auto* hull  = registry.try_get<ecs::Hull>(ent);
+            const auto* style = registry.try_get<ecs::Style>(ent);
+            if (!pos || !hull || !style) continue;
+            if (registry.all_of<ecs::Changed>(ent)) {
+                renderer_.add_node(pos->p, hull->half + Vec2{6.0f, 6.0f}, theme.seed_glow,
+                                   Vec4{0, 0, 0, 0}, 0.0f, 0.0f, 12.0f);
+            }
+            renderer_.add_node(pos->p, hull->half, style->fill, style->stroke, style->stroke_w,
+                               style->dash, 8.0f);
+        }
+        // Their own pass: the renderer paints every node over every edge, so containers
+        // have to be on screen before the edges between their modules are batched.
+        renderer_.flush();
+    }
+
+    // Edges next, and the explained path last within that pass, so the explanation is
+    // never buried under the graph it is explaining. Containment is layout, not a line,
+    // everywhere but the filesystem tree.
+    const bool draw_containment = view.mode == ecs::ViewMode::Filesystem;
+    for (auto [ent, ref, ends, style] :
+         registry.view<const ecs::EdgeRef, const ecs::Endpoints, const ecs::Style>().each()) {
+        if (ref.kind == EdgeKind::Contains && !draw_containment) continue;
         if (!registry.all_of<ecs::OnExplainedPath>(ent)) emit_edge(ent, ends, style);
     }
     for (auto [ent, ends, style, path] :
@@ -92,14 +137,16 @@ void GraphRenderSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
     for (auto [ent, ref, pos, ext, style] :
          registry.view<const ecs::NodeRef, const ecs::Position, const ecs::Extent,
                        const ecs::Style>().each()) {
+        if (registry.all_of<ecs::Hull>(ent)) continue;   // drawn above, as a container
         const Vec2  half = half_of(ent);
         const auto* d  = registry.try_get<ecs::Disc>(ent);
         const auto* sp = registry.try_get<ecs::Spacing>(ent);
         // A circle is a box whose corners are its own radius, so the corner follows the
         // same morph the size does. Using the plain zoom curve here rounds a circle into
         // a square the moment the graph opens.
-        const float shape_t = view::disc_morph(
+        float shape_t = view::disc_morph(
             detail, view::DiscShape{d ? d->radius : 0.0f, sp ? sp->room : 1e9f}, ext.half);
+        if (registry.all_of<ecs::WorldBox>(ent)) shape_t = 1.0f;   // a rectangle at every zoom
         const float radius = 5.0f * shape_t + std::min(half.x, half.y) * (1.0f - shape_t);
 
         // A seed gets a halo: "the agent touched this" must be findable without reading
@@ -130,7 +177,7 @@ void GraphRenderSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
 
         Vec4 fill = style.fill;
         // A dot is mostly outline; without a lift in fill it reads as a hollow ring.
-        if (!d && detail.t < 0.5f) {
+        if (!d && detail.t < 0.5f && !registry.all_of<ecs::WorldBox>(ent)) {
             fill = mix(style.stroke, fill, 0.35f + 0.65f * detail.t * 2.0f);
         }
 

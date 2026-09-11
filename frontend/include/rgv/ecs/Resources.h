@@ -35,6 +35,10 @@ enum class ViewMode {
 
 const char* to_label(ViewMode m);
 
+// The impact level a view reads by default. Levels coexist and the user can switch,
+// but a view opens on the level whose result it can actually draw.
+Level default_level(ViewMode m);
+
 struct ViewSettings {
     ViewMode mode  = ViewMode::Architecture;
     Level    level = Level::Package;
@@ -163,6 +167,11 @@ struct DerivedState {
 struct EntityIndex {
     std::unordered_map<NodeId, entt::entity> nodes;
     std::unordered_map<EdgeId, entt::entity> edges;
+    // Edges that are not drawn because other drawn edges explain them: a package-level
+    // `depends_on` whose modules have an edge of their own on screen. Marking a path
+    // through the hidden edge marks these instead, so an explanation at package level
+    // lights the module edges that constitute it.
+    std::unordered_map<EdgeId, std::vector<EdgeId>> aliases;
 
     entt::entity node(const NodeId& id) const {
         auto it = nodes.find(id);

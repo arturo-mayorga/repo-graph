@@ -111,6 +111,16 @@ constexpr std::array<std::pair<std::string_view, EventType>, 6> kEventTypes{{
 
 } // namespace
 
+bool level_admits(Level level, NodeKind kind) {
+    switch (level) {
+        case Level::Package:     return kind == NodeKind::Package;
+        case Level::BuildTarget: return kind == NodeKind::BuildTarget;
+        case Level::File:        return kind == NodeKind::File;
+        case Level::Symbol:      return kind == NodeKind::Symbol || kind == NodeKind::File;
+    }
+    return false;
+}
+
 bool is_dependency_edge(EdgeKind k) {
     switch (k) {
         case EdgeKind::DependsOn:

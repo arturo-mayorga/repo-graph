@@ -401,9 +401,14 @@ void GraphRenderer::flush() {
     glBindVertexArray(0);
     glUseProgram(0);
 
-    stats_.edges  = static_cast<int>(edges_.size());
-    stats_.arrows = static_cast<int>(arrows_.size());
-    stats_.nodes  = static_cast<int>(nodes_.size());
+    stats_.edges += static_cast<int>(edges_.size());
+    stats_.arrows += static_cast<int>(arrows_.size());
+    stats_.nodes += static_cast<int>(nodes_.size());
+    // Drawn is drawn. A frame may flush more than once -- containers under edges under
+    // modules -- and what the first pass painted must not be painted again on top.
+    edges_.clear();
+    arrows_.clear();
+    nodes_.clear();
 }
 
 } // namespace rgv::render

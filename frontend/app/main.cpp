@@ -91,6 +91,7 @@ void install_resources(ecs::World& world, const app::Options& options) {
         view.level = Level::File;
     }
 
+    if (!options.filter.empty()) world.resource<ecs::Filters>().text = options.filter;
     if (options.relevance >= 0.0f) {
         world.resource<ecs::Filters>().min_relevance = std::clamp(options.relevance, 0.0f, 1.0f);
     }

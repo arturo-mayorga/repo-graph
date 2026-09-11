@@ -80,6 +80,18 @@ int count_nodes(rgvtest::Harness& h) {
     return n;
 }
 
+// The same graph as files with imports, for the concentric layout the file graph uses.
+// Ids are opaque to the frontend, so they can stay as they are.
+Snapshot as_files(Snapshot s) {
+    for (auto& n : s.nodes) {
+        if (n.kind == NodeKind::Package) n.kind = NodeKind::File;
+    }
+    for (auto& e : s.edges) {
+        if (e.kind == EdgeKind::DependsOn) e.kind = EdgeKind::Imports;
+    }
+    return s;
+}
+
 // Seeds a harness with the chain graph and runs a frame.
 rgvtest::Harness make(Snapshot s = chain()) {
     rgvtest::Harness h;
@@ -99,7 +111,7 @@ rgvtest::Harness make(Snapshot s = chain()) {
 // Getting this wrong means a view mode silently renders the wrong universe.
 TEST(view_mode_selects_which_nodes_exist_on_screen) {
     auto h = make();
-    CHECK_EQ(count_nodes(h), 3);   // three packages, no repo/dir/file
+    CHECK_EQ(count_nodes(h), 5);   // three packages and the two files that take part; no repo/dir
 
     h.view().mode = ecs::ViewMode::FileGraph;
     h.tick();
@@ -163,7 +175,7 @@ TEST(a_changed_file_marks_its_owning_package_as_changed) {
 
     CHECK(h.registry().all_of<ecs::Changed>(h.node("pkg:a")));
     CHECK(!h.registry().all_of<ecs::Changed>(h.node("pkg:b")));
-    CHECK_EQ(h.stats().changed, 1);
+    CHECK_EQ(h.stats().changed, 2);   // the module itself, drawn inside its package, and the package
 }
 
 // THE rule. The impact result reports how trustworthy the PATH is, which can be worse
@@ -255,7 +267,10 @@ TEST(the_explained_path_marks_every_node_and_edge_on_the_chain) {
     CHECK(on_path("pkg:c", false));
     CHECK(on_path("e:c->b", true));
     CHECK(on_path("pkg:b", false));
-    CHECK(on_path("e:b->a", true));
+    // b -> a is not drawn: the module edge y -> x between their contents explains it,
+    // so that is what lights up for the hop.
+    CHECK(h.edge("e:b->a") == entt::null);
+    CHECK(on_path("e:y->x", true));
     CHECK(on_path("pkg:a", false));
 }
 
@@ -312,7 +327,10 @@ TEST(cycling_past_the_last_path_wraps_to_the_first) {
 // so a has one direct dependent and would be exiled to the rim while being the thing
 // everything else is built on.
 TEST(layout_puts_the_most_depended_on_node_at_the_core) {
-    auto h = make();
+    auto h        = make(as_files(chain()));
+    h.view().mode  = ecs::ViewMode::FileGraph;
+    h.view().level = Level::File;
+    h.request_rebuild();
     h.settle();
 
     auto depth_of = [&](const char* id) {
@@ -342,7 +360,10 @@ TEST(layout_puts_the_most_depended_on_node_at_the_core) {
         w.nodes.push_back(mk_node(p, NodeKind::Package, "repo"));
         w.edges.push_back(mk_edge("e:" + p, EdgeKind::DependsOn, p, "pkg:hub"));
     }
-    auto g = make(w);
+    auto g        = make(as_files(w));
+    g.view().mode  = ecs::ViewMode::FileGraph;
+    g.view().level = Level::File;
+    g.request_rebuild();
     g.settle();
 
     const auto& reg = g.registry();
@@ -492,7 +513,9 @@ TEST(picking_agrees_with_the_camera_transform) {
     h.settle();
     view::fit_camera(h.world, {});
 
-    const entt::entity target = h.node("pkg:b");
+    // c holds nothing: a plain box. A package with modules inside is a container, and
+    // its contents win a click at its centre.
+    const entt::entity target = h.node("pkg:c");
     const Vec2         centre = h.registry().get<ecs::Position>(target).p;
 
     h.point_at(h.camera().world_to_screen(centre));
@@ -511,14 +534,18 @@ TEST(a_collapsed_dot_is_still_clickable) {
     h.camera().zoom = 0.06f;
     CHECK(!view::node_detail(h.camera().zoom, h.view().graph_text_scale).labels);
 
-    const entt::entity target = h.node("pkg:b");
+    // c holds no modules, so it is a dot; a package with something inside is a box
+    // whose contents win the click.
+    const entt::entity target = h.node("pkg:c");
     const Vec2         centre = h.registry().get<ecs::Position>(target).p;
 
     h.point_at(h.camera().world_to_screen(centre));
     CHECK(h.pointer().entity == target);
 
-    // A few pixels off-centre still hits, because the hit area has a screen floor.
-    h.point_at(h.camera().world_to_screen(centre) + Vec2{4.0f, 4.0f});
+    // A couple of pixels off-centre still hits, because the hit area has a screen
+    // floor. Not much more than that: the nested layout packs packages close enough
+    // that at this zoom the floors of neighbours overlap, and the nearer centre wins.
+    h.point_at(h.camera().world_to_screen(centre) + Vec2{2.0f, 2.0f});
     CHECK(h.pointer().entity == target);
 }
 
@@ -528,14 +555,14 @@ TEST(clicking_a_node_selects_it_through_a_command) {
     h.settle();
     view::fit_camera(h.world, {});
 
-    const entt::entity target = h.node("pkg:b");
+    const entt::entity target = h.node("pkg:c");
     const Vec2         centre = h.registry().get<ecs::Position>(target).p;
 
     h.point_at(h.camera().world_to_screen(centre));   // hover first
     h.point_at(h.camera().world_to_screen(centre), /*press=*/true);
     h.tick();   // the command lands on the next frame
 
-    CHECK_EQ(h.selection().node, std::string("pkg:b"));
+    CHECK_EQ(h.selection().node, std::string("pkg:c"));
     CHECK(h.registry().all_of<ecs::Selected>(target));
 }
 
@@ -1040,7 +1067,10 @@ TEST(dragging_a_dependency_node_pushes_its_neighbours_aside) {
         const std::string p = "pkg:p" + std::to_string(i);
         s.edges.push_back(mk_edge("e:" + p, EdgeKind::DependsOn, p, "pkg:base"));
     }
-    auto h = make(s);
+    auto h        = make(as_files(s));
+    h.view().mode  = ecs::ViewMode::FileGraph;
+    h.view().level = Level::File;
+    h.request_rebuild();
     h.settle();
     view::fit_camera(h.world, {});
 
@@ -1069,7 +1099,10 @@ TEST(dragging_a_dependency_node_pushes_its_neighbours_aside) {
 // A node dragged off its ring comes back to it. The ring is the reach reading, and a
 // node parked between rings is claiming a share of the repository it does not carry.
 TEST(a_dependency_node_returns_to_its_ring_after_a_drop) {
-    auto h = make();
+    auto h        = make(as_files(chain()));
+    h.view().mode  = ecs::ViewMode::FileGraph;
+    h.view().level = Level::File;
+    h.request_rebuild();
     h.settle();
     view::fit_camera(h.world, {});
 
@@ -1088,7 +1121,10 @@ TEST(a_dependency_node_returns_to_its_ring_after_a_drop) {
 // Angular intent survives. Springing the angle home as well would undo the drag, and
 // the user swung the node round there on purpose.
 TEST(a_dependency_drop_keeps_the_angle_it_was_put_at) {
-    auto h = make();
+    auto h        = make(as_files(chain()));
+    h.view().mode  = ecs::ViewMode::FileGraph;
+    h.view().level = Level::File;
+    h.request_rebuild();
     h.settle();
     view::fit_camera(h.world, {});
 
@@ -1379,4 +1415,110 @@ TEST(a_node_that_appears_is_seated_next_to_what_it_connects_to) {
         length(h.registry().get<ecs::Position>(h.node("pkg:d0")).p);
     CHECK(r > 1.0f);
     CHECK(std::abs(r - peer) < std::max(40.0f, peer * 0.5f));
+}
+
+// -- the nested architecture view ---------------------------------------------
+//
+// A package is a box around the modules inside it. That is what makes "the code around
+// each system" visible in the view that opens by default, rather than in a view of its
+// own: the architecture of a repository is its packages AND what they hold.
+
+namespace {
+
+Snapshot with_symbols() {
+    Snapshot s = chain();
+    s.nodes.push_back(mk_node("sym:a/x.ts#Foo", NodeKind::Symbol, "file:a/x.ts", "Foo"));
+    s.nodes.push_back(mk_node("file:c/z.ts", NodeKind::File, "pkg:c"));   // no dependencies: not architecture
+    s.edges.push_back(mk_edge("e:y-reads-Foo", EdgeKind::References, "file:b/y.ts", "sym:a/x.ts#Foo"));
+    return s;
+}
+
+bool inside(rgvtest::Harness& h, const std::string& child, const std::string& container) {
+    const auto c = h.index().node(child), p = h.index().node(container);
+    if (c == entt::null || p == entt::null) return false;
+    const auto* cp = h.registry().try_get<ecs::LayoutTarget>(c);
+    const auto* pp = h.registry().try_get<ecs::LayoutTarget>(p);
+    const auto* hull = h.registry().try_get<ecs::Hull>(p);
+    if (!cp || !pp || !hull) return false;
+    return std::abs(cp->p.x - pp->p.x) <= hull->half.x && std::abs(cp->p.y - pp->p.y) <= hull->half.y;
+}
+
+} // namespace
+
+TEST(architecture_view_lays_modules_out_inside_their_packages) {
+    auto h = make();
+    h.settle();
+    CHECK(h.index().node("file:a/x.ts") != entt::null);
+    CHECK(h.index().node("file:b/y.ts") != entt::null);
+    // The packages that hold something are containers; the empty one is a plain box.
+    CHECK(h.registry().all_of<ecs::Hull>(h.index().node("pkg:a")));
+    CHECK(h.registry().all_of<ecs::Hull>(h.index().node("pkg:b")));
+    CHECK(!h.registry().all_of<ecs::Hull>(h.index().node("pkg:c")));
+    CHECK(inside(h, "file:a/x.ts", "pkg:a"));
+    CHECK(inside(h, "file:b/y.ts", "pkg:b"));
+    CHECK(!inside(h, "file:a/x.ts", "pkg:b"));
+
+    // Sibling containers do not overlap.
+    const auto a = h.index().node("pkg:a"), b = h.index().node("pkg:b");
+    const auto& ta = h.registry().get<ecs::LayoutTarget>(a);
+    const auto& tb = h.registry().get<ecs::LayoutTarget>(b);
+    const auto& ha = h.registry().get<ecs::Hull>(a);
+    const auto& hb = h.registry().get<ecs::Hull>(b);
+    const bool apart = std::abs(ta.p.x - tb.p.x) >= ha.half.x + hb.half.x ||
+                       std::abs(ta.p.y - tb.p.y) >= ha.half.y + hb.half.y;
+    CHECK(apart);
+}
+
+TEST(a_file_with_no_dependencies_is_not_architecture) {
+    auto h = make(with_symbols());
+    CHECK(h.index().node("file:c/z.ts") == entt::null);
+    CHECK(h.index().node("file:a/x.ts") != entt::null);
+}
+
+// The edge between two modules explains the edge between their packages, so the
+// package edge is not drawn on top of it. A package with no modules on screen keeps its
+// own edge: there is nothing else to say it.
+TEST(module_edges_replace_the_package_edge_they_explain) {
+    auto h = make();
+    CHECK(h.index().edge("e:y->x") != entt::null);   // b/y.ts imports a/x.ts
+    CHECK(h.index().edge("e:b->a") == entt::null);   // explained by it
+    CHECK(h.index().edge("e:c->b") != entt::null);   // c holds nothing on screen
+}
+
+// Several store edges land between the same two modules -- the import of a file and
+// every read of a symbol inside it. The most specific one is drawn, between the files.
+TEST(a_symbol_use_is_drawn_between_the_files_and_wins_over_the_import) {
+    auto h = make(with_symbols());
+    const auto e = h.index().edge("e:y-reads-Foo");
+    CHECK(e != entt::null);
+    CHECK(h.index().edge("e:y->x") == entt::null);
+    const auto& ends = h.registry().get<ecs::Endpoints>(e);
+    CHECK(ends.from == h.index().node("file:b/y.ts"));
+    CHECK(ends.to == h.index().node("file:a/x.ts"));   // the symbol's file stands for it
+}
+
+// A changed module is red inside its package, and the module that imports it is lit
+// from the file-level result even while the view reads package-level impact.
+TEST(architecture_view_colours_modules_from_the_file_level_result) {
+    auto h = make();
+    push_change(h.store(), "a/x.ts", "file:a/x.ts");
+    ImpactedNode y;
+    y.node_id = "file:b/y.ts"; y.min_distance = 1; y.direct = true;
+    y.paths.push_back(ImpactPath{{"e:y->x"}});
+    push_impact(h.store(), Level::File, {y}, {"file:a/x.ts"});
+    h.tick();
+    CHECK(h.registry().all_of<ecs::Changed>(h.index().node("file:a/x.ts")));
+    CHECK(h.registry().all_of<ecs::Impacted>(h.index().node("file:b/y.ts")));
+    CHECK(h.registry().all_of<ecs::Changed>(h.index().node("pkg:a")));   // owns the change
+}
+
+// The symbol level is two-sided: a symbol's dependents are files, so files take part
+// in reach and specificity there or every symbol scores zero.
+TEST(at_symbol_level_files_count_as_dependents_of_symbols) {
+    auto h        = make(with_symbols());
+    h.view().level = Level::Symbol;
+    h.tick();
+    const auto& derived = h.world.resource<ecs::DerivedState>();
+    CHECK_EQ(derived.reach.dependents("sym:a/x.ts#Foo"), 1);
+    CHECK_EQ(derived.specificity.dependents("sym:a/x.ts#Foo"), 1);
 }

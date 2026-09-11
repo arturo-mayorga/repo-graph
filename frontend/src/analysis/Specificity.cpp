@@ -7,16 +7,6 @@
 namespace rgv::analysis {
 namespace {
 
-NodeKind kind_for_level(Level l) {
-    switch (l) {
-        case Level::Package:     return NodeKind::Package;
-        case Level::BuildTarget: return NodeKind::BuildTarget;
-        case Level::File:        return NodeKind::File;
-        case Level::Symbol:      return NodeKind::Symbol;
-    }
-    return NodeKind::Package;
-}
-
 bool counts(const Edge& e, const ImpactFilters& f) {
     if (!e.active()) return false;
     if (!is_dependency_edge(e.kind)) return false;   // containment is not dependency
@@ -48,12 +38,11 @@ float SpecificityIndex::dependent_fraction(const NodeId& id) const {
 }
 
 SpecificityIndex build(const GraphStore& store, Level level, const ImpactFilters& filters) {
-    const NodeKind   want = kind_for_level(level);
     SpecificityIndex index;
 
     std::vector<NodeId> population;
     for (const auto& [id, n] : store.nodes()) {
-        if (n.kind == want) population.push_back(id);
+        if (level_admits(level, n.kind)) population.push_back(id);
     }
     index.population_ = static_cast<int>(population.size());
     if (index.population_ == 0) return index;
@@ -66,7 +55,7 @@ SpecificityIndex build(const GraphStore& store, Level level, const ImpactFilters
             const Edge* e = store.edge(eid);
             if (!e || !counts(*e, filters)) continue;
             const Node* dependent = store.node(e->from);
-            if (!dependent || dependent->kind != want) continue;
+            if (!dependent || !level_admits(level, dependent->kind)) continue;
             seen.insert(e->from);
         }
         index.df_[id] = static_cast<int>(seen.size());

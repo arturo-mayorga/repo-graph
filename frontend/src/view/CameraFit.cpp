@@ -15,19 +15,23 @@ void fit_camera(ecs::World& world, const std::vector<NodeId>& ids, float padding
 
     bool any = false;
     Vec2 lo{0, 0}, hi{0, 0};
-    auto add = [&](const ecs::Position& p, const ecs::Extent& e) {
-        const Vec2 a = p.p - e.half, b = p.p + e.half;
+    auto add_half = [&](const ecs::Position& p, const Vec2& half) {
+        const Vec2 a = p.p - half, b = p.p + half;
         if (!any) { lo = a; hi = b; any = true; return; }
         lo.x = std::min(lo.x, a.x); lo.y = std::min(lo.y, a.y);
         hi.x = std::max(hi.x, b.x); hi.y = std::max(hi.y, b.y);
     };
+    // A container's footprint is its hull, not the box its name would need.
+    auto add = [&](const ecs::Position& p, const ecs::Extent& e) { add_half(p, e.half); };
+    (void)add;
 
     if (ids.empty()) {
         // NodeRef named explicitly: edges lacking Position is an accident of the
         // current archetypes, not something to build a query on.
         for (auto [e, ref, p, x] :
              registry.view<const ecs::NodeRef, const ecs::Position, const ecs::Extent>().each()) {
-            add(p, x);
+            const auto* hull = registry.try_get<ecs::Hull>(e);
+            add_half(p, hull ? hull->half : x.half);
         }
     } else {
         for (const auto& id : ids) {
@@ -35,7 +39,8 @@ void fit_camera(ecs::World& world, const std::vector<NodeId>& ids, float padding
             if (e == entt::null) continue;
             const auto* p = registry.try_get<ecs::Position>(e);
             const auto* x = registry.try_get<ecs::Extent>(e);
-            if (p && x) add(*p, *x);
+            const auto* hull = registry.try_get<ecs::Hull>(e);
+            if (p && x) add_half(*p, hull ? hull->half : x->half);
         }
     }
     if (!any) return;

@@ -61,8 +61,7 @@ void CommandSystem::run(ecs::World& world, const ecs::FrameContext&) {
                         // Selection deliberately survives the switch (FR-30); only the
                         // visible node set changes.
                         view.mode  = mode;
-                        view.level = mode == ecs::ViewMode::Architecture ? Level::Package
-                                                                         : Level::File;
+                        view.level = ecs::default_level(mode);
                         requests.rebuild = true;
                         requests.refit   = true;
                     }

@@ -102,6 +102,12 @@ enum class ImpactCause {
 // parse_* return the `Unknown`/first member and set `ok=false` on an unrecognized
 // token so a malformed fixture surfaces as a diagnostic instead of a silent default.
 
+// Whether a node of this kind is part of the population at a level: the nodes that
+// are scored, ranked, and traversed there. One kind per level, except the symbol
+// level, which is two-sided -- a symbol's dependents are the files that use it, so
+// files take part or every symbol scores zero.
+bool level_admits(Level level, NodeKind kind);
+
 NodeKind       parse_node_kind(std::string_view s, bool* ok = nullptr);
 EdgeKind       parse_edge_kind(std::string_view s, bool* ok = nullptr);
 Freshness      parse_freshness(std::string_view s, bool* ok = nullptr);

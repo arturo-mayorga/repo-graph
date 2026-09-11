@@ -33,15 +33,22 @@ bool traversable(const Edge& e, const ImpactFilters& f) {
     return e.freshness != Freshness::Invalid;
 }
 
+// A node as it takes part at `level`: itself when its kind is admitted there, else
+// its nearest ancestor of the level's kind. A changed file is its own seed at the
+// symbol level -- files take part there -- and its package at the package level.
+NodeId project(const GraphStore& store, const NodeId& id, Level level) {
+    if (const Node* n = store.node(id); n && level_admits(level, n->kind)) return id;
+    return store.ancestor_of_kind(id, kind_for_level(level));
+}
+
 } // namespace
 
 std::vector<NodeId> seeds_for_level(const GraphStore& store, Level level) {
-    const NodeKind      want = kind_for_level(level);
     std::vector<NodeId> seeds;
     std::unordered_set<NodeId> seen;
 
     for (const auto& c : store.changed_files()) {
-        NodeId projected = store.ancestor_of_kind(c.node_id, want);
+        NodeId projected = project(store, c.node_id, level);
         if (projected.empty()) continue;
         if (seen.insert(projected).second) seeds.push_back(projected);
     }
@@ -53,8 +60,6 @@ ImpactResult compute(const GraphStore& store,
                      const std::vector<NodeId>& raw_seeds,
                      Level level,
                      const ImpactFilters& filters) {
-    const NodeKind want = kind_for_level(level);
-
     ImpactResult r;
     r.level               = level;
     r.filters             = filters;
@@ -65,7 +70,7 @@ ImpactResult compute(const GraphStore& store,
     // package-level query without the caller doing the lookup.
     std::unordered_set<NodeId> seed_set;
     for (const auto& s : raw_seeds) {
-        NodeId p = store.ancestor_of_kind(s, want);
+        NodeId p = project(store, s, level);
         if (!p.empty()) seed_set.insert(p);
     }
     r.seed_nodes.assign(seed_set.begin(), seed_set.end());
@@ -98,7 +103,7 @@ ImpactResult compute(const GraphStore& store,
             if (!e || !traversable(*e, filters)) continue;
 
             const Node* dependent = store.node(e->from);
-            if (!dependent || dependent->kind != want) continue;
+            if (!dependent || !level_admits(level, dependent->kind)) continue;
             if (visited.count(e->from)) continue;
 
             visited[e->from] = Visit{dist + 1, eid, cur};

@@ -4,6 +4,7 @@
 #include "rgv/ecs/Resources.h"
 
 #include <algorithm>
+#include <functional>
 #include <cmath>
 #include <unordered_map>
 #include <unordered_set>
@@ -265,6 +266,141 @@ void LayoutSystem::concentric_place(ecs::World& world) {
             if (!reg.all_of<ecs::Position>(e)) reg.emplace<ecs::Position>(e, ecs::Position{target});
         }
     }
+    energy_ = 1e9f;
+}
+
+// Nested architecture layout: every container packs its children into rows, then is
+// sized to hold them, bottom-up. Leaves keep the footprint their label needs.
+//
+// Rows rather than a force layout or a treemap. A treemap fills the rectangle and
+// sizes by weight, which is the wrong reading here -- a module is not bigger because
+// it has more lines -- and it puts boxes edge to edge so nothing has a name beside it.
+// Rows keep every module the size its name needs and let a package be as wide as its
+// contents, which is exactly what "the code around each system" asks to see.
+void LayoutSystem::nested_place(ecs::World& world) {
+    auto& reg = world.registry;
+    ring_radius_.clear();
+
+    std::unordered_map<std::uint32_t, entt::entity>              parent;
+    std::unordered_map<std::uint32_t, std::vector<entt::entity>> kids;
+    for (auto [e, ref, ends] : reg.view<const ecs::EdgeRef, const ecs::Endpoints>().each()) {
+        if (ref.kind != EdgeKind::Contains) continue;
+        parent[to_raw(ends.from)] = ends.to;
+        kids[to_raw(ends.to)].push_back(ends.from);
+    }
+
+    std::vector<entt::entity> all;
+    for (auto [e, ref] : reg.view<const ecs::NodeRef>().each()) all.push_back(e);
+    if (all.empty()) { energy_ = 1e9f; return; }
+
+    const float gap    = params_.node_gap * 0.6f;
+    const float pad    = 18.0f;
+    const float header = 26.0f;
+
+    auto name_of = [&](entt::entity e) {
+        const auto* l = reg.try_get<ecs::Label>(e);
+        return l ? l->text : std::string{};
+    };
+
+    // Offset of each child from its parent's centre, and each node's half-size.
+    std::unordered_map<std::uint32_t, Vec2> rel;
+    std::unordered_map<std::uint32_t, Vec2> half;
+
+    // Packs boxes into rows whose width tends toward the golden ratio of the total
+    // area, so a package with forty modules is a block, not a strip. Returns the half
+    // extent of the block and writes each item's offset from the block's centre.
+    auto pack = [&](std::vector<entt::entity> items, bool with_header) -> Vec2 {
+        std::sort(items.begin(), items.end(), [&](entt::entity a, entt::entity b) {
+            const bool ca = kids.count(to_raw(a)) > 0, cb = kids.count(to_raw(b)) > 0;
+            if (ca != cb) return !ca;   // modules first, sub-packages after
+            return name_of(a) < name_of(b);
+        });
+        float area = 0.0f, widest = 0.0f;
+        for (auto e : items) {
+            const Vec2 h = half[to_raw(e)];
+            area += (h.x * 2.0f + gap) * (h.y * 2.0f + gap);
+            widest = std::max(widest, h.x * 2.0f);
+        }
+        // Wide enough for the widest item, and otherwise set by the total area so the
+        // block comes out roughly golden. One prominent module must not turn its
+        // package into a single column: the width is a floor, not the row width.
+        const float row_w = std::max(widest * 1.05f, std::sqrt(area * 1.9f));
+
+        struct Placed { entt::entity e; float cx, cy; };
+        std::vector<Placed> placed;
+        float x = 0.0f, y = 0.0f, row_h = 0.0f, block_w = 0.0f;
+        for (auto e : items) {
+            const Vec2  h = half[to_raw(e)];
+            const float w = h.x * 2.0f;
+            if (x > 0.0f && x + w > row_w) {
+                y += row_h + gap;
+                x = 0.0f;
+                row_h = 0.0f;
+            }
+            placed.push_back({e, x + h.x, y + h.y});
+            x += w + gap;
+            row_h   = std::max(row_h, h.y * 2.0f);
+            block_w = std::max(block_w, x - gap);
+        }
+        const float block_h = y + row_h;
+        // Items sharing a row are centred in it vertically.
+        std::unordered_map<int, float> row_height;
+        for (const auto& pl : placed) {
+            const int r = static_cast<int>(std::lround(pl.cy - half[to_raw(pl.e)].y));
+            row_height[r] = std::max(row_height[r], half[to_raw(pl.e)].y * 2.0f);
+        }
+        const float top = with_header ? header : 0.0f;
+        const Vec2  out{block_w * 0.5f + pad, (block_h + top) * 0.5f + pad};
+        for (const auto& pl : placed) {
+            const int   r  = static_cast<int>(std::lround(pl.cy - half[to_raw(pl.e)].y));
+            const float cy = pl.cy - half[to_raw(pl.e)].y + row_height[r] * 0.5f;
+            rel[to_raw(pl.e)] = Vec2{-block_w * 0.5f + pl.cx, -(block_h + top) * 0.5f + top + cy};
+        }
+        return out;
+    };
+
+    std::function<Vec2(entt::entity)> size_of = [&](entt::entity e) -> Vec2 {
+        auto it = kids.find(to_raw(e));
+        const auto* ext = reg.try_get<ecs::Extent>(e);
+        const Vec2  own = ext ? ext->half : Vec2{54.0f, 17.0f};
+        if (it == kids.end() || it->second.empty()) {
+            half[to_raw(e)] = own;
+            reg.remove<ecs::Hull>(e);
+            if (parent.count(to_raw(e))) reg.emplace_or_replace<ecs::WorldBox>(e);
+            return own;
+        }
+        for (auto c : it->second) size_of(c);
+        Vec2 h = pack(it->second, true);
+        // Never narrower than its own name.
+        h.x = std::max(h.x, own.x + pad);
+        half[to_raw(e)] = h;
+        reg.emplace_or_replace<ecs::Hull>(e, ecs::Hull{h, header});
+        return h;
+    };
+
+    std::vector<entt::entity> roots;
+    for (auto e : all) {
+        if (!parent.count(to_raw(e))) roots.push_back(e);
+    }
+    for (auto r : roots) size_of(r);
+
+    // Roots share the origin: one root sits on it, several are packed around it.
+    if (roots.size() == 1) rel[to_raw(roots[0])] = Vec2{0.0f, 0.0f};
+    else pack(roots, false);
+
+    // Absolute targets, top-down. A pinned root keeps its place; its contents follow.
+    std::function<void(entt::entity, Vec2)> place = [&](entt::entity e, Vec2 origin) {
+        Vec2 at = origin + rel[to_raw(e)];
+        if (!parent.count(to_raw(e)) && reg.all_of<ecs::Pinned>(e)) {
+            if (const auto* p = reg.try_get<ecs::Position>(e)) at = p->p;
+        }
+        reg.emplace_or_replace<ecs::LayoutTarget>(e, ecs::LayoutTarget{at});
+        if (!reg.all_of<ecs::Position>(e)) reg.emplace<ecs::Position>(e, ecs::Position{at});
+        auto it = kids.find(to_raw(e));
+        if (it == kids.end()) return;
+        for (auto c : it->second) place(c, at);
+    };
+    for (auto r : roots) place(r, Vec2{0.0f, 0.0f});
     energy_ = 1e9f;
 }
 
@@ -594,9 +730,15 @@ void LayoutSystem::measure_spacing(ecs::World& world) {
 }
 
 void LayoutSystem::reset(ecs::World& world) {
-    tree_mode_ = world.resource<ecs::ViewSettings>().mode == ecs::ViewMode::Filesystem;
+    const auto mode = world.resource<ecs::ViewSettings>().mode;
+    world.registry.clear<ecs::WorldBox>();
+    tree_mode_   = mode == ecs::ViewMode::Filesystem;
+    nested_mode_ = mode == ecs::ViewMode::Architecture;
     if (tree_mode_) {
         radial_tree(world);
+    } else if (nested_mode_) {
+        assign_depths(world);
+        nested_place(world);
     } else {
         assign_depths(world);
         concentric_place(world);
@@ -879,7 +1021,7 @@ bool LayoutSystem::seat_newcomers(ecs::World& world) {
     // A containment layout has no meaningful "near": a file belongs on its parent's
     // orbit, and the orbits are packed as a whole. Repacking the tree is cheap and
     // stable, so the tree view keeps taking the full path.
-    if (tree_mode_) {
+    if (tree_mode_ || nested_mode_) {
         reset(world);
         return false;
     }

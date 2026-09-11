@@ -81,6 +81,7 @@ Useful options:
 ./build/bin/rgv --watch .                          # watch this repo, live
 ./build/bin/rgv --watch ~/code/some-project
 ./build/bin/rgv --watch . --provider /path/to/other-provider
+./build/bin/rgv --watch ~/code/app --select file:src/app/systems/movement.py
 ```
 
 `rgv-watch` is found next to the `rgv` binary, so nothing needs to be on `PATH`. Pass
@@ -89,7 +90,9 @@ Useful options:
 `--watch` swaps the fixture player for `rgv-watch`, a provider process that walks the
 directory, emits it as a contract snapshot, and then streams deltas as files are created,
 modified and deleted. Saving a file marks it changed in the session panel and bumps the
-generation, live.
+generation, live. Saving a Python file also re-reads its imports, moves any edge that
+changed, and re-computes the blast radius: the files that import it light up in the File
+graph view, and the package that owns it seeds the Architecture view.
 
 The provider is a separate program that shares nothing with the frontend but the wire
 format — newline-delimited JSON on stdout, `docs/frontend-contract.md` §6 — so you can
@@ -99,7 +102,7 @@ watch what it produces without a UI at all:
 ./build/bin/rgv-watch --root . | head -3
 ```
 
-The provider has two adapters. The **filesystem** adapter reports containment: which
+The provider has three adapters. The **filesystem** adapter reports containment: which
 files and directories exist and when they change. The **manifest** adapter finds packages
 and their declared dependencies, which is what populates the Architecture view:
 
@@ -117,16 +120,80 @@ which is what the provenance inspector shows.
 
 Declared dependencies, not used ones. A manifest states what a package is *allowed* to
 depend on — that is `confidence: "exact"` about the declaration and says nothing about
-whether any code imports it. Import-level truth needs a parser per language and is a
-different provider.
+whether any code imports it. Import-level truth needs a reader per language, and the
+third adapter is the first of those.
+
+The **python-imports** adapter reads every `.py` file and turns its `import` and
+`from … import` statements into `imports` edges between files, which is what populates
+the File graph view. It also makes every directory with an `__init__.py` a package node,
+nested under whatever contains it, and aggregates the imports that cross package
+boundaries into one `depends_on` edge per pair, carrying the first crossing import as
+evidence. That is what makes the Architecture view of a single-distribution repository —
+one `pyproject.toml`, a dozen packages — an architecture rather than one box. A Python
+package replaces the directory node at its path exactly as a manifest package does, so
+"which package owns this file" is still a walk up the containment tree, and it lands on
+the innermost one. Package-level impact is seeded there and runs over the aggregated
+edges together with the declared ones. An import resolves against the source roots — the repository root,
+each package directory, and any `src/` under either, so both the flat and the src
+layout work — to `module.py` or `module/__init__.py`. `from pkg import name` tries
+`pkg/name.py` first and falls back to `pkg/__init__.py`, which is what the interpreter
+does. Relative imports resolve from the importing file. Every edge carries the line and
+the statement that declared it.
+
+What it will not do is guess. An import it cannot place in the repository — the
+standard library, a third-party package, a module built with `importlib` — produces no
+edge at all, because an edge to a node that does not exist is worse than a missing one
+and mapping a module name to a distribution (`yaml` is `PyYAML`) is a different problem.
+An import two source roots could satisfy resolves to the first and is marked
+`heuristic`, which the traversal skips by default. Imports inside strings and comments
+are not imports; imports inside functions and `if TYPE_CHECKING:` blocks are.
+
+It is a line scanner, not a parser, and it is meant to stay one: an import is a statement
+at the start of a logical line, and the cases a scanner cannot see are the ones a
+dependency graph should not claim to.
+
+**Symbols.** The same adapter extracts every top-level class and function and follows
+each file's import bindings to where the names it uses are defined — through re-exports
+too, so `from ..components import CarState` lands on `components/car.py` even though
+`components/__init__.py` is what the import names. A symbol something *else* uses
+becomes a `symbol` node under its file; one nobody imports is a detail of the file. How
+a file uses a symbol is the edge: constructing or invoking it (`CarState(...)`,
+`queries.load(...)`) is a `calls` edge, every other mention — a query by type, an
+annotation, an argument — is a `references` edge. In an entity-component codebase that
+is write versus read: the system that builds a component owns it, the systems that ask
+for it consume it, and two systems are related by the component between them without
+importing each other. The architecture view draws those as coloured edges between the
+modules; symbol-level impact is seeded at the symbols a changed file defines and reaches
+the files that use them.
+
+What a name scan cannot see: a component fetched and then mutated in place
+(`position.floor = 3`) is a read of `CarPosition` here, not a write. Calling that a
+write needs dataflow, which is a parser's job and a later provider's.
+
+The blast radius is the provider's too. The frontend renders `impact.updated`; it does
+not derive one from a live stream (contract §6.4). So after any save, or any edge that
+moves, `rgv-watch` walks the `imports` edges in reverse from every file changed since
+the baseline and emits the file-level result, with one shortest path per hit, and the
+package-level result seeded by the packages that own those files. The end-to-end test
+checks the provider's answer against the frontend's own traversal over the same store,
+which is the same agreement `rgv-replay --check` demands of a fixture.
 
 Startup picks a view that has something in it — a baseline with no dependency edges opens
 on Filesystem — so you land somewhere useful without passing `--view`.
 
-Adding an ecosystem is adding a reader in `provider/watch/Packages.cpp`; nothing else in
-the provider knows that npm or Python exist. Cargo, Go and CMake are not read yet, so
-this repo's own Architecture view stays empty — point `--watch` at a JS or Python project
-to see it populated.
+Namespace packages — a directory of modules with no `__init__.py` — are not package
+nodes; their files are owned by the nearest package above them. A distribution and its
+top-level package usually share a name (`elevators` the pyproject, `elevators` the
+directory), so the view shows two boxes with that label: the one with a path under it is
+the code, the one without is the manifest, which owns `tests/` and anything else outside
+the package.
+
+Adding an ecosystem is adding a reader in `provider/watch/Packages.cpp`; adding a
+language is another `PythonImports`-shaped pair of functions — parse one file, resolve
+against the tree — and the loop in `main.cpp` does not change. Cargo, Go and CMake are
+not read yet, and neither are C++ includes, so this repo's own Architecture and File
+graph views stay empty — point `--watch` at a Python project to see all three views
+populated, or a JS one for the Architecture view.
 
 `--scenario N --at MS --select NODE --hover NODE --text-settings` reproduce an exact
 on-screen state,
@@ -136,6 +203,7 @@ input always wins over `--hover`, so pointing at something else just works.
 | Input | Action |
 |---|---|
 | drag / wheel | pan / zoom |
+| hover a module | lights every edge it has: what it reads, writes, and imports |
 | hover a node | fades in a card: what it is, what changed, why it is impacted |
 | drag a node | move it; it settles back into place on release |
 | double click | pin / unpin in place |
@@ -225,6 +293,40 @@ available, explicitly, on double click.
 
 The layered views have no containment to relax, so a drag there stays rigid and the row
 structure is not shaken apart.
+
+### The architecture view
+
+What opens by default, and what `rgv --watch` is for: the architecture of the code.
+Not one box per distribution — a package is a box drawn around the modules inside it,
+sized to hold them, and packages nest the same way, so a single `pyproject.toml` with a
+dozen packages reads as a dozen labelled regions, each full of its named modules. A
+module that takes part in no dependency — a README, a config file — is not architecture
+and stays out.
+
+Edges live at their own level and are drawn between whatever stands for their
+endpoints: an import between two modules is a line between those modules; a read or a
+write of a symbol is a line from the module to the module that defines it; a declared
+dependency between two packages is a line between the packages — unless the modules
+inside them already have a drawn edge between them, in which case the package edge is
+not drawn, because the modules are the explanation. Several store edges land on the
+same pair of modules (the import of `motion.py` and every read of a component in it)
+and the most specific one is drawn, so the line says *reads `CarPosition`* rather than
+*imports*. Reads and writes are differently coloured.
+
+Hundreds of edges at once are a field, not a diagram, so the field sits back and the
+edges of the node you point at or select come forward at full strength. Point at a
+system and its reads and writes stand out; click it and the inspector lists them. The
+blast radius is drawn at two levels at once — modules from the file-level result,
+packages from the package-level one — so a saved file is red inside its package while
+the packages that depend on it light up around it.
+
+Containers keep their world size at every zoom, and so does what is laid out inside
+them: at overview a package is a box full of small rectangles rather than a box with a
+few dots in it, and zooming in reveals the names inside the rectangles. Modules are
+packed into rows inside their package, bottom-up, so every container's size is exact
+before its own parent packs it; nothing settles and the same repository always draws
+identically. `--filter TEXT` opens with the name/path filter set and `--select NODE`
+with a node selected, which is what makes a screenshot of this view reproducible.
 
 ### Semantic zoom
 
@@ -379,11 +481,10 @@ the rules it enforces and why, layout and rendering, and how the pipeline is tes
 
 ## What is not here yet
 
-No dependency extraction from a live repo, and no symbol level. `rgv-watch` reports
-containment — which files and directories exist and when they change — so watching a real
-checkout gives you a live Filesystem view but empty Architecture and File graph views.
-Those need a language provider, which is the next process to write and the first place a
-language choice actually enters the design.
+One language. `rgv-watch` extracts imports and symbols for Python only, so watching a
+TypeScript or C++ checkout gives you a live Filesystem view, an Architecture view if
+there are manifests it reads, and empty File graph and Symbols views. No git
+reconciliation in the live path: a rename arrives as a delete and a create.
 
 The temporal-compare view (FR-34) is represented in the contract (`valid_to` on edges) but
 has no view mode.

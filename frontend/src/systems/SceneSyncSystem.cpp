@@ -7,6 +7,8 @@
 
 #include <vector>
 #include <algorithm>
+#include <map>
+#include <set>
 #include <cctype>
 
 namespace rgv::systems {
@@ -113,6 +115,21 @@ void SceneSyncSystem::revisit(ecs::World& world) {
         else if (!visible && present) gone.push_back(id);
     }
     for (const auto& id : gone) drop_node(world, id);
+    if (world.resource<ecs::ViewSettings>().mode == ecs::ViewMode::Architecture) {
+        choose_drawn_edges(world);
+        // What an edge is drawn between can move when a file arrives or leaves, so the
+        // drawn set is re-derived and its endpoints refreshed.
+        std::vector<EdgeId> stale;
+        for (const auto& [eid, ent] : index.edges) {
+            if (eid.rfind(kTreeEdgePrefix, 0) == 0) continue;
+            if (!drawn_.count(eid)) stale.push_back(eid);
+        }
+        for (const auto& eid : stale) drop_edge(world, eid);
+        for (const auto& [eid, pair] : drawn_) {
+            if (const Edge* e = store.edge(eid)) upsert_edge(world, *e);
+        }
+        sync_containment(world);
+    }
 
     // Edges follow: one may have become visible because its endpoint just arrived.
     std::vector<EdgeId> dead;
@@ -129,6 +146,33 @@ void SceneSyncSystem::revisit(ecs::World& world) {
 
 // -- visibility ---------------------------------------------------------------
 
+namespace {
+
+bool dependency_kind(EdgeKind k) {
+    return k == EdgeKind::Imports || k == EdgeKind::Calls || k == EdgeKind::References;
+}
+
+// A file with any dependency in or out, counting the symbols it defines: a component
+// module nobody imports directly is still what every system reads.
+bool participates(const GraphStore& store, const Node& n) {
+    for (const auto& eid : store.out_edges(n.id)) {
+        if (const Edge* e = store.edge(eid); e && e->active() && dependency_kind(e->kind)) return true;
+    }
+    for (const auto& eid : store.in_edges(n.id)) {
+        if (const Edge* e = store.edge(eid); e && e->active() && dependency_kind(e->kind)) return true;
+    }
+    for (const auto& cid : store.children(n.id)) {
+        const Node* c = store.node(cid);
+        if (!c || c->kind != NodeKind::Symbol) continue;
+        for (const auto& eid : store.in_edges(cid)) {
+            if (const Edge* e = store.edge(eid); e && e->active()) return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
+
 bool SceneSyncSystem::node_visible(const ecs::World& world, const Node& n) const {
     const auto& view    = world.resource<ecs::ViewSettings>();
     const auto& f       = world.resource<ecs::Filters>();
@@ -137,7 +181,14 @@ bool SceneSyncSystem::node_visible(const ecs::World& world, const Node& n) const
 
     switch (view.mode) {
         case ecs::ViewMode::Architecture:
+            // Packages, and inside them the files that take part in a dependency: a
+            // module that imports, is imported, or defines something another file
+            // uses. A README or a config file is not architecture and stays out.
             if (n.kind == NodeKind::ExternalPackage) return f.show_external;
+            if (n.kind == NodeKind::File) {
+                if (!participates(store, n)) return false;
+                break;
+            }
             if (n.kind != NodeKind::Package && n.kind != NodeKind::BuildTarget) return false;
             break;
         case ecs::ViewMode::Filesystem:
@@ -222,12 +273,107 @@ void SceneSyncSystem::count_hidden(ecs::World& world) const {
     }
 }
 
+// The node that stands for `id` on screen: itself when it is drawn, else the nearest
+// drawn ancestor. A symbol is represented by its file; a file that is filtered out, by
+// its package.
+NodeId SceneSyncSystem::representative(const ecs::World& world, NodeId id) const {
+    const auto& store = world.resource<GraphStore>();
+    const auto& index = world.resource<ecs::EntityIndex>();
+    for (int guard = 0; guard < 64 && !id.empty(); ++guard) {
+        if (index.node(id) != entt::null) return id;
+        const Node* n = store.node(id);
+        if (!n) return {};
+        id = n->parent;
+    }
+    return {};
+}
+
+// Which store edges are drawn in the nested architecture view, and between what.
+//
+// Edges live at their own level -- imports between files, reads and writes from a file
+// to a symbol, declared dependencies between packages -- and the view draws each one
+// between the nodes that stand for its endpoints. Several then land on the same pair:
+// the import of `motion.py` and every read of a component inside it are all
+// `movement.py -> motion.py`. One is drawn, the most specific, so the line says "reads
+// CarPosition" rather than "imports". And a package-level edge whose contents already
+// explain it -- a `depends_on` between two packages with a drawn file edge between
+// their modules -- is not drawn at all: the modules are the explanation.
+void SceneSyncSystem::choose_drawn_edges(ecs::World& world) {
+    const auto& store = world.resource<GraphStore>();
+    const auto& f     = world.resource<ecs::Filters>();
+    auto&       index = world.resource<ecs::EntityIndex>();
+    drawn_.clear();
+    index.aliases.clear();
+
+    auto priority = [](EdgeKind k) {
+        switch (k) {
+            case EdgeKind::Calls:      return 3;
+            case EdgeKind::References: return 2;
+            case EdgeKind::Imports:    return 1;
+            default:                   return 0;
+        }
+    };
+    auto passes = [&](const Edge& e) {
+        if (!e.active()) return false;
+        if (!f.show_heuristic &&
+            (e.confidence == Confidence::Heuristic || e.confidence == Confidence::Unresolved)) {
+            return false;
+        }
+        if (!f.show_stale && e.freshness == Freshness::Stale) return false;
+        return true;
+    };
+
+    struct Pick { int prio; EdgeId id; NodeId from, to; };
+    std::map<std::pair<NodeId, NodeId>, Pick>         best;
+    std::set<std::pair<NodeId, NodeId>>               explained;   // package pairs with a drawn file edge
+    std::vector<std::pair<const Edge*, std::pair<NodeId, NodeId>>> declared;
+
+    for (const auto& [id, e] : store.edges()) {
+        if (!passes(e)) continue;
+        const bool dep = e.kind == EdgeKind::DependsOn;
+        if (!dep && !dependency_kind(e.kind)) continue;
+        const NodeId rf = representative(world, e.from);
+        const NodeId rt = representative(world, e.to);
+        if (rf.empty() || rt.empty() || rf == rt) continue;
+        if (dep) { declared.emplace_back(&e, std::make_pair(rf, rt)); continue; }
+
+        const Pick pick{priority(e.kind), id, rf, rt};
+        auto [it, fresh] = best.try_emplace({rf, rt}, pick);
+        if (!fresh && (pick.prio > it->second.prio ||
+                       (pick.prio == it->second.prio && pick.id < it->second.id))) {
+            it->second = pick;
+        }
+    }
+    std::map<std::pair<NodeId, NodeId>, std::vector<EdgeId>> by_owner_pair;
+    for (const auto& [pair, pick] : best) {
+        auto owner = [&](const NodeId& id) {
+            const Node* n = store.node(id);
+            if (n && n->kind == NodeKind::Package) return id;
+            return store.ancestor_of_kind(id, NodeKind::Package);
+        };
+        const auto owners = std::make_pair(owner(pick.from), owner(pick.to));
+        explained.insert(owners);
+        by_owner_pair[owners].push_back(pick.id);
+    }
+    for (const auto& [e, pair] : declared) {
+        if (auto it = by_owner_pair.find({e->from, e->to}); it != by_owner_pair.end()) {
+            index.aliases[e->id] = it->second;
+            continue;
+        }
+        const Pick pick{0, e->id, pair.first, pair.second};
+        auto [it, fresh] = best.try_emplace(pair, pick);
+        if (!fresh && pick.prio == it->second.prio && pick.id < it->second.id) it->second = pick;
+    }
+    for (const auto& [pair, pick] : best) drawn_[pick.id] = pair;
+}
+
 bool SceneSyncSystem::edge_visible(const ecs::World& world, const Edge& e) const {
     const auto& view  = world.resource<ecs::ViewSettings>();
     const auto& f     = world.resource<ecs::Filters>();
     const auto& index = world.resource<ecs::EntityIndex>();
 
     if (!e.active()) return false;
+    if (view.mode == ecs::ViewMode::Architecture) return drawn_.count(e.id) > 0;
     if (index.node(e.from) == entt::null || index.node(e.to) == entt::null) return false;
     if (!f.show_heuristic &&
         (e.confidence == Confidence::Heuristic || e.confidence == Confidence::Unresolved)) {
@@ -306,8 +452,12 @@ void SceneSyncSystem::upsert_edge(ecs::World& world, const Edge& e) {
     auto& registry = world.registry;
     auto& index    = world.resource<ecs::EntityIndex>();
 
-    const entt::entity from = index.node(e.from);
-    const entt::entity to   = index.node(e.to);
+    entt::entity from = index.node(e.from);
+    entt::entity to   = index.node(e.to);
+    if (auto it = drawn_.find(e.id); it != drawn_.end()) {
+        from = index.node(it->second.first);
+        to   = index.node(it->second.second);
+    }
     if (from == entt::null || to == entt::null) return;
 
     entt::entity ent = index.edge(e.id);
@@ -371,28 +521,45 @@ void SceneSyncSystem::rebuild(ecs::World& world) {
         if (node_visible(world, n)) upsert_node(world, n);
     }
     count_hidden(world);
+    if (view.mode == ecs::ViewMode::Architecture) choose_drawn_edges(world);
     for (const auto& [id, e] : store.edges()) {
         if (edge_visible(world, e)) upsert_edge(world, e);
     }
 
-    if (view.mode == ecs::ViewMode::Filesystem) {
-        // Containment rendered as synthetic edges. They are not contract edges, so
-        // they carry a distinct id prefix and the inspector offers no provenance.
-        for (const auto& [id, n] : store.nodes()) {
-            if (index.node(id) == entt::null || n.parent.empty() ||
-                index.node(n.parent) == entt::null) {
-                continue;
-            }
-            const EdgeId eid = kTreeEdgePrefix + id;
-            entt::entity ent = registry.create();
-            index.edges[eid] = ent;
-            registry.emplace<ecs::EdgeRef>(ent, ecs::EdgeRef{eid, EdgeKind::Contains});
-            registry.emplace<ecs::Style>(ent);
-            registry.emplace<ecs::Endpoints>(
-                ent, ecs::Endpoints{index.node(id), index.node(n.parent)});
-            registry.emplace<ecs::FreshnessState>(ent, ecs::FreshnessState{n.freshness});
-            registry.emplace<ecs::ConfidenceState>(ent, ecs::ConfidenceState{Confidence::Exact});
-        }
+    if (view.mode == ecs::ViewMode::Filesystem || view.mode == ecs::ViewMode::Architecture) {
+        sync_containment(world);
+    }
+    (void)registry;
+    (void)index;
+}
+
+// Containment rendered as synthetic edges, child -> the node that stands for its
+// parent. They are not contract edges, so they carry a distinct id prefix and the
+// inspector offers no provenance. The filesystem view draws them as the tree; the
+// architecture view draws nothing for them and lays a child out inside its parent.
+void SceneSyncSystem::sync_containment(ecs::World& world) {
+    auto&       registry = world.registry;
+    auto&       index    = world.resource<ecs::EntityIndex>();
+    const auto& store    = world.resource<GraphStore>();
+
+    std::vector<EdgeId> old;
+    for (const auto& [eid, ent] : index.edges) {
+        if (eid.rfind(kTreeEdgePrefix, 0) == 0) old.push_back(eid);
+    }
+    for (const auto& eid : old) drop_edge(world, eid);
+
+    for (const auto& [id, n] : store.nodes()) {
+        if (index.node(id) == entt::null || n.parent.empty()) continue;
+        const NodeId parent = representative(world, n.parent);
+        if (parent.empty() || parent == id) continue;
+        const EdgeId eid = kTreeEdgePrefix + id;
+        entt::entity ent = registry.create();
+        index.edges[eid] = ent;
+        registry.emplace<ecs::EdgeRef>(ent, ecs::EdgeRef{eid, EdgeKind::Contains});
+        registry.emplace<ecs::Style>(ent);
+        registry.emplace<ecs::Endpoints>(ent, ecs::Endpoints{index.node(id), index.node(parent)});
+        registry.emplace<ecs::FreshnessState>(ent, ecs::FreshnessState{n.freshness});
+        registry.emplace<ecs::ConfidenceState>(ent, ecs::ConfidenceState{Confidence::Exact});
     }
 }
 
@@ -404,6 +571,27 @@ void SceneSyncSystem::incremental(ecs::World& world) {
         const Node* n = store.node(id);
         if (!n || !node_visible(world, *n)) drop_node(world, id);
         else upsert_node(world, *n);
+    }
+    if (world.resource<ecs::ViewSettings>().mode == ecs::ViewMode::Architecture) {
+        // Representatives may have moved and pairs may have a new best edge, and a
+        // dirty set does not say which, so the drawn set is re-derived whole. It is a
+        // pass over the edges, not a rebuild: nothing on screen is torn down.
+        choose_drawn_edges(world);
+        const auto& index = world.resource<ecs::EntityIndex>();
+        std::vector<EdgeId> stale;
+        for (const auto& [eid, ent] : index.edges) {
+            if (eid.rfind(kTreeEdgePrefix, 0) == 0) continue;
+            if (!drawn_.count(eid)) stale.push_back(eid);
+        }
+        for (const auto& eid : stale) drop_edge(world, eid);
+        for (const auto& [eid, pair] : drawn_) {
+            if (const Edge* e = store.edge(eid)) upsert_edge(world, *e);
+        }
+        if (!dirty.nodes.empty()) {
+            sync_containment(world);
+            world.resource<ecs::SceneRequests>().relayout = true;
+        }
+        return;
     }
     // Twice over the edges: a node may have arrived after an edge that references it,
     // and an edge whose endpoint was just created is only resolvable on the second go.

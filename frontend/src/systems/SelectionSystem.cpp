@@ -62,6 +62,14 @@ void SelectionSystem::run(ecs::World& world, const ecs::FrameContext&) {
         ++hop;
         if (const entt::entity e = index.edge(eid); e != entt::null) {
             registry.emplace_or_replace<ecs::OnExplainedPath>(e, ecs::OnExplainedPath{hop});
+        } else if (auto al = index.aliases.find(eid); al != index.aliases.end()) {
+            // The hop is a package edge the view does not draw because the module
+            // edges between those packages explain it. Light those instead.
+            for (const auto& other : al->second) {
+                if (const entt::entity e = index.edge(other); e != entt::null) {
+                    registry.emplace_or_replace<ecs::OnExplainedPath>(e, ecs::OnExplainedPath{hop});
+                }
+            }
         }
         if (const Edge* edge = store.edge(eid)) {
             if (const entt::entity e = index.node(edge->to); e != entt::null) {

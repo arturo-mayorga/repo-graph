@@ -9,6 +9,9 @@
 #include "rgv/ecs/Resources.h"
 #include "rgv/ecs/System.h"
 
+#include <unordered_map>
+#include <utility>
+
 namespace rgv::systems {
 
 class SceneSyncSystem final : public ecs::System {
@@ -24,6 +27,9 @@ private:
     void refresh_extents(ecs::World& world);
 
     bool node_visible(const ecs::World& world, const Node& n) const;
+    NodeId representative(const ecs::World& world, NodeId id) const;
+    void   choose_drawn_edges(ecs::World& world);
+    void   sync_containment(ecs::World& world);
     // The change itself, or a seed everything else is explained against. Exempt from
     // every filter -- hiding either would remove the thing the view is about.
     bool exempt_from_filters(const ecs::World& world, const Node& n) const;
@@ -36,6 +42,9 @@ private:
     void seed_position(ecs::World& world, entt::entity e, const Node& n);
 
     ecs::ViewMode built_mode_ = ecs::ViewMode::Architecture;
+    // Architecture view: the store edges that are drawn, and the nodes each one is
+    // drawn between (its endpoints' representatives). See choose_drawn_edges.
+    std::unordered_map<EdgeId, std::pair<NodeId, NodeId>> drawn_;
     bool          primed_     = false;
 };
 

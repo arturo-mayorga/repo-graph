@@ -7,16 +7,6 @@
 namespace rgv::analysis {
 namespace {
 
-NodeKind kind_for_level(Level l) {
-    switch (l) {
-        case Level::Package:     return NodeKind::Package;
-        case Level::BuildTarget: return NodeKind::BuildTarget;
-        case Level::File:        return NodeKind::File;
-        case Level::Symbol:      return NodeKind::Symbol;
-    }
-    return NodeKind::Package;
-}
-
 bool counts(const Edge& e, const ImpactFilters& f) {
     if (!e.active()) return false;
     if (!is_dependency_edge(e.kind)) return false;   // containment is not dependency
@@ -43,13 +33,12 @@ float ReachIndex::fraction(const NodeId& id) const {
 }
 
 ReachIndex build_reach(const GraphStore& store, Level level, const ImpactFilters& filters) {
-    const NodeKind want = kind_for_level(level);
-    ReachIndex     index;
+    ReachIndex index;
 
     std::vector<NodeId>                     population;
     std::unordered_map<NodeId, std::size_t> slot;
     for (const auto& [id, n] : store.nodes()) {
-        if (n.kind != want) continue;
+        if (!level_admits(level, n.kind)) continue;
         slot[id] = population.size();
         population.push_back(id);
     }

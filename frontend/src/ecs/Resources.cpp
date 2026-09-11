@@ -11,4 +11,11 @@ const char* to_label(ViewMode m) {
     return "?";
 }
 
+Level default_level(ViewMode m) {
+    switch (m) {
+        case ViewMode::Architecture: return Level::Package;
+        default:                     return Level::File;
+    }
+}
+
 } // namespace rgv::ecs

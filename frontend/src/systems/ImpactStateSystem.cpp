@@ -21,6 +21,21 @@ void ImpactStateSystem::run(ecs::World& world, const ecs::FrameContext&) {
     if (result) {
         for (const auto& in : result->impacted_nodes) impact_by_id_[in.node_id] = &in;
     }
+    // The nested architecture view draws two levels at once, so it reads two results:
+    // packages from the package level, the modules inside them from the file level.
+    // The user's chosen level still wins for its own kind; the other level fills in.
+    if (view.mode == ecs::ViewMode::Architecture) {
+        for (Level other : {Level::Package, Level::File}) {
+            if (other == view.level) continue;
+            const ImpactResult* r = store.impact(other);
+            if (!r) continue;
+            for (const auto& in : r->impacted_nodes) {
+                const Node* n = store.node(in.node_id);
+                if (!n || !level_admits(other, n->kind)) continue;
+                impact_by_id_.try_emplace(in.node_id, &in);
+            }
+        }
+    }
     changed_by_id_.clear();
     for (const auto& c : store.changed_files()) changed_by_id_[c.node_id] = &c;
     hub_by_id_.clear();
@@ -45,6 +60,14 @@ void ImpactStateSystem::run(ecs::World& world, const ecs::FrameContext&) {
         } else if (ref.kind == NodeKind::Package || ref.kind == NodeKind::Directory) {
             for (const auto& [nid, c] : changed_by_id_) {
                 if (store.ancestor_of_kind(nid, ref.kind) == ref.id) { changed = c; break; }
+            }
+        } else if (ref.kind == NodeKind::Symbol) {
+            // The projection runs downward too: a symbol is changed when the file that
+            // defines it is, since the file is the unit anything was saved at.
+            if (const Node* n = store.node(ref.id)) {
+                if (auto it = changed_by_id_.find(n->parent); it != changed_by_id_.end()) {
+                    changed = it->second;
+                }
             }
         }
         if (changed) {

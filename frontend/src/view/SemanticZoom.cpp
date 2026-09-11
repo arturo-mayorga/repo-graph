@@ -119,4 +119,9 @@ Vec2 text_extent(NodeKind kind, const std::string& name, const std::string& sub,
                 h * graph_text_scale};
 }
 
+Vec2 world_box_half(float zoom, const Vec2& layout_half, float min_px) {
+    const float floor_w = min_px / std::max(zoom, 1e-4f);
+    return Vec2{std::max(layout_half.x, floor_w), std::max(layout_half.y, floor_w * 0.6f)};
+}
+
 } // namespace rgv::view
