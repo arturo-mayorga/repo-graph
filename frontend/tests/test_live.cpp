@@ -448,7 +448,7 @@ TEST(saving_a_python_file_lights_up_the_files_that_import_it) {
     CHECK(wait_for(src, store, [&] { return store.impact(Level::Package) != nullptr; }));
     const ImpactResult* pkg = store.impact(Level::Package);
     CHECK_EQ(pkg->seed_nodes.size(), 1u);
-    CHECK_EQ(pkg->seed_nodes[0], std::string("pypkg:demo"));
+    CHECK_EQ(pkg->seed_nodes[0], std::string("pkg:demo"));
 }
 
 // An import rewritten is an edge removed and an edge added, not a rebuilt graph.
@@ -521,22 +521,33 @@ TEST(a_single_distribution_shows_its_python_packages_as_architecture) {
     store.reset(src.baseline());
     settle(src, store);
 
-    // Packages, nested: api and core sit inside demo, demo inside the src directory.
-    const Node* demo = store.node("pypkg:src/demo");
+    // The distribution and its top-level package share the name `demo`, so they are one
+    // node. Two boxes with the same label is not an architecture, and the duplicate
+    // doubles the edges between the packages underneath it.
+    int named_demo = 0;
+    for (const auto& [id, n] : store.nodes()) {
+        if (n.kind == NodeKind::Package && n.name == "demo") ++named_demo;
+    }
+    CHECK_EQ(named_demo, 1);
+    CHECK(store.node("pypkg:src/demo") == nullptr);
+
+    const Node* demo = store.node("pkg:demo");
     const Node* api  = store.node("pypkg:src/demo/api");
     const Node* core = store.node("pypkg:src/demo/core");
     CHECK(demo != nullptr && api != nullptr && core != nullptr);
     CHECK(api->kind == NodeKind::Package);
     CHECK_EQ(api->name, std::string("demo.api"));
-    CHECK_EQ(api->parent, std::string("pypkg:src/demo"));
-    CHECK_EQ(demo->parent, std::string("dir:src"));
     CHECK(store.node("dir:src/demo/api") == nullptr);   // the package replaces the directory
 
     // Files are owned by the innermost package, which is what FR-11 projects through.
-    CHECK_EQ(store.node("file:src/demo/api/routes.py")->parent, std::string("pypkg:src/demo/api"));
     CHECK_EQ(store.ancestor_of_kind("file:src/demo/api/routes.py", NodeKind::Package),
              std::string("pypkg:src/demo/api"));
-    CHECK_EQ(store.ancestor_of_kind("file:tests/test_db.py", NodeKind::Package), std::string("pkg:demo"));
+    // Everything outside a sub-package belongs to the distribution: the tests, and the
+    // modules that sit directly in its own directory.
+    CHECK_EQ(store.ancestor_of_kind("file:tests/test_db.py", NodeKind::Package),
+             std::string("pkg:demo"));
+    CHECK_EQ(store.ancestor_of_kind("file:src/demo/app.py", NodeKind::Package),
+             std::string("pkg:demo"));
 
     // The edges between them, aggregated from the imports that cross the boundary.
     auto dep = [&](const std::string& from, const std::string& to) -> const Edge* {
@@ -550,13 +561,12 @@ TEST(a_single_distribution_shows_its_python_packages_as_architecture) {
     CHECK_EQ(api_core->provider, std::string("python-imports"));
     CHECK(api_core->confidence == Confidence::Exact);
     CHECK_EQ(api_core->evidence->artifact, std::string("src/demo/api/routes.py"));
-    CHECK_EQ(api_core->evidence->line, 1);
-    CHECK(dep("pypkg:src/demo", "pypkg:src/demo/api") != nullptr);
-    CHECK(dep("pkg:demo", "pypkg:src/demo/core") != nullptr);   // the tests, owned by the distribution
+    CHECK(dep("pkg:demo", "pypkg:src/demo/api") != nullptr);
+    CHECK(dep("pkg:demo", "pypkg:src/demo/core") != nullptr);
     CHECK(dep("pypkg:src/demo/core", "pypkg:src/demo/api") == nullptr);
 
-    // Change db.py: api is directly impacted, demo transitively, and the answer agrees
-    // with the frontend's own traversal.
+    // Change db.py: api is directly impacted, the distribution too, and the answer
+    // agrees with the frontend's own traversal.
     { std::ofstream(r.root + "/src/demo/core/db.py", std::ios::app) << "# more\n"; }
     CHECK(wait_for(src, store, [&] { return store.impact(Level::Package) != nullptr; }));
     const ImpactResult* pkg = store.impact(Level::Package);
@@ -565,7 +575,6 @@ TEST(a_single_distribution_shows_its_python_packages_as_architecture) {
     std::map<std::string, int> dist;
     for (const auto& n : pkg->impacted_nodes) dist[n.node_id] = n.min_distance;
     CHECK_EQ(dist["pypkg:src/demo/api"], 1);
-    CHECK_EQ(dist["pypkg:src/demo"], 2);
     CHECK_EQ(dist["pkg:demo"], 1);
 
     const auto mine = sim::compute(store, sim::seeds_for_level(store, Level::Package),

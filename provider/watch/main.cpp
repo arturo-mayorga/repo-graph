@@ -507,6 +507,29 @@ std::vector<rgv::watch::PyPackage> detect_python_packages(const Tree&           
     return rgv::watch::python_packages(files, roots);
 }
 
+// A distribution and its top-level package almost always share a name: `elevators` the
+// pyproject.toml and `elevators` the directory under `src/`. They are one unit, and two
+// boxes carrying the same label is not an architecture -- on this repo the duplicate
+// accounted for 8 of 27 package-level edges and more than doubled the crossings. So the
+// python package is dropped and its contents reparent onto the distribution, which is
+// what actually owns them.
+std::vector<rgv::watch::PyPackage> drop_distribution_twins(
+    std::vector<rgv::watch::PyPackage> py, const std::vector<rgv::watch::Package>& packages,
+    const PackageDirs& manifest_dirs) {
+    std::map<std::string, std::string> name_of;
+    for (const auto& p : packages) name_of[p.id] = p.name;
+
+    py.erase(std::remove_if(py.begin(), py.end(),
+                            [&](const rgv::watch::PyPackage& p) {
+                                auto it = name_of.find(owning_package(p.rel, manifest_dirs));
+                                return it != name_of.end() &&
+                                       rgv::watch::normalize(it->second) ==
+                                           rgv::watch::normalize(p.module);
+                            }),
+             py.end());
+    return py;
+}
+
 json pypkg_node(const rgv::watch::PyPackage& p, const PackageDirs& pkg_dirs) {
     json n = node_json(pypkg_id(p.rel), "package", p.module, p.rel, parent_id_for(p.rel, pkg_dirs),
                        "python");
@@ -683,7 +706,8 @@ int main(int argc, char** argv) {
         packages = rgv::watch::scan_packages(root, tree.entries);
         for (const auto& p : packages) manifest_dirs[p.rel] = p.id;
         reroot(tree);
-        pypkgs   = detect_python_packages(tree, imports.roots);
+        pypkgs   = drop_distribution_twins(detect_python_packages(tree, imports.roots), packages,
+                                           manifest_dirs);
         pkg_dirs = merge_dirs(pypkgs);
 
         for (const auto& [rel, is_dir] : tree.entries) {
@@ -774,7 +798,8 @@ int main(int argc, char** argv) {
         json updated = json::array();
         if (!fresh.empty() || !removed.empty()) {
             reroot(now);
-            const auto next_py = detect_python_packages(now, imports.roots);
+            const auto next_py = drop_distribution_twins(detect_python_packages(now, imports.roots),
+                                                         packages, manifest_dirs);
             if (next_py != pypkgs) {
                 const PackageDirs next_dirs = merge_dirs(next_py);
                 for (const auto& p : next_py) {
