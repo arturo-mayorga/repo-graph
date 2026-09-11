@@ -2,6 +2,16 @@
 
 namespace rgv::ecs {
 
+const char* to_label(Relation r) {
+    switch (r) {
+        case Relation::All:     return "all";
+        case Relation::Imports: return "imports";
+        case Relation::Reads:   return "reads";
+        case Relation::Writes:  return "writes";
+    }
+    return "all";
+}
+
 const char* to_label(ViewMode m) {
     switch (m) {
         case ViewMode::Architecture: return "Architecture";

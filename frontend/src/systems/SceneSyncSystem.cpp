@@ -203,6 +203,12 @@ bool SceneSyncSystem::node_visible(const ecs::World& world, const Node& n) const
             // uses. A README or a config file is not architecture and stays out.
             if (n.kind == NodeKind::ExternalPackage) return f.show_external;
             if (n.kind == NodeKind::File) {
+                // Modules are inside a package until the user opens it. Collapsed is
+                // the default: the diagram is the packages, and what a package holds
+                // is the next level down rather than more of this one.
+                if (!view.expanded.count(store.ancestor_of_kind(n.id, NodeKind::Package))) {
+                    return false;
+                }
                 if (!participates(store, n)) return false;
                 break;
             }
@@ -323,6 +329,7 @@ void SceneSyncSystem::choose_drawn_edges(ecs::World& world) {
     const auto& f     = world.resource<ecs::Filters>();
     auto&       index = world.resource<ecs::EntityIndex>();
     drawn_.clear();
+    weights_.clear();
     index.aliases.clear();
 
     auto priority = [](EdgeKind k) {
@@ -332,6 +339,17 @@ void SceneSyncSystem::choose_drawn_edges(ecs::World& world) {
             case EdgeKind::Imports:    return 1;
             default:                   return 0;
         }
+    };
+    // One question at a time. A declared dependency is an import-shaped claim, so it
+    // rides with imports; it is not a read or a write of anything.
+    auto in_relation = [&](EdgeKind k) {
+        switch (f.relation) {
+            case ecs::Relation::Imports: return k == EdgeKind::Imports || k == EdgeKind::DependsOn;
+            case ecs::Relation::Reads:   return k == EdgeKind::References;
+            case ecs::Relation::Writes:  return k == EdgeKind::Calls;
+            case ecs::Relation::All:     break;
+        }
+        return true;
     };
     auto passes = [&](const Edge& e) {
         if (!e.active()) return false;
@@ -343,26 +361,31 @@ void SceneSyncSystem::choose_drawn_edges(ecs::World& world) {
         return true;
     };
 
-    struct Pick { int prio; EdgeId id; NodeId from, to; };
+    struct Pick { int prio; EdgeId id; NodeId from, to; int count = 0; };
     std::map<std::pair<NodeId, NodeId>, Pick>         best;
     std::set<std::pair<NodeId, NodeId>>               explained;   // package pairs with a drawn file edge
-    std::vector<std::pair<const Edge*, std::pair<NodeId, NodeId>>> declared;
+    std::map<std::pair<NodeId, NodeId>, std::vector<const Edge*>> declared;
 
     for (const auto& [id, e] : store.edges()) {
-        if (!passes(e)) continue;
+        if (!passes(e) || !in_relation(e.kind)) continue;
         const bool dep = e.kind == EdgeKind::DependsOn;
         if (!dep && !dependency_kind(e.kind)) continue;
         const NodeId rf = representative(world, e.from);
         const NodeId rt = representative(world, e.to);
         if (rf.empty() || rt.empty() || rf == rt) continue;
-        if (dep) { declared.emplace_back(&e, std::make_pair(rf, rt)); continue; }
+        if (dep) { declared[{rf, rt}].push_back(&e); continue; }
 
-        const Pick pick{priority(e.kind), id, rf, rt};
+        // Every edge that lands on this pair counts; the most specific one is the one
+        // that gets drawn, so the line reads "writes CarPosition" rather than "imports".
+        const Pick pick{priority(e.kind), id, rf, rt, 0};
         auto [it, fresh] = best.try_emplace({rf, rt}, pick);
         if (!fresh && (pick.prio > it->second.prio ||
                        (pick.prio == it->second.prio && pick.id < it->second.id))) {
-            it->second = pick;
+            const int keep  = it->second.count;
+            it->second      = pick;
+            it->second.count = keep;
         }
+        ++it->second.count;
     }
     std::map<std::pair<NodeId, NodeId>, std::vector<EdgeId>> by_owner_pair;
     for (const auto& [pair, pick] : best) {
@@ -375,16 +398,23 @@ void SceneSyncSystem::choose_drawn_edges(ecs::World& world) {
         explained.insert(owners);
         by_owner_pair[owners].push_back(pick.id);
     }
-    for (const auto& [e, pair] : declared) {
-        if (auto it = by_owner_pair.find({e->from, e->to}); it != by_owner_pair.end()) {
-            index.aliases[e->id] = it->second;
-            continue;
+    for (const auto& [pair, es] : declared) {
+        bool aliased = false;
+        for (const Edge* e : es) {
+            auto it = by_owner_pair.find({e->from, e->to});
+            if (it == by_owner_pair.end()) continue;
+            index.aliases[e->id] = it->second;   // explained by the modules inside
+            aliased              = true;
         }
-        const Pick pick{0, e->id, pair.first, pair.second};
+        if (aliased) continue;
+        const Pick pick{0, es.front()->id, pair.first, pair.second, static_cast<int>(es.size())};
         auto [it, fresh] = best.try_emplace(pair, pick);
-        if (!fresh && pick.prio == it->second.prio && pick.id < it->second.id) it->second = pick;
+        if (!fresh) it->second.count += pick.count;
     }
-    for (const auto& [pair, pick] : best) drawn_[pick.id] = pair;
+    for (const auto& [pair, pick] : best) {
+        drawn_[pick.id]   = pair;
+        weights_[pick.id] = pick.count;
+    }
 }
 
 bool SceneSyncSystem::edge_visible(const ecs::World& world, const Edge& e) const {
@@ -490,6 +520,11 @@ void SceneSyncSystem::upsert_edge(ecs::World& world, const Edge& e) {
         registry.get<ecs::EdgeRef>(ent).kind = e.kind;
     }
     registry.emplace_or_replace<ecs::Endpoints>(ent, ecs::Endpoints{from, to});
+    if (auto w = weights_.find(e.id); w != weights_.end()) {
+        registry.emplace_or_replace<ecs::EdgeWeight>(ent, ecs::EdgeWeight{w->second});
+    } else {
+        registry.emplace_or_replace<ecs::EdgeWeight>(ent, ecs::EdgeWeight{1});
+    }
     registry.emplace_or_replace<ecs::FreshnessState>(ent, ecs::FreshnessState{e.freshness});
     registry.emplace_or_replace<ecs::ConfidenceState>(ent, ecs::ConfidenceState{e.confidence});
 }

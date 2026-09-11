@@ -6,6 +6,7 @@
 #include "rgv/view/Evidence.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace rgv::systems {
 
@@ -142,6 +143,11 @@ void StyleSystem::run(ecs::World& world, const ecs::FrameContext&) {
         if (attended(ends.from) || attended(ends.to)) {
             style.stroke_w = std::max(style.stroke_w, 2.4f);
             style.emphasis = 1.0f;
+        }
+        // A line standing for twelve relationships is drawn heavier than one standing
+        // for one. Logarithmic, so a hub thickens without swamping the picture.
+        if (const auto* w = registry.try_get<ecs::EdgeWeight>(ent); w && w->count > 1) {
+            style.stroke_w *= 1.0f + 0.40f * std::log2(static_cast<float>(w->count));
         }
         if (registry.all_of<ecs::OnExplainedPath>(ent)) {
             style.stroke   = t.path;

@@ -79,8 +79,18 @@ void NavigationSystem::run(ecs::World& world, const ecs::FrameContext&) {
     }
 
     if (target.over_graph && input.double_click && target.entity != entt::null) {
-        if (registry.all_of<ecs::Pinned>(target.entity)) registry.remove<ecs::Pinned>(target.entity);
-        else registry.emplace<ecs::Pinned>(target.entity);
+        // In the architecture view a package opens instead of pinning: what it holds
+        // is the next level of the diagram, and that is what a double click is for
+        // there. Everything else still pins.
+        const auto* ref  = registry.try_get<ecs::NodeRef>(target.entity);
+        const auto& view = world.resource<ecs::ViewSettings>();
+        if (view.mode == ecs::ViewMode::Architecture && ref && ref->kind == NodeKind::Package) {
+            world.resource<ecs::CommandQueue>().push(ecs::ToggleExpand{ref->id});
+        } else if (registry.all_of<ecs::Pinned>(target.entity)) {
+            registry.remove<ecs::Pinned>(target.entity);
+        } else {
+            registry.emplace<ecs::Pinned>(target.entity);
+        }
     }
 
     if (input.fit_pressed) queue.push(ecs::FitView{});

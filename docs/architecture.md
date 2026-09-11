@@ -66,15 +66,21 @@ that is genuinely superlinear in the graph, is gated on its inputs changing.
 
 ### Layout and rendering
 
-Layout has three strategies. The architecture view is force-directed: a package is a
-node with containment links to what it holds, containment attracts, everything repels
-(siblings gently, strangers harder), dependency edges pull weakly. Position-based with
-no velocity, seeded by id, cooled, and stopped when quiet -- `LayoutSystem::force_place`
-settles it off screen and the scene eases in. A non-drag relaxation is gentle and moves
-only newly seated nodes, which is what keeps a save from reshuffling the picture. Edges
-are drawn between whatever stands for their endpoints on screen, the most specific edge
-per pair, and a package edge its modules already explain is not drawn at all --
-`SceneSyncSystem::choose_drawn_edges` is where that is decided. The other two are radial. The filesystem view is a Gource-inspired
+Layout has three strategies. The architecture view is force-directed over containment: a
+package is a node linked to what it holds, containment attracts, everything repels
+(siblings gently, strangers harder), and each node is held to its dependency rank's row
+so the picture has a reading direction. Position-based with no velocity, seeded by id,
+cooled, and stopped when quiet -- `LayoutSystem::force_place` settles it off screen and
+the scene eases in. A non-drag relaxation is gentle and moves only newly seated nodes,
+which is what keeps a save from reshuffling the picture.
+
+What that view draws is decided in `SceneSyncSystem`. It opens at package level and a
+package's modules appear only when it is expanded (FR-31), because the file-level graph
+is past Euler's planarity bound and cannot be drawn without crossings by any layout.
+Edges are drawn between whatever stands for their endpoints on screen, the most specific
+edge per pair with the rest collapsed into its weight, filtered to one relation at a
+time, and a package edge its modules already explain is not drawn at all --
+`choose_drawn_edges` is where all of that is decided. The other two are radial. The filesystem view is a Gource-inspired
 tree: discs sized by file count, files on the rim, children packed into shells inside
 their parent's wedge. The dependency views are concentric: the ring is **reach** — how
 much of the repository transitively depends on a node — so the core sits in the middle

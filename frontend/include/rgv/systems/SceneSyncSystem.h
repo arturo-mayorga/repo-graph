@@ -46,6 +46,8 @@ private:
     // Architecture view: the store edges that are drawn, and the nodes each one is
     // drawn between (its endpoints' representatives). See choose_drawn_edges.
     std::unordered_map<EdgeId, std::pair<NodeId, NodeId>> drawn_;
+    // How many contract edges each drawn line stands for.
+    std::unordered_map<EdgeId, int> weights_;
     bool          primed_     = false;
 };
 

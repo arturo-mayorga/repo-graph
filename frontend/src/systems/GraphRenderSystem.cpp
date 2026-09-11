@@ -32,6 +32,12 @@ void GraphRenderSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
     // One semantic-zoom decision for the whole frame; picking made the same one.
     const view::NodeDetail detail = view::node_detail(camera.zoom, view.graph_text_scale);
 
+    // How crowded the picture is, in [0, 1]: a diagram at one end, a hairball at the
+    // other. Drives how far the edge field recedes.
+    const float density = std::clamp(
+        (static_cast<float>(world.resource<ecs::SceneStats>().edges) - 70.0f) / 330.0f, 0.0f, 1.0f);
+    auto mix_f = [](float a, float b, float t) { return a + (b - a) * t; };
+
     auto half_of = [&](entt::entity e) -> Vec2 {
         const auto* ext = registry.try_get<ecs::Extent>(e);
         if (!ext) return Vec2{6.0f, 6.0f};
@@ -75,12 +81,17 @@ void GraphRenderSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
             // a field, though -- hundreds at once -- so the unattended ones sit back
             // and the hovered or selected node's edges come forward at full strength.
             if (view.mode == ecs::ViewMode::Architecture) {
-                // A faint constant for the field, full strength for what is attended;
-                // containment is structure and stays readable.
-                const bool structural = registry.get<ecs::EdgeRef>(ent).kind == EdgeKind::Contains;
-                color.a *= style.emphasis >= 0.99f ? 1.0f
-                           : structural            ? 0.38f
-                                                   : 0.035f + 0.05f * style.emphasis;
+                // The field recedes because it is a field. At diagram size there is no
+                // field -- eight boxes and twenty-seven lines is a picture you read --
+                // so the fade follows the density rather than being a constant tuned
+                // for the worst case. Opening a package thickens the graph and dims it
+                // in the same movement.
+                const bool  structural = registry.get<ecs::EdgeRef>(ent).kind == EdgeKind::Contains;
+                const float base = mix_f(0.62f, 0.035f, density);
+                color.a *= style.emphasis >= 0.99f
+                               ? 1.0f
+                               : (structural ? std::max(base, 0.22f)
+                                             : base + (1.0f - base) * 0.30f * style.emphasis);
             } else {
                 color.a *= (0.35f + 0.65f * style.emphasis) * (0.45f + 0.55f * detail.t);
             }

@@ -90,6 +90,12 @@ struct LayoutParams {
     float force_spread    = 30.0f;    // repulsion strength (k in k^2/d) between kin ...
     float force_apart     = 230.0f;   // ... and between nodes of different packages
     float force_gravity   = 0.0004f;  // pull toward the origin, so components stay together
+    // Reading direction. A package depending on nothing sits at the bottom and its
+    // dependents stack above it, so impact rises and the eye can follow it without a
+    // legend. Crossings barely move at diagram size -- 38 against 40 on this repo --
+    // but a graph with no direction cannot be read as a flow at all.
+    float force_rank      = 0.20f;    // how firmly a node is held to its rank's row
+    float force_rank_gap  = 230.0f;   // distance between rows
     int   force_passes    = 600;      // at most; it stops when quiet
 
     float relax_quiet = 0.20f;    // per-frame movement below which the graph is at rest

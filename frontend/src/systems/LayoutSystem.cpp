@@ -395,6 +395,12 @@ void LayoutSystem::force_relax(ecs::World& world, float dt, int passes, float co
             }
             pos.p += shove * (params_.relax_repel * step);
             if (!gentle) pos.p -= pos.p * (params_.force_gravity * step);
+            // Rank: hold the row, leave the column free. The polar version of this is
+            // what the concentric layout does with its rings.
+            if (const auto* d = reg.try_get<ecs::Depth>(e)) {
+                const float want = -static_cast<float>(d->value) * params_.force_rank_gap;
+                pos.p.y += (want - pos.p.y) * std::min(1.0f, params_.force_rank * step);
+            }
         }
     }
 
@@ -470,6 +476,13 @@ void LayoutSystem::force_place(ecs::World& world) {
                 e, ecs::Position{Vec2{(hash_unit(id, 3) - 0.5f) * ring, (hash_unit(id, 4) - 0.5f) * ring}});
         }
         reg.emplace_or_replace<ecs::LayoutTarget>(e, ecs::LayoutTarget{reg.get<ecs::Position>(e).p});
+    }
+    // Seed on the rank rows, so the relaxation refines a layered arrangement rather
+    // than discovering one.
+    for (auto e : nodes) {
+        if (const auto* d = reg.try_get<ecs::Depth>(e)) {
+            reg.get<ecs::Position>(e).p.y = -static_cast<float>(d->value) * params_.force_rank_gap;
+        }
     }
 
     // Settle, off screen. A pinned node keeps its place throughout.

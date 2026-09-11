@@ -92,6 +92,22 @@ Snapshot as_files(Snapshot s) {
     return s;
 }
 
+// Opens the named packages, so a test can look at the modules inside them. The
+// architecture view starts at package level, so most module-level assertions need it.
+void expand(rgvtest::Harness& h, std::initializer_list<const char*> ids) {
+    for (const auto* id : ids) h.commands().push(ecs::ToggleExpand{id});
+    h.tick();
+}
+
+int edges_between(rgvtest::Harness& h, const std::string& from, const std::string& to) {
+    int n = 0;
+    for (auto [e, ref, ends] : h.registry().view<const ecs::EdgeRef, const ecs::Endpoints>().each()) {
+        if (ref.kind == EdgeKind::Contains) continue;
+        if (ends.from == h.index().node(from) && ends.to == h.index().node(to)) ++n;
+    }
+    return n;
+}
+
 // Seeds a harness with the chain graph and runs a frame.
 rgvtest::Harness make(Snapshot s = chain()) {
     rgvtest::Harness h;
@@ -111,7 +127,7 @@ rgvtest::Harness make(Snapshot s = chain()) {
 // Getting this wrong means a view mode silently renders the wrong universe.
 TEST(view_mode_selects_which_nodes_exist_on_screen) {
     auto h = make();
-    CHECK_EQ(count_nodes(h), 5);   // three packages and the two files that take part; no repo/dir
+    CHECK_EQ(count_nodes(h), 3);   // three packages; their modules are folded into them
 
     h.view().mode = ecs::ViewMode::FileGraph;
     h.tick();
@@ -175,7 +191,12 @@ TEST(a_changed_file_marks_its_owning_package_as_changed) {
 
     CHECK(h.registry().all_of<ecs::Changed>(h.node("pkg:a")));
     CHECK(!h.registry().all_of<ecs::Changed>(h.node("pkg:b")));
-    CHECK_EQ(h.stats().changed, 2);   // the module itself, drawn inside its package, and the package
+    CHECK_EQ(h.stats().changed, 1);   // the package that owns it; the module is folded in
+
+    // Opened, the module that actually changed is marked too.
+    expand(h, {"pkg:a"});
+    CHECK(h.registry().all_of<ecs::Changed>(h.node("file:a/x.ts")));
+    CHECK_EQ(h.stats().changed, 2);
 }
 
 // THE rule. The impact result reports how trustworthy the PATH is, which can be worse
@@ -1449,6 +1470,7 @@ float gap(rgvtest::Harness& h, const std::string& a, const std::string& b) {
 
 TEST(architecture_view_links_modules_to_their_packages_and_keeps_them_close) {
     auto h = make();
+    expand(h, {"pkg:a", "pkg:b", "pkg:c"});
     h.settle();
     CHECK(h.index().node("file:a/x.ts") != entt::null);
     CHECK(h.index().node("file:b/y.ts") != entt::null);
@@ -1462,6 +1484,7 @@ TEST(architecture_view_links_modules_to_their_packages_and_keeps_them_close) {
 
 TEST(nothing_overlaps_once_the_architecture_layout_settles) {
     auto h = make(with_symbols());
+    expand(h, {"pkg:a", "pkg:b", "pkg:c"});
     h.settle();
     std::vector<entt::entity> all;
     for (auto [e, ref] : h.registry().view<const ecs::NodeRef>().each()) all.push_back(e);
@@ -1483,6 +1506,8 @@ TEST(nothing_overlaps_once_the_architecture_layout_settles) {
 TEST(the_architecture_layout_is_deterministic) {
     auto a = make(with_symbols());
     auto b = make(with_symbols());
+    expand(a, {"pkg:a", "pkg:b"});
+    expand(b, {"pkg:a", "pkg:b"});
     a.settle();
     b.settle();
     for (auto [e, ref] : a.registry().view<const ecs::NodeRef>().each()) {
@@ -1494,6 +1519,7 @@ TEST(the_architecture_layout_is_deterministic) {
 
 TEST(a_file_with_no_dependencies_is_not_architecture) {
     auto h = make(with_symbols());
+    expand(h, {"pkg:a", "pkg:c"});
     CHECK(h.index().node("file:c/z.ts") == entt::null);
     CHECK(h.index().node("file:a/x.ts") != entt::null);
 }
@@ -1512,6 +1538,7 @@ TEST(module_edges_replace_the_package_edge_they_explain) {
 // every read of a symbol inside it. The most specific one is drawn, between the files.
 TEST(a_symbol_use_is_drawn_between_the_files_and_wins_over_the_import) {
     auto h = make(with_symbols());
+    expand(h, {"pkg:a", "pkg:b"});
     const auto e = h.index().edge("e:y-reads-Foo");
     CHECK(e != entt::null);
     CHECK(h.index().edge("e:y->x") == entt::null);
@@ -1524,6 +1551,7 @@ TEST(a_symbol_use_is_drawn_between_the_files_and_wins_over_the_import) {
 // from the file-level result even while the view reads package-level impact.
 TEST(architecture_view_colours_modules_from_the_file_level_result) {
     auto h = make();
+    expand(h, {"pkg:a", "pkg:b"});
     push_change(h.store(), "a/x.ts", "file:a/x.ts");
     ImpactedNode y;
     y.node_id = "file:b/y.ts"; y.min_distance = 1; y.direct = true;
@@ -1554,6 +1582,7 @@ TEST(at_symbol_level_files_count_as_dependents_of_symbols) {
 
 TEST(a_hide_pattern_removes_matching_nodes_and_their_edges) {
     auto h = make(with_symbols());
+    expand(h, {"pkg:a", "pkg:b"});
     CHECK(ecs::add_hide_pattern(h.filters(), "b/"));
     h.world.resource<ecs::SceneRequests>().revisit = true;
     h.tick();
@@ -1570,6 +1599,7 @@ TEST(a_hide_pattern_removes_matching_nodes_and_their_edges) {
 
 TEST(hiding_a_package_hides_what_it_holds) {
     auto h = make();
+    expand(h, {"pkg:a", "pkg:b"});
     CHECK(ecs::add_hide_pattern(h.filters(), "^pkg:a$"));
     h.world.resource<ecs::SceneRequests>().revisit = true;
     h.tick();
@@ -1586,13 +1616,14 @@ TEST(an_invalid_pattern_is_kept_but_hides_nothing) {
     CHECK(!h.filters().hidden[0].valid);
     h.world.resource<ecs::SceneRequests>().revisit = true;
     h.tick();
-    CHECK_EQ(count_nodes(h), 5);
+    CHECK_EQ(count_nodes(h), 3);
 }
 
 // Explicit beats everything: the relevance filter spares what the agent changed, but a
 // pattern the user typed is a decision, and a changed test module is still a test.
 TEST(a_hidden_node_stays_hidden_when_it_changes) {
     auto h = make();
+    expand(h, {"pkg:a"});
     CHECK(ecs::add_hide_pattern(h.filters(), "x\\.ts$"));
     push_change(h.store(), "a/x.ts", "file:a/x.ts");
     h.world.resource<ecs::SceneRequests>().revisit = true;
@@ -1602,6 +1633,7 @@ TEST(a_hidden_node_stays_hidden_when_it_changes) {
 
 TEST(matching_is_case_insensitive_and_removing_a_pattern_restores_the_nodes) {
     auto h = make();
+    expand(h, {"pkg:b"});
     CHECK(ecs::add_hide_pattern(h.filters(), "Y\\.TS"));
     h.world.resource<ecs::SceneRequests>().revisit = true;
     h.tick();
@@ -1610,5 +1642,114 @@ TEST(matching_is_case_insensitive_and_removing_a_pattern_restores_the_nodes) {
     h.world.resource<ecs::SceneRequests>().revisit = true;
     h.tick();
     CHECK(h.index().node("file:b/y.ts") != entt::null);
+}
+
+// -- package level, and expanding one --------------------------------------------
+//
+// A system design diagram has ten boxes, not a hundred. The architecture view opens at
+// package level for the same reason: 460 file-level edges over 104 nodes cannot be
+// drawn without crossings by ANY layout -- that is Euler's bound, not a layout defect --
+// while the same graph aggregated to packages is 27 edges and reads like the mermaid
+// charts in a repository's own docs.
+
+namespace {
+
+Snapshot relations() {
+    Snapshot s;
+    s.generation                  = 100;
+    s.session.baseline_generation = 100;
+    s.nodes = {mk_node("repo", NodeKind::Repository),
+               mk_node("pkg:sys", NodeKind::Package, "repo"),
+               mk_node("pkg:comp", NodeKind::Package, "repo"),
+               mk_node("file:sys/m.py", NodeKind::File, "pkg:sys"),
+               mk_node("file:comp/c.py", NodeKind::File, "pkg:comp"),
+               mk_node("sym:comp/c.py#C", NodeKind::Symbol, "file:comp/c.py", "C")};
+    // One of each relation, all landing on the same pair of packages.
+    s.edges = {mk_edge("e:imp", EdgeKind::Imports, "file:sys/m.py", "file:comp/c.py"),
+               mk_edge("e:write", EdgeKind::Calls, "file:sys/m.py", "sym:comp/c.py#C"),
+               mk_edge("e:read", EdgeKind::References, "file:sys/m.py", "sym:comp/c.py#C")};
+    return s;
+}
+
+} // namespace
+
+TEST(the_architecture_view_opens_at_package_level) {
+    auto h = make();
+    CHECK(h.node("pkg:a") != entt::null);
+    CHECK(h.node("pkg:b") != entt::null);
+    CHECK(h.node("file:a/x.ts") == entt::null);
+    CHECK(h.node("file:b/y.ts") == entt::null);
+    CHECK_EQ(count_nodes(h), 3);
+
+    // The import between two modules is carried by the packages that hold them.
+    const auto e = h.edge("e:y->x");
+    CHECK(e != entt::null);
+    const auto& ends = h.registry().get<ecs::Endpoints>(e);
+    CHECK(ends.from == h.node("pkg:b"));
+    CHECK(ends.to == h.node("pkg:a"));
+}
+
+TEST(expanding_a_package_reveals_its_modules_and_moves_the_edge_onto_them) {
+    auto h = make();
+    expand(h, {"pkg:a"});
+    CHECK(h.node("file:a/x.ts") != entt::null);
+    CHECK(h.node("file:b/y.ts") == entt::null);   // b is still collapsed
+
+    // One end moved down to the module; the other is still the package.
+    const auto& ends = h.registry().get<ecs::Endpoints>(h.edge("e:y->x"));
+    CHECK(ends.from == h.node("pkg:b"));
+    CHECK(ends.to == h.node("file:a/x.ts"));
+
+    expand(h, {"pkg:a"});   // collapses again
+    CHECK(h.node("file:a/x.ts") == entt::null);
+}
+
+// A module that takes part in nothing is not architecture even once its package opens.
+TEST(expanding_a_package_still_leaves_out_what_takes_part_in_nothing) {
+    auto h = make(with_symbols());
+    expand(h, {"pkg:a", "pkg:c"});
+    CHECK(h.node("file:a/x.ts") != entt::null);
+    CHECK(h.node("file:c/z.ts") == entt::null);
+}
+
+TEST(parallel_edges_collapse_into_one_line_carrying_a_count) {
+    auto h = make(relations());
+    CHECK_EQ(edges_between(h, "pkg:sys", "pkg:comp"), 1);
+
+    // Three store edges behind one line, and the line says so.
+    const auto e = h.edge("e:write");   // the most specific of the three
+    CHECK(e != entt::null);
+    CHECK_EQ(h.registry().get<ecs::EdgeWeight>(e).count, 3);
+
+    // Expanded, the same three still collapse onto one pair of modules.
+    expand(h, {"pkg:sys", "pkg:comp"});
+    CHECK_EQ(edges_between(h, "file:sys/m.py", "file:comp/c.py"), 1);
+}
+
+TEST(the_relation_filter_draws_only_the_chosen_kind) {
+    auto h = make(relations());
+    struct Case { ecs::Relation r; const char* id; int weight; };
+    for (const auto& c : {Case{ecs::Relation::Imports, "e:imp", 1},
+                          Case{ecs::Relation::Reads, "e:read", 1},
+                          Case{ecs::Relation::Writes, "e:write", 1},
+                          Case{ecs::Relation::All, "e:write", 3}}) {
+        h.filters().relation = c.r;
+        h.world.resource<ecs::SceneRequests>().revisit = true;
+        h.tick();
+        CHECK_EQ(edges_between(h, "pkg:sys", "pkg:comp"), 1);
+        CHECK(h.edge(c.id) != entt::null);
+        CHECK_EQ(h.registry().get<ecs::EdgeWeight>(h.edge(c.id)).count, c.weight);
+    }
+}
+
+// Reading direction. A package depending on nothing sits at the bottom and its
+// dependents stack above it, so the eye can follow impact upward without a legend.
+TEST(the_architecture_layout_ranks_dependencies_into_a_reading_direction) {
+    auto h = make();
+    h.settle();
+    auto y = [&](const char* id) { return h.registry().get<ecs::Position>(h.node(id)).p.y; };
+    // Screen y grows downward, so "above" is a smaller y. c -> b -> a.
+    CHECK(y("pkg:a") > y("pkg:b"));
+    CHECK(y("pkg:b") > y("pkg:c"));
 }
 

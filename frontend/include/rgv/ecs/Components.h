@@ -38,6 +38,11 @@ struct EdgeRef {
     EdgeKind kind = EdgeKind::Unknown;
 };
 
+// How many contract edges this one line stands for. Several land on the same pair of
+// nodes once the view aggregates -- the import of a module and every read of a symbol
+// inside it -- and a diagram draws one line, not twelve. Owner: SceneSyncSystem.
+struct EdgeWeight { int count = 1; };
+
 // Endpoint entities, resolved once at sync time so nothing does a string lookup per
 // frame. Owner: SceneSyncSystem.
 struct Endpoints {

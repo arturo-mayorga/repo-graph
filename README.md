@@ -296,41 +296,56 @@ structure is not shaken apart.
 
 ### The architecture view
 
-What opens by default, and what `rgv --watch` is for: the architecture of the code.
-Not one box per distribution — a package is a node linked to the modules and packages
-inside it, and the layout is force-directed over those links: containment attracts,
-everything repels, and dependency edges pull weakly. The modules gather around their
-package, packages push apart, and a single `pyproject.toml` with a dozen packages reads
-as a dozen clusters rather than one box. A module that takes part in no dependency — a
-README, a config file — is not architecture and stays out.
+What opens by default, and what `rgv --watch` is for: the architecture of the code, at
+the size a system design diagram is actually drawn at.
 
-Force-directed is what the README used to say had been tried and abandoned, for a
-hairball that never stopped drifting. What keeps this one honest is not the forces but
-the discipline around them: position-based with no velocity, seeded by id so the same
-repository always draws the same way, cooled over the passes, and stopped when nothing
-moves more than the quiet threshold. It settles off screen and eases in. Dragging a node
-switches the relaxation back on for everything; a newcomer or a resize relaxes gently —
-springs and overlap only, and only the newcomers move — so a save never reshuffles the
-picture (spec 11.2).
+**It opens at package level.** A package is a box; the modules inside it are folded into
+it, and the edges they have are carried by the package that holds them. Double-click a
+package to open it, or use **Expand all**. That is not a stylistic choice. The file-level
+graph of this project's test repository is 460 dependency edges over 104 nodes, and a
+simple graph can only be drawn without crossings if its edges stay under three times its
+nodes minus six, which is 306. It is past the bound, so *no layout algorithm can
+untangle it*. The same graph aggregated to packages is 20 edges over 8 nodes, under its
+own bound of 18 once parallel edges collapse, and it reads like the mermaid charts in a
+repository's own documentation.
 
-Edges live at their own level and are drawn between whatever stands for their
-endpoints: an import between two modules is a line between those modules; a read or a
-write of a symbol is a line from the module to the module that defines it; a declared
-dependency between two packages is a line between the packages — unless the modules
-inside them already have a drawn edge between them, in which case the package edge is
-not drawn, because the modules are the explanation. Several store edges land on the
-same pair of modules (the import of `motion.py` and every read of a component in it)
-and the most specific one is drawn, so the line says *reads `CarPosition`* rather than
-*imports*. Reads and writes are differently coloured. At overview the containment lines are the readable structure and the dependency field sits well back.
+Measured on that repository, counting real edge crossings on the real coordinates:
 
-Hundreds of edges at once are a field, not a diagram, so the field sits back and the
-edges of the node you point at or select come forward at full strength. Point at a
-system and its reads and writes stand out; click it and the inspector lists them. The
-blast radius is drawn at two levels at once — modules from the file-level result,
-packages from the package-level one — so a saved file is red beside its package while
-the packages that depend on it light up around it. `--filter TEXT` opens with the
-name/path filter set, `--hide REGEX` with patterns hidden, and `--select NODE` with a
-node selected, which is what makes a screenshot of this view reproducible.
+| what is drawn | nodes | edges | crossings |
+|---|---|---|---|
+| file level, as this view used to open | 104 | 460 | 26,442 |
+| file level, laid out in layers instead | 104 | 460 | 15,925 |
+| package level, as it opens now | 8 | 20 | 27 |
+
+Changing the layout is worth 40%. Changing the level is worth three orders of magnitude.
+
+**Parallel edges collapse into one line that carries a count.** Several contract edges
+land on the same pair once the view aggregates: the import of a module, and every read
+and write of a symbol inside it. One line is drawn, the most specific of them, so it
+reads *writes `CarPosition`* rather than *imports*. It is drawn heavier the more it
+stands for, and the inspector says how many and shows the evidence for the one it names.
+
+**One relation at a time.** The **SHOW** selector draws `all`, `imports`, `reads`, or
+`writes`. A hand-drawn diagram asks one question per picture, and superimposing four
+answers is most of what makes a hairball. `writes` is the "who owns this component"
+diagram; `imports` is the dependency diagram.
+
+**There is a reading direction.** A package that depends on nothing sits at the bottom
+and its dependents stack above it, so impact rises. The force layout holds each node to
+its dependency rank's row and leaves the column free, which is the cartesian version of
+what the concentric layout does with its rings.
+
+Edges recede as a field only when there is a field: the fade follows how crowded the
+picture is, so at diagram size they are simply drawn, and opening a package thickens the
+graph and dims it in the same movement. The node you point at or select always has its
+edges at full strength. Package names survive every zoom level, because they are the
+frame the diagram is read against.
+
+The blast radius is drawn at two levels at once, modules from the file-level result and
+packages from the package-level one, so a saved file is red inside the package that owns
+it while the packages that depend on it light up around it. `--expand NODE`,
+`--relation R`, `--filter TEXT`, `--hide REGEX` and `--select NODE` set all of this from
+the command line, which is what makes a screenshot of this view reproducible.
 
 ### Hiding by pattern
 
