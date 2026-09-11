@@ -173,11 +173,28 @@ bool participates(const GraphStore& store, const Node& n) {
 
 } // namespace
 
+// Hidden by a pattern the user typed: itself, or anything above it. A decision, not
+// a heuristic, so nothing below -- not even a change -- exempts a node from it.
+bool SceneSyncSystem::hidden(const ecs::World& world, const Node& n) const {
+    const auto& f     = world.resource<ecs::Filters>();
+    const auto& store = world.resource<GraphStore>();
+    if (f.hidden.empty()) return false;
+    const Node* cur = &n;
+    for (int guard = 0; cur && guard < 64; ++guard) {
+        if (ecs::hidden_by_pattern(f, cur->name, cur->path)) return true;
+        if (cur->parent.empty()) break;
+        cur = store.node(cur->parent);
+    }
+    return false;
+}
+
 bool SceneSyncSystem::node_visible(const ecs::World& world, const Node& n) const {
     const auto& view    = world.resource<ecs::ViewSettings>();
     const auto& f       = world.resource<ecs::Filters>();
     const auto& store   = world.resource<GraphStore>();
     const auto& derived = world.resource<ecs::DerivedState>();
+
+    if (hidden(world, n)) return false;
 
     switch (view.mode) {
         case ecs::ViewMode::Architecture:
@@ -283,6 +300,9 @@ NodeId SceneSyncSystem::representative(const ecs::World& world, NodeId id) const
         if (index.node(id) != entt::null) return id;
         const Node* n = store.node(id);
         if (!n) return {};
+        // A node hidden on purpose has no representative: its edges are gone, not
+        // handed to its package. (Its ancestors are checked by `hidden` itself.)
+        if (hidden(world, *n)) return {};
         id = n->parent;
     }
     return {};

@@ -3,6 +3,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 namespace rgv::app {
 
@@ -15,6 +16,7 @@ struct Options {
     std::string hover;           // node whose hover card is shown on startup
     std::string view;            // architecture | filesystem | file-graph
     std::string filter;          // initial name/path filter text
+    std::vector<std::string> hide;   // --hide REGEX, repeatable
     float       zoom = -1.0f;    // camera zoom to hold, instead of fitting
     int         scenario      = 0;
     double      at            = -1.0;   // seek here and pause

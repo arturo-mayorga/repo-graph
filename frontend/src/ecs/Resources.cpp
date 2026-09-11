@@ -18,4 +18,26 @@ Level default_level(ViewMode m) {
     }
 }
 
+bool add_hide_pattern(Filters& f, std::string source) {
+    Filters::HidePattern p;
+    p.source = std::move(source);
+    try {
+        p.re    = std::regex(p.source, std::regex::ECMAScript | std::regex::icase);
+        p.valid = true;
+    } catch (const std::regex_error&) {
+        p.valid = false;
+    }
+    const bool ok = p.valid;
+    f.hidden.push_back(std::move(p));
+    return ok;
+}
+
+bool hidden_by_pattern(const Filters& f, const std::string& name, const std::string& path) {
+    for (const auto& p : f.hidden) {
+        if (!p.valid) continue;
+        if (std::regex_search(name, p.re) || std::regex_search(path, p.re)) return true;
+    }
+    return false;
+}
+
 } // namespace rgv::ecs

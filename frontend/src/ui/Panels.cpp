@@ -368,6 +368,43 @@ void draw_top_bar(ecs::World& world) {
         flow.placed();
     }
 
+    // Hide by pattern. Enter adds; each pattern is a chip that removes itself.
+    {
+        static char hide_buf[128] = "";
+        const float w = 180.0f * vs.ui_text_scale;
+        flow.item(w);
+        ImGui::SetNextItemWidth(w);
+        if (ImGui::InputTextWithHint("##hide", "hide /regex/ + enter", hide_buf, sizeof(hide_buf),
+                                     ImGuiInputTextFlags_EnterReturnsTrue)) {
+            if (hide_buf[0] != '\0') {
+                ecs::add_hide_pattern(f, hide_buf);
+                hide_buf[0] = '\0';
+                ui.world.resource<ecs::SceneRequests>().revisit = true;
+            }
+        }
+        flow.placed();
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Hide every node whose name or path matches, and what it holds.\n"
+                              "A regular expression, case-insensitive. `test_` hides the tests.");
+        }
+        for (std::size_t i = 0; i < f.hidden.size(); ++i) {
+            const auto& hp = f.hidden[i];
+            char chip[160];
+            std::snprintf(chip, sizeof(chip), "x %s%s##hide%zu", hp.source.c_str(),
+                          hp.valid ? "" : " (invalid)", i);
+            flow.item(button_w(chip));
+            if (!hp.valid) ImGui::PushStyleColor(ImGuiCol_Text, to_v4(theme().invalid));
+            const bool remove = ImGui::Button(chip);
+            if (!hp.valid) ImGui::PopStyleColor();
+            flow.placed();
+            if (remove) {
+                f.hidden.erase(f.hidden.begin() + static_cast<long>(i));
+                ui.world.resource<ecs::SceneRequests>().revisit = true;
+                break;
+            }
+        }
+    }
+
     // Text sizes live in their own window rather than on the toolbar. Editing the UI
     // scale from a control that is itself scaled by it means the control moves and
     // resizes under the cursor mid-drag, which makes hitting a value impossible.

@@ -1545,3 +1545,70 @@ TEST(at_symbol_level_files_count_as_dependents_of_symbols) {
     CHECK_EQ(derived.reach.dependents("sym:a/x.ts#Foo"), 1);
     CHECK_EQ(derived.specificity.dependents("sym:a/x.ts#Foo"), 1);
 }
+
+// -- hiding by pattern ---------------------------------------------------------
+//
+// FR-35: a filter that removes what matches. Test modules are the case that asked for
+// it -- thirty of them around one package, each importing half the code -- and the rule
+// is that a hidden node is gone: its edges are not re-routed to whatever contains it.
+
+TEST(a_hide_pattern_removes_matching_nodes_and_their_edges) {
+    auto h = make(with_symbols());
+    CHECK(ecs::add_hide_pattern(h.filters(), "b/"));
+    h.world.resource<ecs::SceneRequests>().revisit = true;
+    h.tick();
+    CHECK(h.index().node("file:b/y.ts") == entt::null);
+    CHECK(h.index().node("pkg:b") != entt::null);
+    CHECK(h.index().node("file:a/x.ts") != entt::null);
+    // The read of Foo came from the hidden module. It is gone, not moved up to pkg:b.
+    CHECK(h.index().edge("e:y-reads-Foo") == entt::null);
+    for (auto [e, ref, ends] : h.registry().view<const ecs::EdgeRef, const ecs::Endpoints>().each()) {
+        if (ref.kind == EdgeKind::Contains) continue;
+        CHECK(!(ends.from == h.index().node("pkg:b") && ends.to == h.index().node("file:a/x.ts")));
+    }
+}
+
+TEST(hiding_a_package_hides_what_it_holds) {
+    auto h = make();
+    CHECK(ecs::add_hide_pattern(h.filters(), "^pkg:a$"));
+    h.world.resource<ecs::SceneRequests>().revisit = true;
+    h.tick();
+    CHECK(h.index().node("pkg:a") == entt::null);
+    CHECK(h.index().node("file:a/x.ts") == entt::null);
+    CHECK(h.index().node("pkg:b") != entt::null);
+    CHECK(h.index().node("file:b/y.ts") != entt::null);
+}
+
+TEST(an_invalid_pattern_is_kept_but_hides_nothing) {
+    auto h = make();
+    CHECK(!ecs::add_hide_pattern(h.filters(), "("));
+    CHECK_EQ(h.filters().hidden.size(), 1u);
+    CHECK(!h.filters().hidden[0].valid);
+    h.world.resource<ecs::SceneRequests>().revisit = true;
+    h.tick();
+    CHECK_EQ(count_nodes(h), 5);
+}
+
+// Explicit beats everything: the relevance filter spares what the agent changed, but a
+// pattern the user typed is a decision, and a changed test module is still a test.
+TEST(a_hidden_node_stays_hidden_when_it_changes) {
+    auto h = make();
+    CHECK(ecs::add_hide_pattern(h.filters(), "x\\.ts$"));
+    push_change(h.store(), "a/x.ts", "file:a/x.ts");
+    h.world.resource<ecs::SceneRequests>().revisit = true;
+    h.tick();
+    CHECK(h.index().node("file:a/x.ts") == entt::null);
+}
+
+TEST(matching_is_case_insensitive_and_removing_a_pattern_restores_the_nodes) {
+    auto h = make();
+    CHECK(ecs::add_hide_pattern(h.filters(), "Y\\.TS"));
+    h.world.resource<ecs::SceneRequests>().revisit = true;
+    h.tick();
+    CHECK(h.index().node("file:b/y.ts") == entt::null);
+    h.filters().hidden.clear();
+    h.world.resource<ecs::SceneRequests>().revisit = true;
+    h.tick();
+    CHECK(h.index().node("file:b/y.ts") != entt::null);
+}
+

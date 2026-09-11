@@ -20,6 +20,7 @@ bool parse_options(int argc, char** argv, const char* default_root, Options& o) 
                          "  --hover NODE     show this node's hover card on startup\n"
                          "  --view MODE      architecture | filesystem | file-graph\n"
                          "  --filter TEXT    open with the name/path filter set\n"
+                         "  --hide REGEX     hide nodes whose name or path matches (repeatable)\n"
                          "  --zoom F         hold this zoom instead of fitting to view\n"
                          "  --relevance F    start with the relevance filter at F (0..1)\n"
                          "  --text-settings  open the text size window on startup\n"
@@ -38,6 +39,7 @@ bool parse_options(int argc, char** argv, const char* default_root, Options& o) 
         else if (a == "--hover" && i + 1 < argc) o.hover = argv[++i];
         else if (a == "--view" && i + 1 < argc) o.view = argv[++i];
         else if (a == "--filter" && i + 1 < argc) o.filter = argv[++i];
+        else if (a == "--hide" && i + 1 < argc) o.hide.push_back(argv[++i]);
         else if (a == "--zoom" && i + 1 < argc) o.zoom = std::atof(argv[++i]);
         else if (a == "--relevance" && i + 1 < argc) o.relevance = std::atof(argv[++i]);
         else o.root = a;

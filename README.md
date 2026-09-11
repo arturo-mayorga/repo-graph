@@ -329,8 +329,25 @@ system and its reads and writes stand out; click it and the inspector lists them
 blast radius is drawn at two levels at once — modules from the file-level result,
 packages from the package-level one — so a saved file is red beside its package while
 the packages that depend on it light up around it. `--filter TEXT` opens with the
-name/path filter set and `--select NODE` with a node selected, which is what makes a
-screenshot of this view reproducible.
+name/path filter set, `--hide REGEX` with patterns hidden, and `--select NODE` with a
+node selected, which is what makes a screenshot of this view reproducible.
+
+### Hiding by pattern
+
+The toolbar's **hide** box takes a regular expression; enter adds it as a chip, and the
+chip's `x` removes it. A node whose name or path matches is hidden along with everything
+it holds, case-insensitively, and its edges are *gone* -- not moved up to its package,
+which is what "hide the tests" has to mean or the package they belong to grows a fan of
+edges that used to be theirs. `test_` hides a test suite; `^pkg:demo$` hides one package
+and its modules. An invalid pattern stays in the toolbar marked invalid and hides
+nothing, so a typo is visible rather than silently ignored.
+
+A hidden node stays hidden when it changes. The relevance filter spares what the agent
+touched, because that is a heuristic; a pattern the user typed is a decision.
+
+```sh
+./build/bin/rgv --watch ~/code/app --hide 'test_' --hide '^conftest'
+```
 
 ### Semantic zoom
 

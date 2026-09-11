@@ -15,6 +15,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <regex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -66,7 +67,24 @@ struct Filters {
     float min_relevance = 0.0f;
 
     std::string text;   // substring match on name/path
+
+    // FR-35, the other direction: hide what matches. Each pattern is a regular
+    // expression tested against a node's name and path, case-insensitively; a match
+    // hides the node and everything it contains, and a hidden node's edges are gone
+    // rather than moved up to its package. An invalid pattern is kept so the user can
+    // see and fix it, and hides nothing.
+    struct HidePattern {
+        std::string source;
+        std::regex  re;
+        bool        valid = false;
+    };
+    std::vector<HidePattern> hidden;
 };
+
+// Compiles and adds a pattern. Returns whether it compiled.
+bool add_hide_pattern(Filters& f, std::string source);
+// Whether `name` or `path` matches any valid pattern.
+bool hidden_by_pattern(const Filters& f, const std::string& name, const std::string& path);
 
 // The single source of truth for what is selected and hovered.
 //
