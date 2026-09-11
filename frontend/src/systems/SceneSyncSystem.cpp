@@ -504,8 +504,9 @@ void SceneSyncSystem::rebuild(ecs::World& world) {
     (void)index;
 }
 
-// Containment rendered as synthetic edges, child -> the node that stands for its
-// parent. They are not contract edges, so they carry a distinct id prefix and the
+// Containment rendered as synthetic edges, from the container to what it holds -- what
+// `contains` says, and what puts the arrowheads on the children so the tree reads
+// outward from the repository rather than converging on it. They are not contract edges, so they carry a distinct id prefix and the
 // inspector offers no provenance. The filesystem view draws them as the tree; the
 // architecture view draws nothing for them and lays a child out inside its parent.
 void SceneSyncSystem::sync_containment(ecs::World& world) {
@@ -528,7 +529,7 @@ void SceneSyncSystem::sync_containment(ecs::World& world) {
         index.edges[eid] = ent;
         registry.emplace<ecs::EdgeRef>(ent, ecs::EdgeRef{eid, EdgeKind::Contains});
         registry.emplace<ecs::Style>(ent);
-        registry.emplace<ecs::Endpoints>(ent, ecs::Endpoints{index.node(id), index.node(parent)});
+        registry.emplace<ecs::Endpoints>(ent, ecs::Endpoints{index.node(parent), index.node(id)});
         registry.emplace<ecs::FreshnessState>(ent, ecs::FreshnessState{n.freshness});
         registry.emplace<ecs::ConfidenceState>(ent, ecs::ConfidenceState{Confidence::Exact});
     }

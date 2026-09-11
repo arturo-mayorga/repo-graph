@@ -103,7 +103,14 @@ void GraphRenderSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
         const float width = std::max(style.stroke_w, 1.1f / std::max(camera.zoom, 1e-4f));
         renderer_.add_edge(a, b, color, width, style.dash);
         if (view.show_arrows && detail.t > 0.15f) {
-            renderer_.add_arrow(b, dir, style.stroke_w > 2.5f ? 13.0f : 9.0f, color);
+            // Backed off the node and drawn stronger than the line. An arrowhead the
+            // same weight as its line, landing on top of the dot it points at, is an
+            // arrowhead nobody can see -- and the direction is the whole reason it is
+            // there: which way containment runs, and which way an import runs.
+            const float gap = 3.0f / std::max(camera.zoom, 1e-4f);
+            Vec4        ac  = color;
+            ac.a            = std::min(1.0f, color.a * 2.0f);
+            renderer_.add_arrow(b - dir * gap, dir, style.stroke_w > 2.5f ? 39.0f : 27.0f, ac);
         }
     };
 
@@ -180,7 +187,7 @@ void GraphRenderSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
                     if (length_sq(dir) > 1e-6f) {
                         const Vec2  half = half_of(to);
                         const float back = std::min(half.x, half.y);
-                        renderer_.add_arrow(b - dir * back, dir, 11.0f, c);
+                        renderer_.add_arrow(b - dir * back, dir, 33.0f, c);
                     }
                 }
             }

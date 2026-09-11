@@ -686,6 +686,30 @@ rgvtest::Harness make_filesystem() {
 
 } // namespace
 
+// Direction. A `contains` edge means what its name says, so the container is the end an
+// arrow leaves and what it holds is the end an arrow arrives at. The renderer puts the
+// arrowhead on `to`, so this is what makes the tree read outward from the repository
+// instead of converging on it.
+TEST(containment_points_from_the_container_to_what_it_holds) {
+    auto       h = make_filesystem();
+    const auto e = h.edge(std::string("tree:file:a/x.ts"));
+    CHECK(e != entt::null);
+    const auto& ends = h.registry().get<ecs::Endpoints>(e);
+    CHECK(ends.from == h.node("dir:a"));         // the directory
+    CHECK(ends.to == h.node("file:a/x.ts"));     // what it holds
+}
+
+// The other direction, and it is the opposite one: a module points at what it imports,
+// which is the contract's rule for every dependency edge (dependent -> dependency).
+TEST(an_import_points_from_the_module_to_the_one_it_imports) {
+    auto       h = make(chain());
+    const auto e = h.edge("e:y->x");
+    CHECK(e != entt::null);
+    const auto& ends = h.registry().get<ecs::Endpoints>(e);
+    CHECK(ends.from == h.node("file:b/y.ts"));   // the importer
+    CHECK(ends.to == h.node("file:a/x.ts"));     // what it imports
+}
+
 // Discs are how the view says "this is laid out radially". They must not leak into the
 // box-based views, or picking and rendering would use the wrong shape there.
 TEST(discs_exist_in_the_tree_views_and_not_in_the_file_graph) {

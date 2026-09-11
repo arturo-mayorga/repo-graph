@@ -230,6 +230,10 @@ centre; directories are discs that grow gently with the files they hold; those f
 orbit the directory that owns them, clear of it, coloured by extension; child subtrees
 fan outward.
 
+Containment runs from the container to what it holds, so the arrowheads spread outward
+from the repository rather than converging on it. That is the opposite of a dependency
+arrow, and deliberately: one says "this is inside me", the other says "I need this".
+
 Node sizes step by the **golden ratio**: a file, a directory, and the largest a
 directory grows to are `r`, `r·φ`, `r·φ²`. Three sizes on one geometric scale read as a
 family — clearly different, obviously related — where an arbitrary ratio reads either as
@@ -334,7 +338,9 @@ and visiting each node once turns any back edge into a cross-link the layout ign
 rather than a knot it has to resolve.
 
 **Imports, and only imports.** The layout is a tree of them, so a line that is not one
-is a line the arrangement cannot account for. Parallel edges between the same pair still
+is a line the arrangement cannot account for. An arrow runs from a module to the one it
+imports, which is the contract's rule for every dependency edge and means the arrowheads
+converge on whatever the most code is built on. Parallel edges between the same pair still
 collapse into one line carrying a count.
 
 One consequence worth knowing: a declared dependency from a manifest is not an import,

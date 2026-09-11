@@ -628,10 +628,11 @@ void LayoutSystem::reset(ecs::World& world) {
 namespace {
 
 // Parent of each node, from the containment edges the filesystem view synthesises.
+// They run container -> contained, so the parent is the `from` end.
 std::unordered_map<std::uint32_t, entt::entity> containment_parents(entt::registry& reg) {
     std::unordered_map<std::uint32_t, entt::entity> parent;
     for (auto [e, ref, ends] : reg.view<const ecs::EdgeRef, const ecs::Endpoints>().each()) {
-        if (ref.kind == EdgeKind::Contains) parent[to_raw(ends.from)] = ends.to;
+        if (ref.kind == EdgeKind::Contains) parent[to_raw(ends.to)] = ends.from;
     }
     return parent;
 }
@@ -745,7 +746,7 @@ void LayoutSystem::apply_drag(ecs::World& world) {
     // and takes whatever the node contains with it.
     std::unordered_map<std::uint32_t, std::vector<entt::entity>> kids;
     for (auto [e, ref, ends] : reg.view<const ecs::EdgeRef, const ecs::Endpoints>().each()) {
-        if (ref.kind == EdgeKind::Contains) kids[to_raw(ends.to)].push_back(ends.from);
+        if (ref.kind == EdgeKind::Contains) kids[to_raw(ends.from)].push_back(ends.to);
     }
     std::vector<entt::entity> moving{drag.node};
     for (std::size_t i = 0; i < moving.size() && moving.size() < 20000; ++i) {
