@@ -373,6 +373,7 @@ void SceneSyncSystem::choose_drawn_edges(ecs::World& world) {
         const NodeId rf = representative(world, e.from);
         const NodeId rt = representative(world, e.to);
         if (rf.empty() || rt.empty() || rf == rt) continue;
+        if (restates_containment(world, e, rf, rt)) continue;
         if (dep) { declared[{rf, rt}].push_back(&e); continue; }
 
         // Every edge that lands on this pair counts; the most specific one is the one
@@ -415,6 +416,55 @@ void SceneSyncSystem::choose_drawn_edges(ecs::World& world) {
         drawn_[pick.id]   = pair;
         weights_[pick.id] = pick.count;
     }
+}
+
+// True when a drawn edge would only say what containment already says: one end is an
+// ancestor of the other, and what got folded into that ancestor is a module inside it
+// rather than the ancestor's own module.
+//
+// This is the difference between a diagram and a tangle. A package holding both
+// sub-packages and loose modules shows every child depending on it and itself depending
+// on every child, which is not architecture -- it is the containment tree drawn twice,
+// once as nesting and once as arrows. Worse, the two directions together manufacture a
+// cycle: on this project's test repository every package-level cycle ran through these
+// edges while the 132 files underneath formed a clean acyclic graph, and a false cycle
+// destroys the rank that gives the picture its reading direction.
+//
+// The exception is a real import of the package itself -- `from .. import x` -- which
+// is a dependency on the package as a unit. The provider names the file that is a
+// package's own module in `attrs["module_file"]`, so this stays language-neutral.
+//
+// Nothing is lost, only folded: open the ancestor and its modules become nodes of their
+// own, at which point neither end is an ancestor of the other and the edge is drawn.
+bool SceneSyncSystem::restates_containment(const ecs::World& world, const Edge& e,
+                                           const NodeId& rf, const NodeId& rt) const {
+    const auto& store = world.resource<GraphStore>();
+
+    auto ancestor_of = [&](const NodeId& maybe, NodeId of) {
+        for (int guard = 0; guard < 64; ++guard) {
+            const Node* n = store.node(of);
+            if (!n || n->parent.empty()) return false;
+            if (n->parent == maybe) return true;
+            of = n->parent;
+        }
+        return false;
+    };
+
+    NodeId ancestor, folded;
+    if (ancestor_of(rt, rf))      { ancestor = rt; folded = e.to; }
+    else if (ancestor_of(rf, rt)) { ancestor = rf; folded = e.from; }
+    else return false;
+
+    // A symbol stands for the file that defines it.
+    const Node* f = store.node(folded);
+    for (int guard = 0; f && f->kind != NodeKind::File && guard < 64; ++guard) {
+        f = store.node(f->parent);
+    }
+    const Node* a = store.node(ancestor);
+    if (!f || !a) return true;
+
+    auto it = a->attrs.find("module_file");
+    return it == a->attrs.end() || it->second != f->path;
 }
 
 bool SceneSyncSystem::edge_visible(const ecs::World& world, const Edge& e) const {

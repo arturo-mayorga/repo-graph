@@ -539,6 +539,11 @@ TEST(a_single_distribution_shows_its_python_packages_as_architecture) {
     CHECK_EQ(api->name, std::string("demo.api"));
     CHECK(store.node("dir:src/demo/api") == nullptr);   // the package replaces the directory
 
+    // The file that IS each package, so a real `from demo import x` can be told apart
+    // from a reach into some module that merely lives inside it.
+    CHECK_EQ(demo->attrs.at("module_file"), std::string("src/demo/__init__.py"));
+    CHECK_EQ(api->attrs.at("module_file"), std::string("src/demo/api/__init__.py"));
+
     // Files are owned by the innermost package, which is what FR-11 projects through.
     CHECK_EQ(store.ancestor_of_kind("file:src/demo/api/routes.py", NodeKind::Package),
              std::string("pypkg:src/demo/api"));

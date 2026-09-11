@@ -319,6 +319,22 @@ Measured on that repository, counting real edge crossings on the real coordinate
 
 Changing the layout is worth 40%. Changing the level is worth three orders of magnitude.
 
+**A dependency that only restates containment is not drawn.** A package holding both
+sub-packages and loose modules would otherwise show every child depending on it, because
+their modules import its modules, and itself depending on every child. That is the
+containment tree drawn twice, once as nesting and once as arrows, and the two directions
+together manufacture a cycle the code does not have. On this project's test repository
+every package-level cycle ran through exactly those edges while the 132 files underneath
+formed a clean acyclic graph, and a false cycle destroys the rank that gives the picture
+its reading direction. Dropping them takes that repository from 20 package dependencies
+to 10, removes the cycle, and leaves ranks that match its own documentation.
+
+The exception is a real import of the package itself, `from .. import x`, which is a
+dependency on the package as a unit. The provider names the file that is a package's own
+module in `attrs.module_file`, so the frontend can tell the two apart without knowing
+anything about Python. Nothing is lost either way: open the parent and its modules become
+nodes of their own, at which point the edge is between two modules and is drawn.
+
 **Parallel edges collapse into one line that carries a count.** Several contract edges
 land on the same pair once the view aggregates: the import of a module, and every read
 and write of a symbol inside it. One line is drawn, the most specific of them, so it

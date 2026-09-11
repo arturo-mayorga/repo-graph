@@ -28,6 +28,8 @@ private:
 
     bool node_visible(const ecs::World& world, const Node& n) const;
     bool hidden(const ecs::World& world, const Node& n) const;
+    bool restates_containment(const ecs::World& world, const Edge& e, const NodeId& rf,
+                              const NodeId& rt) const;
     NodeId representative(const ecs::World& world, NodeId id) const;
     void   choose_drawn_edges(ecs::World& world);
     void   sync_containment(ecs::World& world);

@@ -154,7 +154,8 @@ json node_for(const fs::path& root, const std::string& rel, bool is_dir,
 // Direction is dependent -> dependency (contract §3.2); blast radius traverses it in
 // reverse, which is what makes "I changed auth, what breaks" the natural query.
 void emit_packages(const std::vector<rgv::watch::Package>& pkgs, json& nodes, json& edges,
-                   std::vector<rgv::watch::GraphEdge>& pkg_edges, long generation) {
+                   std::vector<rgv::watch::GraphEdge>& pkg_edges,
+                   const std::map<std::string, std::string>& module_file, long generation) {
     std::map<std::string, const rgv::watch::Package*> by_name;
     for (const auto& p : pkgs) by_name[rgv::watch::normalize(p.name)] = &p;
 
@@ -165,6 +166,13 @@ void emit_packages(const std::vector<rgv::watch::Package>& pkgs, json& nodes, js
                            p.provider == "python" ? "python" : "");
         json attrs{{"manifest", p.manifest}};
         if (!p.version.empty()) attrs["version"] = p.version;
+        // The file that IS this package, when it has one: a distribution that absorbed
+        // its same-named python package answers `from pkg import x` with that file.
+        // A dependency on it is a dependency on the package as a unit, which is the one
+        // kind of ancestor edge the frontend keeps (contract 6.4).
+        if (auto it = module_file.find(p.id); it != module_file.end()) {
+            attrs["module_file"] = it->second;
+        }
         n["attrs"] = attrs;
         nodes.push_back(std::move(n));
     }
@@ -515,16 +523,21 @@ std::vector<rgv::watch::PyPackage> detect_python_packages(const Tree&           
 // what actually owns them.
 std::vector<rgv::watch::PyPackage> drop_distribution_twins(
     std::vector<rgv::watch::PyPackage> py, const std::vector<rgv::watch::Package>& packages,
-    const PackageDirs& manifest_dirs) {
+    const PackageDirs& manifest_dirs, std::map<std::string, std::string>& module_file) {
     std::map<std::string, std::string> name_of;
     for (const auto& p : packages) name_of[p.id] = p.name;
 
     py.erase(std::remove_if(py.begin(), py.end(),
                             [&](const rgv::watch::PyPackage& p) {
-                                auto it = name_of.find(owning_package(p.rel, manifest_dirs));
-                                return it != name_of.end() &&
-                                       rgv::watch::normalize(it->second) ==
-                                           rgv::watch::normalize(p.module);
+                                const std::string owner = owning_package(p.rel, manifest_dirs);
+                                auto              it    = name_of.find(owner);
+                                const bool        twin =
+                                    it != name_of.end() && rgv::watch::normalize(it->second) ==
+                                                               rgv::watch::normalize(p.module);
+                                // The distribution inherits the twin's own module, so
+                                // `from elevators import x` still resolves to a node.
+                                if (twin) module_file[owner] = p.rel + "/__init__.py";
+                                return twin;
                             }),
              py.end());
     return py;
@@ -533,7 +546,9 @@ std::vector<rgv::watch::PyPackage> drop_distribution_twins(
 json pypkg_node(const rgv::watch::PyPackage& p, const PackageDirs& pkg_dirs) {
     json n = node_json(pypkg_id(p.rel), "package", p.module, p.rel, parent_id_for(p.rel, pkg_dirs),
                        "python");
-    n["attrs"] = json{{"module", p.module}, {"package", "python"}};
+    n["attrs"] = json{{"module", p.module},
+                      {"package", "python"},
+                      {"module_file", p.rel + "/__init__.py"}};
     return n;
 }
 
@@ -675,6 +690,7 @@ int main(int argc, char** argv) {
     PackageDirs                        manifest_dirs;   // manifest packages only
     PackageDirs                        pkg_dirs;        // ... plus python packages
     std::vector<rgv::watch::PyPackage> pypkgs;
+    std::map<std::string, std::string> dist_module_file;   // manifest package id -> its own module
     std::vector<rgv::watch::GraphEdge> pkg_edges;
     ImportIndex                        imports;
     SymbolIndex                        symbols;
@@ -707,14 +723,14 @@ int main(int argc, char** argv) {
         for (const auto& p : packages) manifest_dirs[p.rel] = p.id;
         reroot(tree);
         pypkgs   = drop_distribution_twins(detect_python_packages(tree, imports.roots), packages,
-                                           manifest_dirs);
+                                           manifest_dirs, dist_module_file);
         pkg_dirs = merge_dirs(pypkgs);
 
         for (const auto& [rel, is_dir] : tree.entries) {
             json n = node_for(root, rel, is_dir, pkg_dirs);
             if (!n.is_null()) nodes.push_back(std::move(n));
         }
-        emit_packages(packages, nodes, edges, pkg_edges, generation);
+        emit_packages(packages, nodes, edges, pkg_edges, dist_module_file, generation);
         for (const auto& p : pypkgs) nodes.push_back(pypkg_node(p, pkg_dirs));
 
         for (const auto& [rel, is_dir] : tree.entries) {
@@ -799,7 +815,7 @@ int main(int argc, char** argv) {
         if (!fresh.empty() || !removed.empty()) {
             reroot(now);
             const auto next_py = drop_distribution_twins(detect_python_packages(now, imports.roots),
-                                                         packages, manifest_dirs);
+                                                         packages, manifest_dirs, dist_module_file);
             if (next_py != pypkgs) {
                 const PackageDirs next_dirs = merge_dirs(next_py);
                 for (const auto& p : next_py) {

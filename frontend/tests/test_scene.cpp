@@ -1753,3 +1753,85 @@ TEST(the_architecture_layout_ranks_dependencies_into_a_reading_direction) {
     CHECK(y("pkg:b") > y("pkg:c"));
 }
 
+// -- a dependency that only restates containment ---------------------------------
+//
+// A package holding both sub-packages and loose modules will show its children
+// depending on it -- their modules import its modules -- and itself depending on its
+// children. Containment already says all of that, and drawing it both ways manufactures
+// a cycle the code does not have: on this project's test repository every package-level
+// cycle ran through exactly these edges, while the 132 files underneath were a clean
+// acyclic graph.
+
+namespace {
+
+// app/ holds core.py and two sub-packages. web reaches a module inside app; api imports
+// app's own module, which is a real dependency on the package as a unit.
+Snapshot nested() {
+    Snapshot s;
+    s.generation                  = 100;
+    s.session.baseline_generation = 100;
+    auto file = [](std::string id, std::string parent, std::string path) {
+        Node n = mk_node(std::move(id), NodeKind::File, std::move(parent));
+        n.path = std::move(path);
+        return n;
+    };
+    Node app = mk_node("pkg:app", NodeKind::Package, "repo", "app");
+    app.path                 = "app";
+    app.attrs["module_file"] = "app/__init__.py";
+    Node web = mk_node("pkg:app.web", NodeKind::Package, "pkg:app", "app.web");
+    web.path = "app/web";
+    Node api = mk_node("pkg:app.api", NodeKind::Package, "pkg:app", "app.api");
+    api.path = "app/api";
+
+    s.nodes = {mk_node("repo", NodeKind::Repository), app, web, api,
+               file("file:app/__init__.py", "pkg:app", "app/__init__.py"),
+               file("file:app/core.py", "pkg:app", "app/core.py"),
+               file("file:app/web/view.py", "pkg:app.web", "app/web/view.py"),
+               file("file:app/api/route.py", "pkg:app.api", "app/api/route.py")};
+    s.edges = {mk_edge("e:view->core", EdgeKind::Imports, "file:app/web/view.py", "file:app/core.py"),
+               mk_edge("e:route->init", EdgeKind::Imports, "file:app/api/route.py",
+                       "file:app/__init__.py")};
+    return s;
+}
+
+} // namespace
+
+TEST(an_edge_that_only_restates_containment_is_not_drawn) {
+    auto h = make(nested());
+    CHECK(h.node("pkg:app") != entt::null);
+    CHECK(h.node("pkg:app.web") != entt::null);
+    // view.py imports core.py, and core.py is folded into the package that also holds
+    // web. Containment says it; the arrow would only say it again, backwards.
+    CHECK_EQ(edges_between(h, "pkg:app.web", "pkg:app"), 0);
+    CHECK(h.edge("e:view->core") == entt::null);
+}
+
+// The exception. `from .. import x` is a dependency on the package as a unit, not on
+// some module that happens to live inside it.
+TEST(a_real_import_of_the_package_itself_is_still_drawn) {
+    auto h = make(nested());
+    CHECK_EQ(edges_between(h, "pkg:app.api", "pkg:app"), 1);
+    CHECK(h.edge("e:route->init") != entt::null);
+}
+
+// Nothing is lost, only folded: opening the parent makes its modules nodes of their
+// own, and the dependency is a plain edge between two modules again.
+TEST(opening_the_parent_brings_the_folded_dependency_back) {
+    auto h = make(nested());
+    expand(h, {"pkg:app", "pkg:app.web"});
+    const auto e = h.edge("e:view->core");
+    CHECK(e != entt::null);
+    const auto& ends = h.registry().get<ecs::Endpoints>(e);
+    CHECK(ends.from == h.node("file:app/web/view.py"));
+    CHECK(ends.to == h.node("file:app/core.py"));
+}
+
+// The point of all of it: the false cycle goes, so the ranking means something again.
+TEST(dropping_containment_restatements_leaves_the_ranking_acyclic) {
+    auto h = make(nested());
+    h.settle();
+    // api depends on app, and nothing depends on api. app is the floor.
+    CHECK_EQ(h.registry().get<ecs::Depth>(h.node("pkg:app")).value, 0);
+    CHECK_EQ(h.registry().get<ecs::Depth>(h.node("pkg:app.api")).value, 1);
+}
+

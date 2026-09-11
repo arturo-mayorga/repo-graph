@@ -442,6 +442,11 @@ it understands it must:
 - Re-parse a file when it changes and report the difference as `graph.updated`
   `added_edges` / `removed_edges` — never as a full replacement. A surviving edge whose
   evidence or confidence changed is an `updated_edges` entry.
+- Set `attrs.module_file` on a `package` node to the repo-relative file that *is* that
+  package, when the language has one (`__init__.py` for Python). The frontend folds a
+  package's modules into it at overview and drops dependency edges that only restate
+  containment; this attribute is how it keeps the one that does not, a real import of
+  the package as a unit.
 - Emit a `symbol` node for every top-level definition that another file uses, parented
   to the file that defines it, with `attrs.kind` of `class` or `function`. A file that
   constructs or invokes a symbol has a `calls` edge to it; a file that mentions it in
