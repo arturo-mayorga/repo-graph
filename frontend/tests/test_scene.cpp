@@ -93,13 +93,6 @@ Snapshot as_files(Snapshot s) {
     return s;
 }
 
-// Opens the named packages, so a test can look at the modules inside them. The
-// architecture view starts at package level, so most module-level assertions need it.
-void expand(rgvtest::Harness& h, std::initializer_list<const char*> ids) {
-    for (const auto* id : ids) h.commands().push(ecs::ToggleExpand{id});
-    h.tick();
-}
-
 int edges_between(rgvtest::Harness& h, const std::string& from, const std::string& to) {
     int n = 0;
     for (auto [e, ref, ends] : h.registry().view<const ecs::EdgeRef, const ecs::Endpoints>().each()) {
@@ -128,7 +121,7 @@ rgvtest::Harness make(Snapshot s = chain()) {
 // Getting this wrong means a view mode silently renders the wrong universe.
 TEST(view_mode_selects_which_nodes_exist_on_screen) {
     auto h = make();
-    CHECK_EQ(count_nodes(h), 3);   // three packages; their modules are folded into them
+    CHECK_EQ(count_nodes(h), 6);   // repo, three packages, two files; no directories
 
     h.view().mode = ecs::ViewMode::FileGraph;
     h.tick();
@@ -192,12 +185,8 @@ TEST(a_changed_file_marks_its_owning_package_as_changed) {
 
     CHECK(h.registry().all_of<ecs::Changed>(h.node("pkg:a")));
     CHECK(!h.registry().all_of<ecs::Changed>(h.node("pkg:b")));
-    CHECK_EQ(h.stats().changed, 1);   // the package that owns it; the module is folded in
-
-    // Opened, the module that actually changed is marked too.
-    expand(h, {"pkg:a"});
     CHECK(h.registry().all_of<ecs::Changed>(h.node("file:a/x.ts")));
-    CHECK_EQ(h.stats().changed, 2);
+    CHECK_EQ(h.stats().changed, 2);   // the module, and the package that owns it
 }
 
 // THE rule. The impact result reports how trustworthy the PATH is, which can be worse
@@ -274,8 +263,15 @@ TEST(selecting_a_node_that_no_longer_exists_marks_nothing) {
 // Selecting an impacted node lights the chain that explains it. If the hop marks are
 // wrong the canvas highlights a path the inspector is not describing.
 TEST(the_explained_path_marks_every_node_and_edge_on_the_chain) {
-    auto h = make();
-    push_impact(h.store(), Level::Package,
+    // Through the file graph, which draws the chain as edges of its own. The
+    // architecture view draws imports, and a package-level explanation there is
+    // carried by the module edges underneath it.
+    auto h        = make(as_files(chain()));
+    h.view().mode  = ecs::ViewMode::FileGraph;
+    h.view().level = Level::File;
+    h.request_rebuild();
+    h.tick();
+    push_impact(h.store(), Level::File,
                 {ImpactedNode{"pkg:c", 2, false, false, Freshness::Current,
                               ImpactCause::Implementation,
                               {ImpactPath{{"e:c->b", "e:b->a"}}}, false}});
@@ -289,10 +285,7 @@ TEST(the_explained_path_marks_every_node_and_edge_on_the_chain) {
     CHECK(on_path("pkg:c", false));
     CHECK(on_path("e:c->b", true));
     CHECK(on_path("pkg:b", false));
-    // b -> a is not drawn: the module edge y -> x between their contents explains it,
-    // so that is what lights up for the hop.
-    CHECK(h.edge("e:b->a") == entt::null);
-    CHECK(on_path("e:y->x", true));
+    CHECK(on_path("e:b->a", true));
     CHECK(on_path("pkg:a", false));
 }
 
@@ -411,13 +404,20 @@ TEST(layout_survives_a_dependency_cycle) {
 // Layout must not throw away positions when the graph changes, or every file save
 // reshuffles the screen (spec 11.2).
 TEST(adding_a_node_does_not_move_the_existing_ones) {
-    auto h = make();
+    // In the file graph, which seats an arrival on its ring and leaves the rest alone.
+    // The two tree views repack instead: a tree's shape IS its arrangement, so a node
+    // arriving genuinely changes where its siblings belong, and repacking is both cheap
+    // and deterministic.
+    auto h        = make(as_files(chain()));
+    h.view().mode  = ecs::ViewMode::FileGraph;
+    h.view().level = Level::File;
+    h.request_rebuild();
     h.settle();
     const Vec2 before = h.registry().get<ecs::Position>(h.node("pkg:c")).p;
 
     GraphUpdatedPayload p;
-    p.added_nodes = {mk_node("pkg:d", NodeKind::Package, "repo")};
-    p.added_edges = {mk_edge("e:d->a", EdgeKind::DependsOn, "pkg:d", "pkg:a")};
+    p.added_nodes = {mk_node("pkg:d", NodeKind::File, "repo")};
+    p.added_edges = {mk_edge("e:d->a", EdgeKind::Imports, "pkg:d", "pkg:a")};
     Event ev;
     ev.type       = EventType::GraphUpdated;
     ev.generation = 102;
@@ -688,13 +688,23 @@ rgvtest::Harness make_filesystem() {
 
 // Discs are how the view says "this is laid out radially". They must not leak into the
 // box-based views, or picking and rendering would use the wrong shape there.
-TEST(discs_exist_only_in_the_filesystem_view) {
+TEST(discs_exist_in_the_tree_views_and_not_in_the_file_graph) {
     auto h = make_filesystem();
     int  discs = 0;
     for ([[maybe_unused]] auto&& row : h.registry().view<const ecs::Disc>().each()) ++discs;
     CHECK(discs > 0);
 
+    // The architecture view is the same radial algorithm over the import tree, so it
+    // has discs too: a node's size is how much is built on it.
     h.view().mode = ecs::ViewMode::Architecture;
+    h.request_rebuild();
+    h.settle();
+    discs = 0;
+    for ([[maybe_unused]] auto&& row : h.registry().view<const ecs::Disc>().each()) ++discs;
+    CHECK(discs > 0);
+
+    h.view().mode  = ecs::ViewMode::FileGraph;
+    h.view().level = Level::File;
     h.request_rebuild();
     h.settle();
     discs = 0;
@@ -1447,17 +1457,17 @@ TEST(a_node_that_appears_is_seated_next_to_what_it_connects_to) {
 
 // -- the architecture view ------------------------------------------------------
 //
-// A package is a node linked to the modules inside it, and the layout is force-directed
-// over those links: containment attracts, everything repels. That is what makes "the
-// code around each system" visible in the view that opens by default -- the modules
-// gather around their package -- without boxes that get in the way of panning.
+// The same radial algorithm the filesystem view uses, driven by imports instead of
+// containment. Everything is on screen from the start: the foundation on the first
+// ring, each ring outward built on the one inside it, and a node's orbiting children
+// are the modules that import it.
 
 namespace {
 
 Snapshot with_symbols() {
     Snapshot s = chain();
     s.nodes.push_back(mk_node("sym:a/x.ts#Foo", NodeKind::Symbol, "file:a/x.ts", "Foo"));
-    s.nodes.push_back(mk_node("file:c/z.ts", NodeKind::File, "pkg:c"));   // no dependencies: not architecture
+    s.nodes.push_back(mk_node("file:c/z.ts", NodeKind::File, "pkg:c"));   // imports nothing
     s.edges.push_back(mk_edge("e:y-reads-Foo", EdgeKind::References, "file:b/y.ts", "sym:a/x.ts#Foo"));
     return s;
 }
@@ -1467,25 +1477,73 @@ float gap(rgvtest::Harness& h, const std::string& a, const std::string& b) {
                   h.registry().get<ecs::Position>(h.index().node(b)).p);
 }
 
+// The layout tree, read back from where things ended up: a node's parent is whichever
+// node it orbits. Asserting on the arrangement rather than on an internal map.
+int ring_of(rgvtest::Harness& h, const std::string& id) {
+    return h.registry().get<ecs::Depth>(h.index().node(id)).value;
+}
+
 } // namespace
 
-TEST(architecture_view_links_modules_to_their_packages_and_keeps_them_close) {
-    auto h = make();
-    expand(h, {"pkg:a", "pkg:b", "pkg:c"});
+TEST(the_architecture_view_shows_every_node_from_the_start) {
+    auto h = make(with_symbols());
+    // Files, packages, and the repository the radial layout grows from. Nothing folded,
+    // and no test of whether a module takes part in anything: one that imports nothing
+    // is still part of the architecture.
+    CHECK(h.node("repo") != entt::null);
+    CHECK(h.node("pkg:a") != entt::null);
+    CHECK(h.node("file:a/x.ts") != entt::null);
+    CHECK(h.node("file:b/y.ts") != entt::null);
+    CHECK(h.node("file:c/z.ts") != entt::null);   // imports nothing, still drawn
+    // Directories are filesystem structure; this view's structure is what imports what.
+    CHECK(h.node("dir:a") == entt::null);
+    CHECK(h.node("sym:a/x.ts#Foo") == entt::null);
+}
+
+TEST(the_architecture_view_draws_imports_and_nothing_else) {
+    auto h = make(with_symbols());
+    CHECK(h.edge("e:y->x") != entt::null);          // an import
+    CHECK(h.edge("e:y-reads-Foo") == entt::null);   // a symbol read
+    CHECK(h.edge("e:b->a") == entt::null);          // a declared package dependency
+    for (auto [e, ref] : h.registry().view<const ecs::EdgeRef>().each()) {
+        CHECK(ref.kind == EdgeKind::Imports);
+    }
+}
+
+// The reading: the foundation is at the centre and each ring outward is built on the
+// ring inside it. y.ts imports x.ts, so x.ts is nearer the middle.
+TEST(the_import_tree_puts_the_foundation_at_the_centre) {
+    auto h = make(chain());
     h.settle();
-    CHECK(h.index().node("file:a/x.ts") != entt::null);
-    CHECK(h.index().node("file:b/y.ts") != entt::null);
-    // Containment is on screen as an edge, which is what the layout pulls along.
-    CHECK(h.index().edge(std::string("tree:file:a/x.ts")) != entt::null);
-    // Each module ends up nearer its own package than any other.
-    CHECK(gap(h, "file:a/x.ts", "pkg:a") < gap(h, "file:a/x.ts", "pkg:b"));
-    CHECK(gap(h, "file:a/x.ts", "pkg:a") < gap(h, "file:a/x.ts", "pkg:c"));
-    CHECK(gap(h, "file:b/y.ts", "pkg:b") < gap(h, "file:b/y.ts", "pkg:a"));
+    CHECK_EQ(ring_of(h, "repo"), 0);
+    CHECK_EQ(ring_of(h, "file:a/x.ts"), 1);   // imports nothing
+    CHECK_EQ(ring_of(h, "file:b/y.ts"), 2);   // imports x.ts
+    CHECK(length(h.registry().get<ecs::Position>(h.node("file:a/x.ts")).p) <
+          length(h.registry().get<ecs::Position>(h.node("file:b/y.ts")).p));
+    // A module orbits the one it imports, and is nearer to it than to anything else.
+    CHECK(gap(h, "file:b/y.ts", "file:a/x.ts") < gap(h, "file:b/y.ts", "repo"));
+}
+
+// A package has no imports, so it sits on the first ring with the rest of the
+// foundation rather than anywhere special.
+TEST(a_node_that_imports_nothing_sits_on_the_first_ring) {
+    auto h = make(with_symbols());
+    h.settle();
+    CHECK_EQ(ring_of(h, "pkg:a"), 1);
+    CHECK_EQ(ring_of(h, "file:c/z.ts"), 1);
+}
+
+TEST(the_architecture_view_uses_the_same_discs_the_filesystem_view_does) {
+    auto h = make(chain());
+    h.settle();
+    CHECK(h.registry().all_of<ecs::Disc>(h.node("file:a/x.ts")));
+    // x.ts is imported by y.ts, so it holds an orbit; y.ts holds nothing and is a dot.
+    CHECK(h.registry().get<ecs::Disc>(h.node("file:a/x.ts")).radius >
+          h.registry().get<ecs::Disc>(h.node("file:b/y.ts")).radius);
 }
 
 TEST(nothing_overlaps_once_the_architecture_layout_settles) {
     auto h = make(with_symbols());
-    expand(h, {"pkg:a", "pkg:b", "pkg:c"});
     h.settle();
     std::vector<entt::entity> all;
     for (auto [e, ref] : h.registry().view<const ecs::NodeRef>().each()) all.push_back(e);
@@ -1493,22 +1551,16 @@ TEST(nothing_overlaps_once_the_architecture_layout_settles) {
         for (std::size_t j = i + 1; j < all.size(); ++j) {
             const auto& pa = h.registry().get<ecs::Position>(all[i]).p;
             const auto& pb = h.registry().get<ecs::Position>(all[j]).p;
-            const auto& xa = h.registry().get<ecs::Extent>(all[i]).half;
-            const auto& xb = h.registry().get<ecs::Extent>(all[j]).half;
-            const bool apart = std::abs(pa.x - pb.x) >= (xa.x + xb.x) * 0.9f ||
-                               std::abs(pa.y - pb.y) >= (xa.y + xb.y) * 0.9f;
-            CHECK(apart);
+            const float want = h.registry().get<ecs::Disc>(all[i]).radius +
+                               h.registry().get<ecs::Disc>(all[j]).radius;
+            CHECK(length(pa - pb) > want * 0.9f);
         }
     }
 }
 
-// Same graph, same picture. A layout that depends on where the scene happened to leave
-// things is a layout nobody can compare across two runs.
 TEST(the_architecture_layout_is_deterministic) {
     auto a = make(with_symbols());
     auto b = make(with_symbols());
-    expand(a, {"pkg:a", "pkg:b"});
-    expand(b, {"pkg:a", "pkg:b"});
     a.settle();
     b.settle();
     for (auto [e, ref] : a.registry().view<const ecs::NodeRef>().each()) {
@@ -1518,50 +1570,28 @@ TEST(the_architecture_layout_is_deterministic) {
     }
 }
 
-TEST(a_file_with_no_dependencies_is_not_architecture) {
-    auto h = make(with_symbols());
-    expand(h, {"pkg:a", "pkg:c"});
-    CHECK(h.index().node("file:c/z.ts") == entt::null);
-    CHECK(h.index().node("file:a/x.ts") != entt::null);
-}
-
-// The edge between two modules explains the edge between their packages, so the
-// package edge is not drawn on top of it. A package with no modules on screen keeps its
-// own edge: there is nothing else to say it.
-TEST(module_edges_replace_the_package_edge_they_explain) {
-    auto h = make();
-    CHECK(h.index().edge("e:y->x") != entt::null);   // b/y.ts imports a/x.ts
-    CHECK(h.index().edge("e:b->a") == entt::null);   // explained by it
-    CHECK(h.index().edge("e:c->b") != entt::null);   // c holds nothing on screen
-}
-
-// Several store edges land between the same two modules -- the import of a file and
-// every read of a symbol inside it. The most specific one is drawn, between the files.
-TEST(a_symbol_use_is_drawn_between_the_files_and_wins_over_the_import) {
-    auto h = make(with_symbols());
-    expand(h, {"pkg:a", "pkg:b"});
-    const auto e = h.index().edge("e:y-reads-Foo");
+TEST(parallel_imports_collapse_into_one_line_carrying_a_count) {
+    Snapshot s = chain();
+    // Two contract edges between the same pair: one line, and the line says so.
+    s.edges.push_back(mk_edge("e:y->x2", EdgeKind::Imports, "file:b/y.ts", "file:a/x.ts"));
+    auto h = make(s);
+    CHECK_EQ(edges_between(h, "file:b/y.ts", "file:a/x.ts"), 1);
+    const auto e = h.edge("e:y->x");
     CHECK(e != entt::null);
-    CHECK(h.index().edge("e:y->x") == entt::null);
-    const auto& ends = h.registry().get<ecs::Endpoints>(e);
-    CHECK(ends.from == h.index().node("file:b/y.ts"));
-    CHECK(ends.to == h.index().node("file:a/x.ts"));   // the symbol's file stands for it
+    CHECK_EQ(h.registry().get<ecs::EdgeWeight>(e).count, 2);
 }
 
-// A changed module is red beside its package, and the module that imports it is lit
-// from the file-level result even while the view reads package-level impact.
 TEST(architecture_view_colours_modules_from_the_file_level_result) {
     auto h = make();
-    expand(h, {"pkg:a", "pkg:b"});
     push_change(h.store(), "a/x.ts", "file:a/x.ts");
     ImpactedNode y;
     y.node_id = "file:b/y.ts"; y.min_distance = 1; y.direct = true;
     y.paths.push_back(ImpactPath{{"e:y->x"}});
     push_impact(h.store(), Level::File, {y}, {"file:a/x.ts"});
     h.tick();
-    CHECK(h.registry().all_of<ecs::Changed>(h.index().node("file:a/x.ts")));
-    CHECK(h.registry().all_of<ecs::Impacted>(h.index().node("file:b/y.ts")));
-    CHECK(h.registry().all_of<ecs::Changed>(h.index().node("pkg:a")));   // owns the change
+    CHECK(h.registry().all_of<ecs::Changed>(h.node("file:a/x.ts")));
+    CHECK(h.registry().all_of<ecs::Impacted>(h.node("file:b/y.ts")));
+    CHECK(h.registry().all_of<ecs::Changed>(h.node("pkg:a")));   // owns the change
 }
 
 // The symbol level is two-sided: a symbol's dependents are files, so files take part
@@ -1583,7 +1613,6 @@ TEST(at_symbol_level_files_count_as_dependents_of_symbols) {
 
 TEST(a_hide_pattern_removes_matching_nodes_and_their_edges) {
     auto h = make(with_symbols());
-    expand(h, {"pkg:a", "pkg:b"});
     CHECK(ecs::add_hide_pattern(h.filters(), "b/"));
     h.world.resource<ecs::SceneRequests>().revisit = true;
     h.tick();
@@ -1600,7 +1629,6 @@ TEST(a_hide_pattern_removes_matching_nodes_and_their_edges) {
 
 TEST(hiding_a_package_hides_what_it_holds) {
     auto h = make();
-    expand(h, {"pkg:a", "pkg:b"});
     CHECK(ecs::add_hide_pattern(h.filters(), "^pkg:a$"));
     h.world.resource<ecs::SceneRequests>().revisit = true;
     h.tick();
@@ -1617,14 +1645,13 @@ TEST(an_invalid_pattern_is_kept_but_hides_nothing) {
     CHECK(!h.filters().hidden[0].valid);
     h.world.resource<ecs::SceneRequests>().revisit = true;
     h.tick();
-    CHECK_EQ(count_nodes(h), 3);
+    CHECK_EQ(count_nodes(h), 6);
 }
 
 // Explicit beats everything: the relevance filter spares what the agent changed, but a
 // pattern the user typed is a decision, and a changed test module is still a test.
 TEST(a_hidden_node_stays_hidden_when_it_changes) {
     auto h = make();
-    expand(h, {"pkg:a"});
     CHECK(ecs::add_hide_pattern(h.filters(), "x\\.ts$"));
     push_change(h.store(), "a/x.ts", "file:a/x.ts");
     h.world.resource<ecs::SceneRequests>().revisit = true;
@@ -1634,7 +1661,6 @@ TEST(a_hidden_node_stays_hidden_when_it_changes) {
 
 TEST(matching_is_case_insensitive_and_removing_a_pattern_restores_the_nodes) {
     auto h = make();
-    expand(h, {"pkg:b"});
     CHECK(ecs::add_hide_pattern(h.filters(), "Y\\.TS"));
     h.world.resource<ecs::SceneRequests>().revisit = true;
     h.tick();
@@ -1643,197 +1669,6 @@ TEST(matching_is_case_insensitive_and_removing_a_pattern_restores_the_nodes) {
     h.world.resource<ecs::SceneRequests>().revisit = true;
     h.tick();
     CHECK(h.index().node("file:b/y.ts") != entt::null);
-}
-
-// -- package level, and expanding one --------------------------------------------
-//
-// A system design diagram has ten boxes, not a hundred. The architecture view opens at
-// package level for the same reason: 460 file-level edges over 104 nodes cannot be
-// drawn without crossings by ANY layout -- that is Euler's bound, not a layout defect --
-// while the same graph aggregated to packages is 27 edges and reads like the mermaid
-// charts in a repository's own docs.
-
-namespace {
-
-Snapshot relations() {
-    Snapshot s;
-    s.generation                  = 100;
-    s.session.baseline_generation = 100;
-    s.nodes = {mk_node("repo", NodeKind::Repository),
-               mk_node("pkg:sys", NodeKind::Package, "repo"),
-               mk_node("pkg:comp", NodeKind::Package, "repo"),
-               mk_node("file:sys/m.py", NodeKind::File, "pkg:sys"),
-               mk_node("file:comp/c.py", NodeKind::File, "pkg:comp"),
-               mk_node("sym:comp/c.py#C", NodeKind::Symbol, "file:comp/c.py", "C")};
-    // One of each relation, all landing on the same pair of packages.
-    s.edges = {mk_edge("e:imp", EdgeKind::Imports, "file:sys/m.py", "file:comp/c.py"),
-               mk_edge("e:write", EdgeKind::Calls, "file:sys/m.py", "sym:comp/c.py#C"),
-               mk_edge("e:read", EdgeKind::References, "file:sys/m.py", "sym:comp/c.py#C")};
-    return s;
-}
-
-} // namespace
-
-TEST(the_architecture_view_opens_at_package_level) {
-    auto h = make();
-    CHECK(h.node("pkg:a") != entt::null);
-    CHECK(h.node("pkg:b") != entt::null);
-    CHECK(h.node("file:a/x.ts") == entt::null);
-    CHECK(h.node("file:b/y.ts") == entt::null);
-    CHECK_EQ(count_nodes(h), 3);
-
-    // The import between two modules is carried by the packages that hold them.
-    const auto e = h.edge("e:y->x");
-    CHECK(e != entt::null);
-    const auto& ends = h.registry().get<ecs::Endpoints>(e);
-    CHECK(ends.from == h.node("pkg:b"));
-    CHECK(ends.to == h.node("pkg:a"));
-}
-
-TEST(expanding_a_package_reveals_its_modules_and_moves_the_edge_onto_them) {
-    auto h = make();
-    expand(h, {"pkg:a"});
-    CHECK(h.node("file:a/x.ts") != entt::null);
-    CHECK(h.node("file:b/y.ts") == entt::null);   // b is still collapsed
-
-    // One end moved down to the module; the other is still the package.
-    const auto& ends = h.registry().get<ecs::Endpoints>(h.edge("e:y->x"));
-    CHECK(ends.from == h.node("pkg:b"));
-    CHECK(ends.to == h.node("file:a/x.ts"));
-
-    expand(h, {"pkg:a"});   // collapses again
-    CHECK(h.node("file:a/x.ts") == entt::null);
-}
-
-// A module that takes part in nothing is not architecture even once its package opens.
-TEST(expanding_a_package_still_leaves_out_what_takes_part_in_nothing) {
-    auto h = make(with_symbols());
-    expand(h, {"pkg:a", "pkg:c"});
-    CHECK(h.node("file:a/x.ts") != entt::null);
-    CHECK(h.node("file:c/z.ts") == entt::null);
-}
-
-TEST(parallel_edges_collapse_into_one_line_carrying_a_count) {
-    auto h = make(relations());
-    CHECK_EQ(edges_between(h, "pkg:sys", "pkg:comp"), 1);
-
-    // Three store edges behind one line, and the line says so.
-    const auto e = h.edge("e:write");   // the most specific of the three
-    CHECK(e != entt::null);
-    CHECK_EQ(h.registry().get<ecs::EdgeWeight>(e).count, 3);
-
-    // Expanded, the same three still collapse onto one pair of modules.
-    expand(h, {"pkg:sys", "pkg:comp"});
-    CHECK_EQ(edges_between(h, "file:sys/m.py", "file:comp/c.py"), 1);
-}
-
-TEST(the_relation_filter_draws_only_the_chosen_kind) {
-    auto h = make(relations());
-    struct Case { ecs::Relation r; const char* id; int weight; };
-    for (const auto& c : {Case{ecs::Relation::Imports, "e:imp", 1},
-                          Case{ecs::Relation::Reads, "e:read", 1},
-                          Case{ecs::Relation::Writes, "e:write", 1},
-                          Case{ecs::Relation::All, "e:write", 3}}) {
-        h.filters().relation = c.r;
-        h.world.resource<ecs::SceneRequests>().revisit = true;
-        h.tick();
-        CHECK_EQ(edges_between(h, "pkg:sys", "pkg:comp"), 1);
-        CHECK(h.edge(c.id) != entt::null);
-        CHECK_EQ(h.registry().get<ecs::EdgeWeight>(h.edge(c.id)).count, c.weight);
-    }
-}
-
-// Reading direction. A package depending on nothing sits at the bottom and its
-// dependents stack above it, so the eye can follow impact upward without a legend.
-TEST(the_architecture_layout_ranks_dependencies_into_a_reading_direction) {
-    auto h = make();
-    h.settle();
-    auto y = [&](const char* id) { return h.registry().get<ecs::Position>(h.node(id)).p.y; };
-    // Screen y grows downward, so "above" is a smaller y. c -> b -> a.
-    CHECK(y("pkg:a") > y("pkg:b"));
-    CHECK(y("pkg:b") > y("pkg:c"));
-}
-
-// -- a dependency that only restates containment ---------------------------------
-//
-// A package holding both sub-packages and loose modules will show its children
-// depending on it -- their modules import its modules -- and itself depending on its
-// children. Containment already says all of that, and drawing it both ways manufactures
-// a cycle the code does not have: on this project's test repository every package-level
-// cycle ran through exactly these edges, while the 132 files underneath were a clean
-// acyclic graph.
-
-namespace {
-
-// app/ holds core.py and two sub-packages. web reaches a module inside app; api imports
-// app's own module, which is a real dependency on the package as a unit.
-Snapshot nested() {
-    Snapshot s;
-    s.generation                  = 100;
-    s.session.baseline_generation = 100;
-    auto file = [](std::string id, std::string parent, std::string path) {
-        Node n = mk_node(std::move(id), NodeKind::File, std::move(parent));
-        n.path = std::move(path);
-        return n;
-    };
-    Node app = mk_node("pkg:app", NodeKind::Package, "repo", "app");
-    app.path                 = "app";
-    app.attrs["module_file"] = "app/__init__.py";
-    Node web = mk_node("pkg:app.web", NodeKind::Package, "pkg:app", "app.web");
-    web.path = "app/web";
-    Node api = mk_node("pkg:app.api", NodeKind::Package, "pkg:app", "app.api");
-    api.path = "app/api";
-
-    s.nodes = {mk_node("repo", NodeKind::Repository), app, web, api,
-               file("file:app/__init__.py", "pkg:app", "app/__init__.py"),
-               file("file:app/core.py", "pkg:app", "app/core.py"),
-               file("file:app/web/view.py", "pkg:app.web", "app/web/view.py"),
-               file("file:app/api/route.py", "pkg:app.api", "app/api/route.py")};
-    s.edges = {mk_edge("e:view->core", EdgeKind::Imports, "file:app/web/view.py", "file:app/core.py"),
-               mk_edge("e:route->init", EdgeKind::Imports, "file:app/api/route.py",
-                       "file:app/__init__.py")};
-    return s;
-}
-
-} // namespace
-
-TEST(an_edge_that_only_restates_containment_is_not_drawn) {
-    auto h = make(nested());
-    CHECK(h.node("pkg:app") != entt::null);
-    CHECK(h.node("pkg:app.web") != entt::null);
-    // view.py imports core.py, and core.py is folded into the package that also holds
-    // web. Containment says it; the arrow would only say it again, backwards.
-    CHECK_EQ(edges_between(h, "pkg:app.web", "pkg:app"), 0);
-    CHECK(h.edge("e:view->core") == entt::null);
-}
-
-// The exception. `from .. import x` is a dependency on the package as a unit, not on
-// some module that happens to live inside it.
-TEST(a_real_import_of_the_package_itself_is_still_drawn) {
-    auto h = make(nested());
-    CHECK_EQ(edges_between(h, "pkg:app.api", "pkg:app"), 1);
-    CHECK(h.edge("e:route->init") != entt::null);
-}
-
-// Nothing is lost, only folded: opening the parent makes its modules nodes of their
-// own, and the dependency is a plain edge between two modules again.
-TEST(opening_the_parent_brings_the_folded_dependency_back) {
-    auto h = make(nested());
-    expand(h, {"pkg:app", "pkg:app.web"});
-    const auto e = h.edge("e:view->core");
-    CHECK(e != entt::null);
-    const auto& ends = h.registry().get<ecs::Endpoints>(e);
-    CHECK(ends.from == h.node("file:app/web/view.py"));
-    CHECK(ends.to == h.node("file:app/core.py"));
-}
-
-// The point of all of it: the false cycle goes, so the ranking means something again.
-TEST(dropping_containment_restatements_leaves_the_ranking_acyclic) {
-    auto h = make(nested());
-    h.settle();
-    // api depends on app, and nothing depends on api. app is the floor.
-    CHECK_EQ(h.registry().get<ecs::Depth>(h.node("pkg:app")).value, 0);
-    CHECK_EQ(h.registry().get<ecs::Depth>(h.node("pkg:app.api")).value, 1);
 }
 
 // -- dependency curves on hover, over the filesystem tree ------------------------

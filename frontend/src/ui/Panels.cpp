@@ -246,35 +246,6 @@ void draw_top_bar(ecs::World& world) {
         flow.placed();
     }
 
-    // Only the architecture view has a level to open into.
-    if (vs.mode == ecs::ViewMode::Architecture) {
-        const bool  open = !vs.expanded.empty();
-        const char* btn  = open ? "Collapse all" : "Expand all";
-        flow.item(button_w(btn));
-        if (ImGui::Button(btn)) ui.cmd.push(ecs::ExpandAll{!open});
-        flow.placed();
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Show the modules inside every package, or fold them back in.\n"
-                              "Double-click a single package to open just that one.");
-        }
-
-        label("SHOW");
-        const float rw = 104.0f * vs.ui_text_scale;
-        flow.item(rw);
-        ImGui::SetNextItemWidth(rw);
-        int rel = static_cast<int>(f.relation);
-        if (ImGui::Combo("##relation", &rel, "all\0imports\0reads\0writes\0")) {
-            f.relation = static_cast<ecs::Relation>(rel);
-            ui.world.resource<ecs::SceneRequests>().revisit = true;
-        }
-        flow.placed();
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Which relationship to draw. A hand-drawn system diagram asks one\n"
-                              "question at a time -- who writes this, what imports what -- and\n"
-                              "superimposing all of them is most of what makes a hairball.");
-        }
-    }
-
     label("IMPACT AT");
     {
         const float w = 130.0f * vs.ui_text_scale;
@@ -623,16 +594,6 @@ void draw_node_inspector(Ui& ui, const Node& n) {
         chip(n.language.c_str(), Vec4{0.45f, 0.50f, 0.60f, 1.0f});
     }
 
-    // Opening a package is how the diagram goes down a level (FR-31).
-    if (n.kind == NodeKind::Package && ui.view.mode == ecs::ViewMode::Architecture) {
-        const bool open = ui.view.expanded.count(n.id) > 0;
-        ImGui::Spacing();
-        if (ImGui::Button(open ? "Close: fold its modules back in"
-                               : "Open: show the modules inside")) {
-            ui.cmd.push(ecs::ToggleExpand{n.id});
-        }
-    }
-
     // How much information "something depends on this" carries.
     {
         const auto& idx  = ui.derived.specificity;
@@ -941,7 +902,7 @@ void draw_inspector(ecs::World& world) {
         ImGui::BulletText("drag           pan");
         ImGui::BulletText("wheel          zoom");
         ImGui::BulletText("drag a node    move it; it settles back");
-        ImGui::BulletText("double click   open a package; pin anything else");
+        ImGui::BulletText("double click   pin / unpin in place");
         ImGui::BulletText("F              fit to view");
         ImGui::BulletText("space          play / pause the scenario");
         ImGui::BulletText(".              step one event");
@@ -1166,15 +1127,9 @@ void draw_graph_overlay(ecs::World& world, ImDrawList* dl) {
             const float pscale  = prom ? prom->scale : 1.0f;
 
             // What the user is pointing at is always named, however crowded it is.
-            // So is a package in the architecture view: there are a few dozen at most
-            // and they are the frame the diagram is read against, so losing their names
-            // to a zoom level -- which is what opening one package used to do -- costs
-            // more than the crowding it saves. Modules still follow semantic zoom.
             const bool asked_for = reg.all_of<ecs::Selected>(ent) ||
                                    reg.all_of<ecs::Hovered>(ent) ||
-                                   reg.all_of<ecs::OnExplainedPath>(ent) ||
-                                   (vs.mode == ecs::ViewMode::Architecture &&
-                                    ref.kind == NodeKind::Package);
+                                   reg.all_of<ecs::OnExplainedPath>(ent);
 
             const rgv::view::DiscShape shape{disc ? disc->radius : 0.0f,
                                              space ? space->room : 1e9f};
@@ -1214,10 +1169,12 @@ void draw_graph_overlay(ecs::World& world, ImDrawList* dl) {
 
             // Too crowded to name. Eases as the user zooms in and the nodes spread out.
             //
-            // Directories in the radial view are exempt: their nearest neighbour is a
-            // file they own, so `room` understates the empty space their name goes into,
-            // and applying the test there hides the structure.
-            const bool dense_exempt = disc && ref.kind != NodeKind::File;
+            // A node that owns an orbit is exempt: its nearest neighbour is something
+            // it holds, so `room` understates the empty space its name goes into, and
+            // applying the test there hides the structure. A node that holds nothing
+            // gets no such benefit -- in the architecture view the foundation ring is
+            // packed tight, and exempting all of it stacked every label on the centre.
+            const bool dense_exempt = disc && disc->halo > disc->radius + 1.0f;
             if (!inside && !asked_for && !dense_exempt && space &&
                 space->room * cam.zoom < sz.x * 0.55f) {
                 continue;
@@ -1292,10 +1249,6 @@ void draw_graph_overlay(ecs::World& world, ImDrawList* dl) {
         {"stale evidence", t.stale, true},
         {"heuristic edge", t.heuristic, true},
     };
-    if (vs.mode == ecs::ViewMode::Architecture) {
-        rows.push_back({"writes: constructs or calls", t.writes, false});
-        rows.push_back({"reads: names or queries", t.reads, false});
-    }
     if (vs.mode == ecs::ViewMode::Filesystem) {
         rows.push_back({"hover: what it depends on", t.dep_out, false});
         rows.push_back({"hover: what depends on it", t.dep_in, false});

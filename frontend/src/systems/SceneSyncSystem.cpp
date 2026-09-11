@@ -128,7 +128,6 @@ void SceneSyncSystem::revisit(ecs::World& world) {
         for (const auto& [eid, pair] : drawn_) {
             if (const Edge* e = store.edge(eid)) upsert_edge(world, *e);
         }
-        sync_containment(world);
     }
 
     // Edges follow: one may have become visible because its endpoint just arrived.
@@ -145,33 +144,6 @@ void SceneSyncSystem::revisit(ecs::World& world) {
 }
 
 // -- visibility ---------------------------------------------------------------
-
-namespace {
-
-bool dependency_kind(EdgeKind k) {
-    return k == EdgeKind::Imports || k == EdgeKind::Calls || k == EdgeKind::References;
-}
-
-// A file with any dependency in or out, counting the symbols it defines: a component
-// module nobody imports directly is still what every system reads.
-bool participates(const GraphStore& store, const Node& n) {
-    for (const auto& eid : store.out_edges(n.id)) {
-        if (const Edge* e = store.edge(eid); e && e->active() && dependency_kind(e->kind)) return true;
-    }
-    for (const auto& eid : store.in_edges(n.id)) {
-        if (const Edge* e = store.edge(eid); e && e->active() && dependency_kind(e->kind)) return true;
-    }
-    for (const auto& cid : store.children(n.id)) {
-        const Node* c = store.node(cid);
-        if (!c || c->kind != NodeKind::Symbol) continue;
-        for (const auto& eid : store.in_edges(cid)) {
-            if (const Edge* e = store.edge(eid); e && e->active()) return true;
-        }
-    }
-    return false;
-}
-
-} // namespace
 
 // Hidden by a pattern the user typed: itself, or anything above it. A decision, not
 // a heuristic, so nothing below -- not even a change -- exempts a node from it.
@@ -198,21 +170,15 @@ bool SceneSyncSystem::node_visible(const ecs::World& world, const Node& n) const
 
     switch (view.mode) {
         case ecs::ViewMode::Architecture:
-            // Packages, and inside them the files that take part in a dependency: a
-            // module that imports, is imported, or defines something another file
-            // uses. A README or a config file is not architecture and stays out.
+            // Everything, from the start. The repository is included because the radial
+            // layout needs one centre to grow from, the same reason the filesystem view
+            // includes it. Directories are not: they are filesystem structure, and this
+            // view's structure is what imports what.
             if (n.kind == NodeKind::ExternalPackage) return f.show_external;
-            if (n.kind == NodeKind::File) {
-                // Modules are inside a package until the user opens it. Collapsed is
-                // the default: the diagram is the packages, and what a package holds
-                // is the next level down rather than more of this one.
-                if (!view.expanded.count(store.ancestor_of_kind(n.id, NodeKind::Package))) {
-                    return false;
-                }
-                if (!participates(store, n)) return false;
-                break;
+            if (n.kind != NodeKind::Repository && n.kind != NodeKind::Package &&
+                n.kind != NodeKind::File && n.kind != NodeKind::BuildTarget) {
+                return false;
             }
-            if (n.kind != NodeKind::Package && n.kind != NodeKind::BuildTarget) return false;
             break;
         case ecs::ViewMode::Filesystem:
             // The repository is included so the tree has one centre to grow from.
@@ -332,27 +298,10 @@ void SceneSyncSystem::choose_drawn_edges(ecs::World& world) {
     weights_.clear();
     index.aliases.clear();
 
-    auto priority = [](EdgeKind k) {
-        switch (k) {
-            case EdgeKind::Calls:      return 3;
-            case EdgeKind::References: return 2;
-            case EdgeKind::Imports:    return 1;
-            default:                   return 0;
-        }
-    };
-    // One question at a time. A declared dependency is an import-shaped claim, so it
-    // rides with imports; it is not a read or a write of anything.
-    auto in_relation = [&](EdgeKind k) {
-        switch (f.relation) {
-            case ecs::Relation::Imports: return k == EdgeKind::Imports || k == EdgeKind::DependsOn;
-            case ecs::Relation::Reads:   return k == EdgeKind::References;
-            case ecs::Relation::Writes:  return k == EdgeKind::Calls;
-            case ecs::Relation::All:     break;
-        }
-        return true;
-    };
     auto passes = [&](const Edge& e) {
-        if (!e.active()) return false;
+        // Imports, and only imports. The layout is a tree of them, so a line that is
+        // not one is a line the arrangement cannot account for.
+        if (!e.active() || e.kind != EdgeKind::Imports) return false;
         if (!f.show_heuristic &&
             (e.confidence == Confidence::Heuristic || e.confidence == Confidence::Unresolved)) {
             return false;
@@ -361,110 +310,27 @@ void SceneSyncSystem::choose_drawn_edges(ecs::World& world) {
         return true;
     };
 
-    struct Pick { int prio; EdgeId id; NodeId from, to; int count = 0; };
-    std::map<std::pair<NodeId, NodeId>, Pick>         best;
-    std::set<std::pair<NodeId, NodeId>>               explained;   // package pairs with a drawn file edge
-    std::map<std::pair<NodeId, NodeId>, std::vector<const Edge*>> declared;
+    // One line per pair of nodes, however many contract edges land on it, and the line
+    // carries how many. Both ends are resolved to whatever stands for them on screen,
+    // which normally is themselves -- nothing is folded in this view -- but keeps a
+    // filtered-out endpoint from dropping an edge onto a node that is not drawn.
+    struct Pick { EdgeId id; NodeId from, to; int count = 0; };
+    std::map<std::pair<NodeId, NodeId>, Pick> best;
 
     for (const auto& [id, e] : store.edges()) {
-        if (!passes(e) || !in_relation(e.kind)) continue;
-        const bool dep = e.kind == EdgeKind::DependsOn;
-        if (!dep && !dependency_kind(e.kind)) continue;
+        if (!passes(e)) continue;
         const NodeId rf = representative(world, e.from);
         const NodeId rt = representative(world, e.to);
         if (rf.empty() || rt.empty() || rf == rt) continue;
-        if (restates_containment(world, e, rf, rt)) continue;
-        if (dep) { declared[{rf, rt}].push_back(&e); continue; }
 
-        // Every edge that lands on this pair counts; the most specific one is the one
-        // that gets drawn, so the line reads "writes CarPosition" rather than "imports".
-        const Pick pick{priority(e.kind), id, rf, rt, 0};
-        auto [it, fresh] = best.try_emplace({rf, rt}, pick);
-        if (!fresh && (pick.prio > it->second.prio ||
-                       (pick.prio == it->second.prio && pick.id < it->second.id))) {
-            const int keep  = it->second.count;
-            it->second      = pick;
-            it->second.count = keep;
-        }
+        auto [it, fresh] = best.try_emplace({rf, rt}, Pick{id, rf, rt, 0});
+        if (!fresh && id < it->second.id) it->second.id = id;   // deterministic
         ++it->second.count;
-    }
-    std::map<std::pair<NodeId, NodeId>, std::vector<EdgeId>> by_owner_pair;
-    for (const auto& [pair, pick] : best) {
-        auto owner = [&](const NodeId& id) {
-            const Node* n = store.node(id);
-            if (n && n->kind == NodeKind::Package) return id;
-            return store.ancestor_of_kind(id, NodeKind::Package);
-        };
-        const auto owners = std::make_pair(owner(pick.from), owner(pick.to));
-        explained.insert(owners);
-        by_owner_pair[owners].push_back(pick.id);
-    }
-    for (const auto& [pair, es] : declared) {
-        bool aliased = false;
-        for (const Edge* e : es) {
-            auto it = by_owner_pair.find({e->from, e->to});
-            if (it == by_owner_pair.end()) continue;
-            index.aliases[e->id] = it->second;   // explained by the modules inside
-            aliased              = true;
-        }
-        if (aliased) continue;
-        const Pick pick{0, es.front()->id, pair.first, pair.second, static_cast<int>(es.size())};
-        auto [it, fresh] = best.try_emplace(pair, pick);
-        if (!fresh) it->second.count += pick.count;
     }
     for (const auto& [pair, pick] : best) {
         drawn_[pick.id]   = pair;
         weights_[pick.id] = pick.count;
     }
-}
-
-// True when a drawn edge would only say what containment already says: one end is an
-// ancestor of the other, and what got folded into that ancestor is a module inside it
-// rather than the ancestor's own module.
-//
-// This is the difference between a diagram and a tangle. A package holding both
-// sub-packages and loose modules shows every child depending on it and itself depending
-// on every child, which is not architecture -- it is the containment tree drawn twice,
-// once as nesting and once as arrows. Worse, the two directions together manufacture a
-// cycle: on this project's test repository every package-level cycle ran through these
-// edges while the 132 files underneath formed a clean acyclic graph, and a false cycle
-// destroys the rank that gives the picture its reading direction.
-//
-// The exception is a real import of the package itself -- `from .. import x` -- which
-// is a dependency on the package as a unit. The provider names the file that is a
-// package's own module in `attrs["module_file"]`, so this stays language-neutral.
-//
-// Nothing is lost, only folded: open the ancestor and its modules become nodes of their
-// own, at which point neither end is an ancestor of the other and the edge is drawn.
-bool SceneSyncSystem::restates_containment(const ecs::World& world, const Edge& e,
-                                           const NodeId& rf, const NodeId& rt) const {
-    const auto& store = world.resource<GraphStore>();
-
-    auto ancestor_of = [&](const NodeId& maybe, NodeId of) {
-        for (int guard = 0; guard < 64; ++guard) {
-            const Node* n = store.node(of);
-            if (!n || n->parent.empty()) return false;
-            if (n->parent == maybe) return true;
-            of = n->parent;
-        }
-        return false;
-    };
-
-    NodeId ancestor, folded;
-    if (ancestor_of(rt, rf))      { ancestor = rt; folded = e.to; }
-    else if (ancestor_of(rf, rt)) { ancestor = rf; folded = e.from; }
-    else return false;
-
-    // A symbol stands for the file that defines it.
-    const Node* f = store.node(folded);
-    for (int guard = 0; f && f->kind != NodeKind::File && guard < 64; ++guard) {
-        f = store.node(f->parent);
-    }
-    const Node* a = store.node(ancestor);
-    if (!f || !a) return true;
-
-    auto it = a->attrs.find("module_file");
-    return it == a->attrs.end() || it->second != f->path;
 }
 
 bool SceneSyncSystem::edge_visible(const ecs::World& world, const Edge& e) const {
@@ -631,9 +497,9 @@ void SceneSyncSystem::rebuild(ecs::World& world) {
         if (edge_visible(world, e)) upsert_edge(world, e);
     }
 
-    if (view.mode == ecs::ViewMode::Filesystem || view.mode == ecs::ViewMode::Architecture) {
-        sync_containment(world);
-    }
+    // Containment is drawn as the tree in the filesystem view. The architecture view
+    // has a tree too, but it is made of imports, and those are real edges already.
+    if (view.mode == ecs::ViewMode::Filesystem) sync_containment(world);
     (void)registry;
     (void)index;
 }
@@ -692,7 +558,7 @@ void SceneSyncSystem::incremental(ecs::World& world) {
         for (const auto& [eid, pair] : drawn_) {
             if (const Edge* e = store.edge(eid)) upsert_edge(world, *e);
         }
-        if (!dirty.nodes.empty()) sync_containment(world);
+        if (!dirty.nodes.empty()) world.resource<ecs::SceneRequests>().relayout = true;
         return;
     }
     // Twice over the edges: a node may have arrived after an edge that references it,

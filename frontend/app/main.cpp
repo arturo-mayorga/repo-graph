@@ -98,16 +98,6 @@ void install_resources(ecs::World& world, const app::Options& options) {
                          pattern.c_str());
         }
     }
-    for (const auto& id : options.expand) view.expanded.insert(id);
-    if (!options.relation.empty()) {
-        auto& f = world.resource<ecs::Filters>();
-        if (options.relation == "imports")      f.relation = ecs::Relation::Imports;
-        else if (options.relation == "reads")   f.relation = ecs::Relation::Reads;
-        else if (options.relation == "writes")  f.relation = ecs::Relation::Writes;
-        else if (options.relation == "all")     f.relation = ecs::Relation::All;
-        else std::fprintf(stderr, "rgv: unknown --relation '%s'; using all\n",
-                          options.relation.c_str());
-    }
     if (options.relevance >= 0.0f) {
         world.resource<ecs::Filters>().min_relevance = std::clamp(options.relevance, 0.0f, 1.0f);
     }

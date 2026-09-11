@@ -320,72 +320,27 @@ structure is not shaken apart.
 
 ### The architecture view
 
-What opens by default, and what `rgv --watch` is for: the architecture of the code, at
-the size a system design diagram is actually drawn at.
+The same radial algorithm the filesystem view uses, driven by imports instead of
+containment. Everything is on screen from the start: every file, every package, and the
+repository the layout grows from. Nothing is folded and nothing has to take part in a
+dependency to be drawn.
 
-**It opens at package level.** A package is a box; the modules inside it are folded into
-it, and the edges they have are carried by the package that holds them. Double-click a
-package to open it, or use **Expand all**. That is not a stylistic choice. The file-level
-graph of this project's test repository is 460 dependency edges over 104 nodes, and a
-simple graph can only be drawn without crossings if its edges stay under three times its
-nodes minus six, which is 306. It is past the bound, so *no layout algorithm can
-untangle it*. The same graph aggregated to packages is 20 edges over 8 nodes, under its
-own bound of 18 once parallel edges collapse, and it reads like the mermaid charts in a
-repository's own documentation.
+**The tree is the import graph.** A module that imports nothing is on the first ring;
+each ring outward is code built on the ring inside it; and a node's orbiting children
+are the modules that import *it*. So a disc's size is how much is built on it, the same
+way a directory's size in the filesystem view is how much it holds. The tree is spanned
+breadth first, which is also what makes it a tree at all: an import graph has cycles,
+and visiting each node once turns any back edge into a cross-link the layout ignores
+rather than a knot it has to resolve.
 
-Measured on that repository, counting real edge crossings on the real coordinates:
+**Imports, and only imports.** The layout is a tree of them, so a line that is not one
+is a line the arrangement cannot account for. Parallel edges between the same pair still
+collapse into one line carrying a count.
 
-| what is drawn | nodes | edges | crossings |
-|---|---|---|---|
-| file level, as this view used to open | 104 | 460 | 26,442 |
-| file level, laid out in layers instead | 104 | 460 | 15,925 |
-| package level, as it opens now | 8 | 20 | 27 |
-
-Changing the layout is worth 40%. Changing the level is worth three orders of magnitude.
-
-**A dependency that only restates containment is not drawn.** A package holding both
-sub-packages and loose modules would otherwise show every child depending on it, because
-their modules import its modules, and itself depending on every child. That is the
-containment tree drawn twice, once as nesting and once as arrows, and the two directions
-together manufacture a cycle the code does not have. On this project's test repository
-every package-level cycle ran through exactly those edges while the 132 files underneath
-formed a clean acyclic graph, and a false cycle destroys the rank that gives the picture
-its reading direction. Dropping them takes that repository from 20 package dependencies
-to 10, removes the cycle, and leaves ranks that match its own documentation.
-
-The exception is a real import of the package itself, `from .. import x`, which is a
-dependency on the package as a unit. The provider names the file that is a package's own
-module in `attrs.module_file`, so the frontend can tell the two apart without knowing
-anything about Python. Nothing is lost either way: open the parent and its modules become
-nodes of their own, at which point the edge is between two modules and is drawn.
-
-**Parallel edges collapse into one line that carries a count.** Several contract edges
-land on the same pair once the view aggregates: the import of a module, and every read
-and write of a symbol inside it. One line is drawn, the most specific of them, so it
-reads *writes `CarPosition`* rather than *imports*. It is drawn heavier the more it
-stands for, and the inspector says how many and shows the evidence for the one it names.
-
-**One relation at a time.** The **SHOW** selector draws `all`, `imports`, `reads`, or
-`writes`. A hand-drawn diagram asks one question per picture, and superimposing four
-answers is most of what makes a hairball. `writes` is the "who owns this component"
-diagram; `imports` is the dependency diagram.
-
-**There is a reading direction.** A package that depends on nothing sits at the bottom
-and its dependents stack above it, so impact rises. The force layout holds each node to
-its dependency rank's row and leaves the column free, which is the cartesian version of
-what the concentric layout does with its rings.
-
-Edges recede as a field only when there is a field: the fade follows how crowded the
-picture is, so at diagram size they are simply drawn, and opening a package thickens the
-graph and dims it in the same movement. The node you point at or select always has its
-edges at full strength. Package names survive every zoom level, because they are the
-frame the diagram is read against.
-
-The blast radius is drawn at two levels at once, modules from the file-level result and
-packages from the package-level one, so a saved file is red inside the package that owns
-it while the packages that depend on it light up around it. `--expand NODE`,
-`--relation R`, `--filter TEXT`, `--hide REGEX` and `--select NODE` set all of this from
-the command line, which is what makes a screenshot of this view reproducible.
+One consequence worth knowing: a declared dependency from a manifest is not an import,
+so it is not drawn. A repository with `package.json` files and no language provider gets
+its packages as nodes with nothing between them. Import-level truth needs a reader per
+language, and Python is the only one so far.
 
 ### Hiding by pattern
 

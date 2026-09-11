@@ -23,9 +23,6 @@ struct FitView         {};
 struct FocusNodes      { std::vector<NodeId> ids; };
 
 struct SetViewMode     { int mode = 0; };    // ecs::ViewMode
-// Open or close a package: show the modules inside it, or fold them back into it.
-struct ToggleExpand    { NodeId id; };
-struct ExpandAll       { bool open = true; };
 struct SetImpactLevel  { int level = 0; };   // rgv::Level
 
 struct ReloadFixture   {};
@@ -35,9 +32,8 @@ struct SelectScenario  { int index = 0; };
 struct SaveSettings    {};
 
 using Command = std::variant<SelectNode, SelectEdge, ClearSelection, CyclePath, FitView,
-                             FocusNodes, SetViewMode, SetImpactLevel, ToggleExpand,
-                             ExpandAll, ReloadFixture, SelectFixture, SelectScenario,
-                             SaveSettings>;
+                             FocusNodes, SetViewMode, SetImpactLevel, ReloadFixture,
+                             SelectFixture, SelectScenario, SaveSettings>;
 
 // Drained once per frame, in the order they were pushed.
 struct CommandQueue {

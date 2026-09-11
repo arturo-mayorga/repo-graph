@@ -41,21 +41,9 @@ const char* to_label(ViewMode m);
 // but a view opens on the level whose result it can actually draw.
 Level default_level(ViewMode m);
 
-// Which dependency relation the architecture view draws. A hand-drawn system diagram
-// asks one question at a time -- "who writes this component", "what imports what" --
-// and superimposing all of them is most of what turns a diagram into a hairball.
-enum class Relation { All, Imports, Reads, Writes };
-const char* to_label(Relation r);
-
 struct ViewSettings {
     ViewMode mode  = ViewMode::Architecture;
     Level    level = Level::Package;
-
-    // Packages whose modules are on screen. Empty is the default: the architecture
-    // view opens at package level, because a graph of 460 file-level edges over 104
-    // nodes is past Euler's planarity bound and cannot be drawn without crossings by
-    // any layout, while the same graph aggregated to packages is a readable diagram.
-    std::unordered_set<NodeId> expanded;
 
     bool layout_running     = true;
     bool show_labels        = true;
@@ -78,8 +66,6 @@ struct Filters {
     // Hide impact that only reaches the change through a hub. Never applies to what
     // the agent changed -- see analysis/Specificity.h.
     float min_relevance = 0.0f;
-
-    Relation relation = Relation::All;
 
     std::string text;   // substring match on name/path
 

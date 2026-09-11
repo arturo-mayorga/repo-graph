@@ -360,13 +360,22 @@ TEST(raising_the_relevance_threshold_hides_hub_packages_entirely) {
 // Edges into a hidden node must go with it, or the renderer walks into an endpoint
 // that no longer exists.
 TEST(hiding_a_hub_removes_the_edges_that_pointed_at_it) {
+    // As files and imports, which is what the dependency views draw now. The rule
+    // under test is SceneSyncSystem's, and it does not care which kind vanished.
+    Snapshot s = hub_graph();
+    for (auto& n : s.nodes) {
+        if (n.kind == NodeKind::Package) n.kind = NodeKind::File;
+    }
+    for (auto& e : s.edges) {
+        if (e.kind == EdgeKind::DependsOn) e.kind = EdgeKind::Imports;
+    }
     GraphStore store;
-    store.reset(hub_graph());
+    store.reset(s);
 
     rgvtest::Harness h;
     h.world.resource<GraphStore>() = std::move(store);
-    h.view().mode             = ecs::ViewMode::Architecture;
-    h.view().level            = Level::Package;
+    h.view().mode             = ecs::ViewMode::FileGraph;
+    h.view().level            = Level::File;
     h.filters().min_relevance = 0.5f;
     h.request_rebuild();
     h.tick();

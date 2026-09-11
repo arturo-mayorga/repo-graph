@@ -67,20 +67,6 @@ void CommandSystem::run(ecs::World& world, const ecs::FrameContext&) {
                         requests.refit   = true;
                     }
 
-                } else if constexpr (std::is_same_v<T, ecs::ToggleExpand>) {
-                    if (view.expanded.count(c.id)) view.expanded.erase(c.id);
-                    else view.expanded.insert(c.id);
-                    requests.rebuild = true;
-
-                } else if constexpr (std::is_same_v<T, ecs::ExpandAll>) {
-                    view.expanded.clear();
-                    if (c.open) {
-                        for (const auto& [id, n] : world.resource<GraphStore>().nodes()) {
-                            if (n.kind == NodeKind::Package) view.expanded.insert(id);
-                        }
-                    }
-                    requests.rebuild = true;
-
                 } else if constexpr (std::is_same_v<T, ecs::SetImpactLevel>) {
                     view.level = static_cast<Level>(c.level);
 

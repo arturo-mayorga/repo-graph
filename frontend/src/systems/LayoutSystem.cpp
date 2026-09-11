@@ -272,261 +272,6 @@ void LayoutSystem::concentric_place(ecs::World& world) {
     energy_ = 1e9f;
 }
 
-// The radius a node's body occupies for repulsion: a disc's own, a box's half diagonal.
-float body_radius(entt::registry& reg, entt::entity e) {
-    if (const auto* d = reg.try_get<ecs::Disc>(e)) return d->radius;
-    if (const auto* x = reg.try_get<ecs::Extent>(e)) return length(x->half) * 0.85f;
-    return 12.0f;
-}
-
-// One pass of the force-directed relaxation, `passes` times. Springs along containment
-// hold a module at a fixed clearance from its package; dependency edges pull weakly
-// toward a preferred length; every pair inside `force_range` repels, hard where they
-// overlap and softly beyond; a faint gravity keeps disconnected components on one
-// screen. Position-based -- each pass computes displacements and applies them, with no
-// velocity -- because velocity is what makes a force layout oscillate and drift.
-// `cooling` in [0, 1] scales the step down as a settle proceeds.
-void LayoutSystem::force_relax(ecs::World& world, float dt, int passes, float cooling, bool gentle) {
-    auto&       reg  = world.registry;
-    const auto& drag = world.resource<ecs::DragState>();
-
-    const entt::entity held = drag.active ? drag.node : entt::null;
-    // A gentle pass moves only the loose nodes, if there are any; a drag moves all.
-    auto held_fast = [&](entt::entity e) {
-        if (e == held || reg.all_of<ecs::Pinned>(e)) return true;
-        return gentle && !drag.active && !loose_.empty() && !loose_.count(to_raw(e));
-    };
-
-    std::vector<entt::entity> nodes;
-    for (auto [e, ref, pos] : reg.view<const ecs::NodeRef, const ecs::Position>().each()) nodes.push_back(e);
-    if (nodes.empty()) return;
-
-    std::unordered_map<std::uint32_t, float> radius;
-    for (auto e : nodes) radius[to_raw(e)] = body_radius(reg, e);
-
-    struct Link { entt::entity a, b; bool contains; };
-    std::vector<Link> links;
-    std::unordered_map<std::uint32_t, int>          degree;
-    std::unordered_map<std::uint32_t, std::uint32_t> parent_of;
-    for (auto [e, ref, ends] : reg.view<const ecs::EdgeRef, const ecs::Endpoints>().each()) {
-        if (!reg.valid(ends.from) || !reg.valid(ends.to) || ends.from == ends.to) continue;
-        links.push_back({ends.from, ends.to, ref.kind == EdgeKind::Contains});
-        ++degree[to_raw(ends.from)];
-        ++degree[to_raw(ends.to)];
-        if (ref.kind == EdgeKind::Contains) parent_of[to_raw(ends.from)] = to_raw(ends.to);
-    }
-    // Same package, or one holds the other: they belong together and spread gently.
-    auto kin = [&](entt::entity a, entt::entity b) {
-        auto pa = parent_of.find(to_raw(a));
-        auto pb = parent_of.find(to_raw(b));
-        if (pa != parent_of.end() && pa->second == to_raw(b)) return true;
-        if (pb != parent_of.end() && pb->second == to_raw(a)) return true;
-        return pa != parent_of.end() && pb != parent_of.end() && pa->second == pb->second;
-    };
-
-    const float step = std::clamp(dt * 60.0f, 0.25f, 2.0f) * std::max(0.05f, cooling);
-    const float cell = params_.force_range;
-    auto key = [](int x, int y) {
-        return (static_cast<std::int64_t>(x) << 32) ^ static_cast<std::uint32_t>(y);
-    };
-
-    for (int iter = 0; iter < passes; ++iter) {
-        // -- springs
-        for (const auto& l : links) {
-            auto* pa = reg.try_get<ecs::Position>(l.a);
-            auto* pb = reg.try_get<ecs::Position>(l.b);
-            if (!pa || !pb) continue;
-            const Vec2  d    = pa->p - pb->p;
-            const float dist = length(d);
-            if (dist < 1e-4f) continue;
-            const float want = radius[to_raw(l.a)] + radius[to_raw(l.b)] +
-                               (l.contains ? params_.force_link : params_.force_dep);
-            const float err  = dist - want;
-            const float k    = l.contains ? params_.relax_spring : params_.force_dep_pull;
-            const Vec2  push = normalize(d) * (err * k * step * 0.5f);
-            // A hub with many links moves less per link, or it is torn between them.
-            const float wa = 1.0f / std::sqrt(static_cast<float>(std::max(1, degree[to_raw(l.a)])));
-            const float wb = 1.0f / std::sqrt(static_cast<float>(std::max(1, degree[to_raw(l.b)])));
-            if (!held_fast(l.a)) pa->p -= push * wa;
-            if (!held_fast(l.b)) pb->p += push * wb;
-        }
-
-        // -- repulsion, binned so a pass is linear in the graph
-        std::unordered_map<std::int64_t, std::vector<entt::entity>> bins;
-        for (auto e : nodes) {
-            const auto& pos = reg.get<ecs::Position>(e).p;
-            bins[key(static_cast<int>(std::floor(pos.x / cell)),
-                     static_cast<int>(std::floor(pos.y / cell)))].push_back(e);
-        }
-        for (auto e : nodes) {
-            if (held_fast(e)) continue;
-            auto&       pos = reg.get<ecs::Position>(e);
-            const int   cx  = static_cast<int>(std::floor(pos.p.x / cell));
-            const int   cy  = static_cast<int>(std::floor(pos.p.y / cell));
-            const float re  = radius[to_raw(e)];
-            Vec2        shove{0.0f, 0.0f};
-            for (int dy = -1; dy <= 1; ++dy) {
-                for (int dx = -1; dx <= 1; ++dx) {
-                    auto it = bins.find(key(cx + dx, cy + dy));
-                    if (it == bins.end()) continue;
-                    for (auto other : it->second) {
-                        if (other == e) continue;
-                        const Vec2  away = pos.p - reg.get<ecs::Position>(other).p;
-                        const float dist = length(away);
-                        if (dist >= params_.force_range) continue;
-                        if (dist < 1e-4f) {
-                            // Coincident: separate deterministically by id order.
-                            shove.x += (to_raw(e) > to_raw(other)) ? 1.0f : -1.0f;
-                            continue;
-                        }
-                        const float want = re + radius[to_raw(other)] + 14.0f;
-                        const Vec2  dir  = normalize(away);
-                        if (dist < want) {
-                            shove += dir * ((want - dist) * 0.5f);   // hard: no overlap
-                        } else if (!gentle) {
-                            // Inverse-distance repulsion, the classic k^2/d, with kin
-                            // repelling gently and strangers hard: that difference is
-                            // what pulls a package's modules into a cluster of their own.
-                            const float k = kin(e, other) ? params_.force_spread : params_.force_apart;
-                            shove += dir * (k * k / dist);
-                        }
-                    }
-                }
-            }
-            pos.p += shove * (params_.relax_repel * step);
-            if (!gentle) pos.p -= pos.p * (params_.force_gravity * step);
-            // Rank: hold the row, leave the column free. The polar version of this is
-            // what the concentric layout does with its rings.
-            if (const auto* d = reg.try_get<ecs::Depth>(e)) {
-                const float want = -static_cast<float>(d->value) * params_.force_rank_gap;
-                pos.p.y += (want - pos.p.y) * std::min(1.0f, params_.force_rank * step);
-            }
-        }
-    }
-
-    relax_motion_ = 0.0f;
-    for (auto [e, pos, target] : reg.view<const ecs::Position, ecs::LayoutTarget>().each()) {
-        relax_motion_ = std::max(relax_motion_, length(pos.p - target.p));
-        target.p      = pos.p;
-    }
-}
-
-// Force-directed architecture layout, from a deterministic seed to a quiet state.
-//
-// Seeded by id rather than from wherever the scene happened to leave things, so the
-// same repository always draws the same way: packages on a circle in name order, each
-// module beside its package. Then relaxed until nothing moves more than the quiet
-// threshold, with the step cooling over the passes so it converges instead of
-// circling. That -- not the presence of forces -- is the difference between this and
-// the spring layout that was abandoned for drifting.
-void LayoutSystem::force_place(ecs::World& world) {
-    auto& reg = world.registry;
-    ring_radius_.clear();
-
-    std::vector<entt::entity> nodes;
-    for (auto [e, ref] : reg.view<const ecs::NodeRef>().each()) nodes.push_back(e);
-    if (nodes.empty()) { energy_ = 1e9f; return; }
-    std::sort(nodes.begin(), nodes.end(), [&](entt::entity a, entt::entity b) {
-        return reg.get<ecs::NodeRef>(a).id < reg.get<ecs::NodeRef>(b).id;
-    });
-
-    const auto parent = containment_parents(reg);
-    auto hash_unit = [](const std::string& s, int salt) {
-        std::uint32_t h = 2166136261u ^ static_cast<std::uint32_t>(salt * 7919);
-        for (unsigned char c : s) { h ^= c; h *= 16777619u; }
-        return static_cast<float>(h % 65536u) / 65536.0f;
-    };
-
-    // Roots on a circle, in id order; everything else beside its parent, offset by its
-    // own id so siblings do not start on top of one another. Top-down, so a parent is
-    // placed before its children look for it.
-    std::vector<entt::entity> roots;
-    for (auto e : nodes) {
-        if (!parent.count(to_raw(e))) roots.push_back(e);
-    }
-    const float ring = 120.0f * std::sqrt(static_cast<float>(std::max<std::size_t>(nodes.size(), 4)));
-    for (std::size_t i = 0; i < roots.size(); ++i) {
-        const float ang = 6.2831853f * static_cast<float>(i) / static_cast<float>(roots.size());
-        const Vec2  at  = roots.size() == 1 ? Vec2{0.0f, 0.0f}
-                                            : Vec2{std::cos(ang) * ring * 0.5f, std::sin(ang) * ring * 0.5f};
-        reg.emplace_or_replace<ecs::Position>(roots[i], ecs::Position{at});
-    }
-    std::unordered_map<std::uint32_t, bool> placed;
-    for (auto r : roots) placed[to_raw(r)] = true;
-    for (int round = 0; round < 64; ++round) {
-        bool any = false;
-        for (auto e : nodes) {
-            if (placed.count(to_raw(e))) continue;
-            auto it = parent.find(to_raw(e));
-            if (it == parent.end() || !placed.count(to_raw(it->second))) continue;
-            const auto& id  = reg.get<ecs::NodeRef>(e).id;
-            const float ang = 6.2831853f * hash_unit(id, 1);
-            const float r   = params_.force_link + 60.0f * hash_unit(id, 2);
-            const Vec2  at  = reg.get<ecs::Position>(it->second).p + Vec2{std::cos(ang) * r, std::sin(ang) * r};
-            reg.emplace_or_replace<ecs::Position>(e, ecs::Position{at});
-            placed[to_raw(e)] = true;
-            any               = true;
-        }
-        if (!any) break;
-    }
-    for (auto e : nodes) {
-        if (!placed.count(to_raw(e))) {
-            const auto& id = reg.get<ecs::NodeRef>(e).id;
-            reg.emplace_or_replace<ecs::Position>(
-                e, ecs::Position{Vec2{(hash_unit(id, 3) - 0.5f) * ring, (hash_unit(id, 4) - 0.5f) * ring}});
-        }
-        reg.emplace_or_replace<ecs::LayoutTarget>(e, ecs::LayoutTarget{reg.get<ecs::Position>(e).p});
-    }
-    // Seed on the rank rows, so the relaxation refines a layered arrangement rather
-    // than discovering one.
-    for (auto e : nodes) {
-        if (const auto* d = reg.try_get<ecs::Depth>(e)) {
-            reg.get<ecs::Position>(e).p.y = -static_cast<float>(d->value) * params_.force_rank_gap;
-        }
-    }
-
-    // Settle, off screen. A pinned node keeps its place throughout.
-    std::unordered_map<std::uint32_t, Vec2> seed;
-    for (auto e : nodes) seed[to_raw(e)] = reg.get<ecs::Position>(e).p;
-    for (int pass = 0; pass < params_.force_passes; ++pass) {
-        const float cooling = 1.0f - 0.85f * static_cast<float>(pass) / static_cast<float>(params_.force_passes);
-        force_relax(world, 1.0f / 60.0f, 1, cooling, false);
-        if (pass > 40 && relax_motion_ < params_.relax_quiet) break;
-    }
-    if (std::getenv("RGV_DEBUG_LAYOUT")) {
-        // How clustered: a module's distance to its own package against the nearest
-        // other package. Below 1 means it sits with its own.
-        float ratio = 0.0f, radius_max = 0.0f;
-        int   n = 0;
-        for (auto e : nodes) {
-            const Vec2 p = reg.get<ecs::Position>(e).p;
-            radius_max   = std::max(radius_max, length(p));
-            auto it = parent.find(to_raw(e));
-            if (it == parent.end()) continue;
-            const float own = length(p - reg.get<ecs::Position>(it->second).p);
-            std::unordered_set<std::uint32_t> ancestors;
-            for (auto a = it; a != parent.end(); a = parent.find(to_raw(a->second))) ancestors.insert(to_raw(a->second));
-            float other = 1e9f;
-            for (auto q : nodes) {
-                if (q == e || ancestors.count(to_raw(q)) || reg.get<ecs::NodeRef>(q).kind != NodeKind::Package) continue;
-                other = std::min(other, length(p - reg.get<ecs::Position>(q).p));
-            }
-            if (other < 1e8f) { ratio += own / other; ++n; }
-        }
-        std::fprintf(stderr, "layout: %zu nodes, radius %.0f, mean own/other %.2f over %d\n",
-                     nodes.size(), radius_max, n ? ratio / n : 0.0f, n);
-    }
-
-    // The settled arrangement is the target; the screen eases there from the seed, the
-    // way every other layout animates in, and the camera follows the easing.
-    for (auto e : nodes) {
-        reg.get<ecs::LayoutTarget>(e).p = reg.get<ecs::Position>(e).p;
-        reg.get<ecs::Position>(e).p     = seed[to_raw(e)];
-    }
-    loose_.clear();
-    energy_ = 1e9f;
-}
-
 // Radial filesystem layout, in the spirit of Gource.
 //
 // Three ideas carry the look. A directory is a small disc that grows gently with the
@@ -547,13 +292,20 @@ void LayoutSystem::radial_tree(ecs::World& world) {
 
     std::unordered_map<std::uint32_t, std::vector<entt::entity>> kids;
     std::unordered_map<std::uint32_t, std::uint32_t>             parent;
-    for (auto [ent, ref, ends] : reg.view<const ecs::EdgeRef, const ecs::Endpoints>().each()) {
-        if (ref.kind != EdgeKind::Contains) continue;
-        kids[to_raw(ends.to)].push_back(ends.from);
-        parent[to_raw(ends.from)] = to_raw(ends.to);
+    for (const auto& [child, par] : tree_parents(world)) {
+        kids[to_raw(par)].push_back(static_cast<entt::entity>(child));
+        parent[child] = to_raw(par);
     }
 
+    // What orbits rather than holding an orbit of its own. Containment says a file;
+    // an import tree has no such kind, so it says whatever has nothing beneath it.
+    const bool by_imports =
+        world.resource<ecs::ViewSettings>().mode == ecs::ViewMode::Architecture;
     auto is_file = [&](entt::entity e) {
+        if (by_imports) {
+            auto it = kids.find(to_raw(e));
+            return it == kids.end() || it->second.empty();
+        }
         const auto* ref = reg.try_get<ecs::NodeRef>(e);
         return ref && ref->kind == NodeKind::File;
     };
@@ -561,13 +313,19 @@ void LayoutSystem::radial_tree(ecs::World& world) {
         const auto* l = reg.try_get<ecs::Label>(e);
         return l ? l->text : std::string{};
     };
+    auto id_of = [&](entt::entity e) {
+        const auto* ref = reg.try_get<ecs::NodeRef>(e);
+        return ref ? ref->id : std::string{};
+    };
 
-    // Stable ordering, so the same repository always draws the same way.
+    // Stable ordering, so the same repository always draws the same way. The id breaks
+    // ties, because two files in different directories can share a name.
     for (auto& [k, v] : kids) {
         std::sort(v.begin(), v.end(), [&](entt::entity a, entt::entity b) {
             const bool fa = is_file(a), fb = is_file(b);
-            if (fa != fb) return !fa;                 // directories first, then files
-            return label_of(a) < label_of(b);
+            if (fa != fb) return !fa;                 // branches first, then leaves
+            const std::string la = label_of(a), lb = label_of(b);
+            return la != lb ? la < lb : id_of(a) < id_of(b);
         });
     }
 
@@ -854,13 +612,11 @@ void LayoutSystem::measure_spacing(ecs::World& world) {
 
 void LayoutSystem::reset(ecs::World& world) {
     const auto mode = world.resource<ecs::ViewSettings>().mode;
-    tree_mode_  = mode == ecs::ViewMode::Filesystem;
-    force_mode_ = mode == ecs::ViewMode::Architecture;
+    // Two views are trees now: the filesystem by containment, the architecture by
+    // imports. Same algorithm, different hierarchy.
+    tree_mode_ = mode == ecs::ViewMode::Filesystem || mode == ecs::ViewMode::Architecture;
     if (tree_mode_) {
         radial_tree(world);
-    } else if (force_mode_) {
-        assign_depths(world);
-        force_place(world);
     } else {
         assign_depths(world);
         concentric_place(world);
@@ -885,11 +641,80 @@ std::unordered_map<std::uint32_t, entt::entity> containment_parents(entt::regist
 // The distance the structural packing gave every containment edge. Captured when a drag
 // begins, so the springs relax toward the arrangement the layout produced rather than
 // toward some invented ideal.
+// child -> parent for the tree the layout is built on.
+//
+// Containment in the filesystem view. In the architecture view it is the import graph
+// instead: the same radial algorithm, driven by what imports what. Spanned breadth
+// first from the modules that import nothing, so the foundation sits at the centre and
+// each ring outward is code built on the ring inside it. A module's orbiting children
+// are the modules that import it, which makes a disc's size "how much is built on this".
+//
+// Breadth first is also what makes it a tree at all: an import graph has cycles, and
+// visiting each node once turns any back edge into a cross-link the layout ignores.
+std::unordered_map<std::uint32_t, entt::entity> LayoutSystem::tree_parents(ecs::World& world) const {
+    auto& reg = world.registry;
+    if (world.resource<ecs::ViewSettings>().mode != ecs::ViewMode::Architecture) {
+        return containment_parents(reg);
+    }
+
+    std::unordered_map<std::uint32_t, std::vector<entt::entity>> importers;
+    std::unordered_map<std::uint32_t, int>                       imports_out;
+    for (auto [e, ref, ends] : reg.view<const ecs::EdgeRef, const ecs::Endpoints>().each()) {
+        if (ref.kind != EdgeKind::Imports) continue;
+        importers[to_raw(ends.to)].push_back(ends.from);
+        ++imports_out[to_raw(ends.from)];
+    }
+
+    auto id_of = [&](entt::entity e) {
+        const auto* ref = reg.try_get<ecs::NodeRef>(e);
+        return ref ? ref->id : std::string{};
+    };
+    auto by_id = [&](entt::entity a, entt::entity b) { return id_of(a) < id_of(b); };
+
+    entt::entity              root = entt::null;
+    std::vector<entt::entity> all;
+    for (auto [e, ref] : reg.view<const ecs::NodeRef>().each()) {
+        all.push_back(e);
+        if (ref.kind == NodeKind::Repository) root = e;
+    }
+    std::sort(all.begin(), all.end(), by_id);
+
+    std::unordered_map<std::uint32_t, entt::entity> parent;
+    if (root == entt::null) return parent;
+
+    std::deque<entt::entity>         queue;
+    std::unordered_set<std::uint32_t> seen{to_raw(root)};
+    for (auto e : all) {
+        if (e == root || imports_out[to_raw(e)] != 0) continue;
+        parent[to_raw(e)] = root;   // imports nothing: the foundation, on the first ring
+        seen.insert(to_raw(e));
+        queue.push_back(e);
+    }
+    while (!queue.empty()) {
+        const entt::entity cur = queue.front();
+        queue.pop_front();
+        auto it = importers.find(to_raw(cur));
+        if (it == importers.end()) continue;
+        std::vector<entt::entity> next = it->second;
+        std::sort(next.begin(), next.end(), by_id);
+        for (auto imp : next) {
+            if (!seen.insert(to_raw(imp)).second) continue;
+            parent[to_raw(imp)] = cur;
+            queue.push_back(imp);
+        }
+    }
+    // Anything a cycle kept out of the traversal still has to be somewhere.
+    for (auto e : all) {
+        if (e != root && !seen.count(to_raw(e))) parent[to_raw(e)] = root;
+    }
+    return parent;
+}
+
 void LayoutSystem::capture_rest_lengths(ecs::World& world) {
     auto& reg = world.registry;
     rest_.clear();
 
-    for (const auto& [child, parent] : containment_parents(reg)) {
+    for (const auto& [child, parent] : tree_parents(world)) {
         const auto* pc = reg.try_get<ecs::Position>(static_cast<entt::entity>(child));
         const auto* pp = reg.try_get<ecs::Position>(parent);
         if (pc && pp) rest_[child] = std::max(1.0f, length(pc->p - pp->p));
@@ -1033,7 +858,7 @@ void LayoutSystem::relax(ecs::World& world, float dt) {
     auto&       reg  = world.registry;
     const auto& drag = world.resource<ecs::DragState>();
 
-    const auto parent = containment_parents(reg);
+    const auto parent = tree_parents(world);
     if (parent.empty()) return;
 
     const entt::entity held = drag.active ? drag.node : entt::null;
@@ -1147,19 +972,6 @@ bool LayoutSystem::seat_newcomers(ecs::World& world) {
         reset(world);
         return false;
     }
-    // The force layout seats a newcomer where the scene seeded it -- beside whatever
-    // it connects to -- and lets the relaxation take it from there.
-    if (force_mode_) {
-        for (auto e : fresh) {
-            if (const auto* p = reg.try_get<ecs::Position>(e)) {
-                reg.emplace_or_replace<ecs::LayoutTarget>(e, ecs::LayoutTarget{p->p});
-            }
-            reg.remove<ecs::Unplaced>(e);
-            loose_.insert(to_raw(e));
-        }
-        return true;
-    }
-
     const auto& reach = world.resource<ecs::DerivedState>().reach;
 
     // Neighbours first: an arriving node almost always has an edge to something that is
@@ -1271,7 +1083,6 @@ void LayoutSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
         relax_elapsed_ += frame.dt;
         apply_drag(world);
         if (tree_mode_) relax(world, frame.dt);
-        else if (force_mode_) force_relax(world, frame.dt, params_.relax_iters, 1.0f, !drag.active);
         else relax_rings(world, frame.dt);
 
         // Held open while the cursor is down; afterwards it ends when the motion dies
@@ -1279,7 +1090,6 @@ void LayoutSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
         if (!drag.active &&
             (relax_motion_ < params_.relax_quiet || relax_elapsed_ > params_.relax_max)) {
             relaxing_ = false;
-            loose_.clear();
         }
 
         stats.layout_energy  = relax_motion_;
