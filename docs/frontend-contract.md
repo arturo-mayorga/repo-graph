@@ -135,7 +135,7 @@ to its owning package (FR-11). It is a *tree*, so exactly one parent. Multi-owne
   "kind": "depends_on",
   "from": "pkg:api",               // dependent
   "to": "pkg:auth",                // dependency
-  "provider": "npm",               // git|watchman|tree-sitter|scip|lsp:<n>|npm|bazel|...
+  "provider": "npm",               // git|watchman|tree-sitter|scip|lsp:<n>|npm|python-imports|bazel|...
   "provider_version": "10.8.2",
   "confidence": "exact",
   "freshness": "current",
@@ -418,6 +418,43 @@ source may omit it. The frontend therefore treats `evidence` as optional and sho
 loading state in the inspector when absent.
 
 ---
+
+### 6.4 Language providers
+
+A language provider contributes file-level `imports` edges and, because nothing else in
+the live path computes it, the blast radius those edges imply. Concretely, for the files
+it understands it must:
+
+- Emit one `imports` edge per resolved import, `from` the importing file `to` the file
+  it resolves to, with `evidence` pointing at the import statement. `confidence` is
+  `exact` when the resolution is unambiguous and `heuristic` when more than one source
+  root could satisfy it.
+- Emit **no edge** for an import it cannot resolve to a file in the repository. Standard
+  library and third-party imports fall out here. An `unresolved` edge to a node that does
+  not exist is worse than a missing one, and mapping a module name to a distribution name
+  (`yaml` → `PyYAML`) is a different problem with its own provider.
+- Emit a `package` node for every unit of the language's own packaging (a Python
+  package is a directory with `__init__.py`), nested under whatever contains it and
+  replacing the `directory` node at its path, and aggregate the `imports` that cross
+  package boundaries into `depends_on` edges between those packages, with the first
+  crossing import as `evidence`. A manifest names a distribution; the architecture of
+  the code is the packages inside it, and the Architecture view draws `package` nodes.
+- Re-parse a file when it changes and report the difference as `graph.updated`
+  `added_edges` / `removed_edges` — never as a full replacement. A surviving edge whose
+  evidence or confidence changed is an `updated_edges` entry.
+- Emit a `symbol` node for every top-level definition that another file uses, parented
+  to the file that defines it, with `attrs.kind` of `class` or `function`. A file that
+  constructs or invokes a symbol has a `calls` edge to it; a file that mentions it in
+  any other way has a `references` edge. Both carry the first such use as `evidence`.
+  Unused-elsewhere definitions are not nodes: the file stands for them.
+- Emit `impact.updated` for the `symbol` level, seeded at the symbols the changed files
+  define and traversed over `references` and `calls`. The result mixes kinds -- seeds
+  are symbols, hits are files -- and the frontend admits both at that level.
+- Emit `impact.updated` for the `file` level (over `imports`) and the `package` level
+  (over `depends_on`, seeded by the packages that own the changed files) whenever the
+  changed-file set or the dependency edges move. The frontend does not derive impact on
+  its own from a live stream; a provider that emits edges without impact produces a graph
+  that never lights up.
 
 ## 7. Open contract questions
 

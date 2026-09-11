@@ -7,10 +7,13 @@
 
 #include "rgv/live/LiveSource.h"
 #include "rgv/model/GraphStore.h"
+#include "rgv/sim/ImpactSim.h"
 
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -273,7 +276,7 @@ TEST(a_package_replaces_the_directory_it_occupies) {
           << "[project]\nname = \"acme-core\"\ndependencies = [\"structlog\"]\n"; }
     { std::ofstream(root + "/services/api/pyproject.toml")
           << "[project]\nname = \"acme-api\"\ndependencies = [\"acme-core\", \"fastapi\"]\n"; }
-    { std::ofstream(root + "/libs/core/src/__init__.py") << "x = 1\n"; }
+    { std::ofstream(root + "/libs/core/src/core.py") << "x = 1\n"; }
 
     live::LiveSource src({live::resolve_provider("rgv-watch"), "--root", root}, 5000.0);
     const auto&      base = src.baseline();
@@ -314,4 +317,363 @@ TEST(a_package_replaces_the_directory_it_occupies) {
     CHECK(node("ext:fastapi") != nullptr);
     CHECK(node("ext:fastapi")->kind == NodeKind::ExternalPackage);
     CHECK(node("ext:fastapi")->parent.empty());
+}
+
+// -- the python extractor, end to end ----------------------------------------
+//
+// Through the real provider and the real parser again, because the vocabulary is the
+// thing most likely to drift: an edge kind, a confidence, an impact field.
+
+namespace {
+
+struct PyRepo {
+    std::string root;
+    explicit PyRepo(const char* name) : root(std::string(RGV_TEST_TMP) + "/" + name) {
+        std::filesystem::remove_all(root);
+        std::filesystem::create_directories(root);
+    }
+    void write(const std::string& rel, const std::string& text) const {
+        const auto p = std::filesystem::path(root) / rel;
+        std::filesystem::create_directories(p.parent_path());
+        std::ofstream(p) << text;
+    }
+};
+
+const Edge* import_edge(const GraphStore& store, const std::string& from, const std::string& to) {
+    for (const auto& [id, e] : store.edges()) {
+        if (e.kind == EdgeKind::Imports && e.from == "file:" + from && e.to == "file:" + to &&
+            e.active()) {
+            return &e;
+        }
+    }
+    return nullptr;
+}
+
+void settle(live::LiveSource& src, GraphStore& store) {
+    for (int i = 0; i < 40; ++i) { src.poll(0.01, store); ::usleep(10000); }
+}
+
+template <class Pred>
+bool wait_for(live::LiveSource& src, GraphStore& store, Pred done) {
+    for (int i = 0; i < 500; ++i) {
+        src.poll(0.01, store);
+        if (done()) return true;
+        ::usleep(10000);
+    }
+    return done();
+}
+
+} // namespace
+
+TEST(the_python_provider_emits_import_edges_the_parser_accepts) {
+    PyRepo r("provider-py-baseline");
+    r.write("pyproject.toml", "[project]\nname = \"demo\"\n");
+    r.write("demo/__init__.py", "");
+    r.write("demo/a.py", "import os\nfrom demo import b\n");
+    r.write("demo/b.py", "x = 1\n");
+
+    live::LiveSource src({RGV_WATCH_BIN, "--root", r.root}, 5000.0);
+    GraphStore       store;
+    store.reset(src.baseline());
+
+    const Edge* e = import_edge(store, "demo/a.py", "demo/b.py");
+    CHECK(e != nullptr);
+    CHECK_EQ(e->provider, std::string("python-imports"));
+    CHECK(e->confidence == Confidence::Exact);
+    CHECK(e->evidence.has_value());
+    CHECK_EQ(e->evidence->artifact, std::string("demo/a.py"));
+    CHECK_EQ(e->evidence->line, 2);
+    CHECK_EQ(e->evidence->snippet, std::string("from demo import b"));
+
+    // `import os` resolves to nothing in the repository and must not become an edge.
+    int imports = 0;
+    for (const auto& [id, edge] : store.edges()) {
+        if (edge.kind == EdgeKind::Imports) ++imports;
+    }
+    CHECK_EQ(imports, 1);
+
+    // The adapter behind the edge is announced, so the inspector can name it.
+    settle(src, store);
+    bool announced = false;
+    for (const auto& a : store.adapters()) {
+        if (a.name == "python-imports") announced = true;
+    }
+    CHECK(announced);
+}
+
+// The product: save b.py, and a.py lights up because it imports b. The result must
+// agree with the traversal the frontend itself would perform, which is what
+// `rgv-replay --check` demands of a fixture.
+TEST(saving_a_python_file_lights_up_the_files_that_import_it) {
+    PyRepo r("provider-py-impact");
+    r.write("pyproject.toml", "[project]\nname = \"demo\"\n");
+    r.write("demo/__init__.py", "");
+    r.write("demo/a.py", "from demo import b\n");
+    r.write("demo/b.py", "x = 1\n");
+    r.write("demo/c.py", "y = 2\n");
+
+    live::LiveSource src({RGV_WATCH_BIN, "--root", r.root}, 5000.0);
+    GraphStore       store;
+    store.reset(src.baseline());
+    settle(src, store);
+
+    { std::ofstream(r.root + "/demo/b.py", std::ios::app) << "z = 3\n"; }
+
+    CHECK(wait_for(src, store, [&] { return store.impact(Level::File) != nullptr; }));
+    const ImpactResult* file = store.impact(Level::File);
+    CHECK_EQ(file->seed_nodes.size(), 1u);
+    CHECK_EQ(file->seed_nodes[0], std::string("file:demo/b.py"));
+
+    const ImpactedNode* a = nullptr;
+    for (const auto& n : file->impacted_nodes) {
+        if (n.node_id == "file:demo/a.py") a = &n;
+        CHECK(n.node_id != "file:demo/c.py");   // c imports nothing
+    }
+    CHECK(a != nullptr);
+    CHECK_EQ(a->min_distance, 1);
+    CHECK(a->direct);
+    CHECK_EQ(a->paths.size(), 1u);
+    CHECK_EQ(a->paths[0].edges.size(), 1u);
+    CHECK(store.edge(a->paths[0].edges[0]) != nullptr);
+
+    // Same answer as the frontend's own reverse closure over the same store.
+    const auto mine = sim::compute(store, sim::seeds_for_level(store, Level::File), Level::File,
+                                   file->filters);
+    std::set<std::string> theirs, ours;
+    for (const auto& n : file->impacted_nodes) theirs.insert(n.node_id);
+    for (const auto& n : mine.impacted_nodes) ours.insert(n.node_id);
+    CHECK(theirs == ours);
+
+    // The package level is seeded by the package that owns the changed file.
+    CHECK(wait_for(src, store, [&] { return store.impact(Level::Package) != nullptr; }));
+    const ImpactResult* pkg = store.impact(Level::Package);
+    CHECK_EQ(pkg->seed_nodes.size(), 1u);
+    CHECK_EQ(pkg->seed_nodes[0], std::string("pypkg:demo"));
+}
+
+// An import rewritten is an edge removed and an edge added, not a rebuilt graph.
+TEST(rewriting_an_import_moves_the_edge) {
+    PyRepo r("provider-py-rewire");
+    r.write("demo/__init__.py", "");
+    r.write("demo/a.py", "from demo import b\n");
+    r.write("demo/b.py", "x = 1\n");
+    r.write("demo/c.py", "y = 2\n");
+
+    live::LiveSource src({RGV_WATCH_BIN, "--root", r.root}, 5000.0);
+    GraphStore       store;
+    store.reset(src.baseline());
+    settle(src, store);
+    CHECK(import_edge(store, "demo/a.py", "demo/b.py") != nullptr);
+    const std::size_t nodes_before = store.nodes().size();
+
+    r.write("demo/a.py", "from demo import c\n");
+
+    CHECK(wait_for(src, store, [&] { return import_edge(store, "demo/a.py", "demo/c.py") != nullptr; }));
+    CHECK(import_edge(store, "demo/a.py", "demo/b.py") == nullptr);
+    CHECK_EQ(store.nodes().size(), nodes_before);
+
+    // a.py now depends on c: the blast radius of c includes a, of b does not.
+    CHECK(wait_for(src, store, [&] {
+        const auto* f = store.impact(Level::File);
+        return f && f->seed_nodes.size() == 1 && f->seed_nodes[0] == "file:demo/a.py";
+    }));
+}
+
+// A file that appears with imports arrives with its edges, and a deleted target takes
+// the edges that pointed at it with it.
+TEST(a_new_python_file_arrives_with_its_edges_and_a_deleted_one_takes_them) {
+    PyRepo r("provider-py-addrm");
+    r.write("demo/__init__.py", "");
+    r.write("demo/b.py", "x = 1\n");
+
+    live::LiveSource src({RGV_WATCH_BIN, "--root", r.root}, 5000.0);
+    GraphStore       store;
+    store.reset(src.baseline());
+    settle(src, store);
+
+    r.write("demo/a.py", "from demo import b\n");
+    CHECK(wait_for(src, store, [&] { return import_edge(store, "demo/a.py", "demo/b.py") != nullptr; }));
+
+    std::filesystem::remove(r.root + "/demo/b.py");
+    CHECK(wait_for(src, store, [&] { return store.node("file:demo/b.py") == nullptr; }));
+    CHECK(import_edge(store, "demo/a.py", "demo/b.py") == nullptr);
+}
+
+// -- python packages as architecture -----------------------------------------
+//
+// One pyproject.toml is one distribution, but the architecture of the code is the
+// Python packages inside it and how they import each other. A single box is not an
+// architecture view.
+
+TEST(a_single_distribution_shows_its_python_packages_as_architecture) {
+    PyRepo r("provider-py-arch");
+    r.write("pyproject.toml", "[project]\nname = \"demo\"\n");
+    r.write("src/demo/__init__.py", "");
+    r.write("src/demo/app.py", "from demo.api import routes\n");
+    r.write("src/demo/api/__init__.py", "");
+    r.write("src/demo/api/routes.py", "from demo.core.db import connect\n");
+    r.write("src/demo/core/__init__.py", "");
+    r.write("src/demo/core/db.py", "def connect(): pass\n");
+    r.write("tests/test_db.py", "from demo.core import db\n");
+
+    live::LiveSource src({RGV_WATCH_BIN, "--root", r.root}, 5000.0);
+    GraphStore       store;
+    store.reset(src.baseline());
+    settle(src, store);
+
+    // Packages, nested: api and core sit inside demo, demo inside the src directory.
+    const Node* demo = store.node("pypkg:src/demo");
+    const Node* api  = store.node("pypkg:src/demo/api");
+    const Node* core = store.node("pypkg:src/demo/core");
+    CHECK(demo != nullptr && api != nullptr && core != nullptr);
+    CHECK(api->kind == NodeKind::Package);
+    CHECK_EQ(api->name, std::string("demo.api"));
+    CHECK_EQ(api->parent, std::string("pypkg:src/demo"));
+    CHECK_EQ(demo->parent, std::string("dir:src"));
+    CHECK(store.node("dir:src/demo/api") == nullptr);   // the package replaces the directory
+
+    // Files are owned by the innermost package, which is what FR-11 projects through.
+    CHECK_EQ(store.node("file:src/demo/api/routes.py")->parent, std::string("pypkg:src/demo/api"));
+    CHECK_EQ(store.ancestor_of_kind("file:src/demo/api/routes.py", NodeKind::Package),
+             std::string("pypkg:src/demo/api"));
+    CHECK_EQ(store.ancestor_of_kind("file:tests/test_db.py", NodeKind::Package), std::string("pkg:demo"));
+
+    // The edges between them, aggregated from the imports that cross the boundary.
+    auto dep = [&](const std::string& from, const std::string& to) -> const Edge* {
+        for (const auto& [id, e] : store.edges()) {
+            if (e.kind == EdgeKind::DependsOn && e.from == from && e.to == to && e.active()) return &e;
+        }
+        return nullptr;
+    };
+    const Edge* api_core = dep("pypkg:src/demo/api", "pypkg:src/demo/core");
+    CHECK(api_core != nullptr);
+    CHECK_EQ(api_core->provider, std::string("python-imports"));
+    CHECK(api_core->confidence == Confidence::Exact);
+    CHECK_EQ(api_core->evidence->artifact, std::string("src/demo/api/routes.py"));
+    CHECK_EQ(api_core->evidence->line, 1);
+    CHECK(dep("pypkg:src/demo", "pypkg:src/demo/api") != nullptr);
+    CHECK(dep("pkg:demo", "pypkg:src/demo/core") != nullptr);   // the tests, owned by the distribution
+    CHECK(dep("pypkg:src/demo/core", "pypkg:src/demo/api") == nullptr);
+
+    // Change db.py: api is directly impacted, demo transitively, and the answer agrees
+    // with the frontend's own traversal.
+    { std::ofstream(r.root + "/src/demo/core/db.py", std::ios::app) << "# more\n"; }
+    CHECK(wait_for(src, store, [&] { return store.impact(Level::Package) != nullptr; }));
+    const ImpactResult* pkg = store.impact(Level::Package);
+    CHECK_EQ(pkg->seed_nodes.size(), 1u);
+    CHECK_EQ(pkg->seed_nodes[0], std::string("pypkg:src/demo/core"));
+    std::map<std::string, int> dist;
+    for (const auto& n : pkg->impacted_nodes) dist[n.node_id] = n.min_distance;
+    CHECK_EQ(dist["pypkg:src/demo/api"], 1);
+    CHECK_EQ(dist["pypkg:src/demo"], 2);
+    CHECK_EQ(dist["pkg:demo"], 1);
+
+    const auto mine = sim::compute(store, sim::seeds_for_level(store, Level::Package),
+                                   Level::Package, pkg->filters);
+    std::set<std::string> theirs, ours;
+    for (const auto& n : pkg->impacted_nodes) theirs.insert(n.node_id);
+    for (const auto& n : mine.impacted_nodes) ours.insert(n.node_id);
+    CHECK(theirs == ours);
+}
+
+// Dropping an `__init__.py` into a directory makes it a package. The directory node
+// gives way to a package node and what it held re-parents, live, without a rebuild.
+TEST(a_directory_becomes_a_package_when_an_init_appears) {
+    PyRepo r("provider-py-newpkg");
+    r.write("app/__init__.py", "");
+    r.write("app/main.py", "from app.util import helpers\n");
+    r.write("app/util/helpers.py", "x = 1\n");
+
+    live::LiveSource src({RGV_WATCH_BIN, "--root", r.root}, 5000.0);
+    GraphStore       store;
+    store.reset(src.baseline());
+    settle(src, store);
+    CHECK(store.node("dir:app/util") != nullptr);
+    CHECK_EQ(store.node("file:app/util/helpers.py")->parent, std::string("dir:app/util"));
+
+    r.write("app/util/__init__.py", "");
+    CHECK(wait_for(src, store, [&] { return store.node("pypkg:app/util") != nullptr; }));
+    CHECK(store.node("dir:app/util") == nullptr);
+    CHECK_EQ(store.node("pypkg:app/util")->name, std::string("app.util"));
+    CHECK_EQ(store.node("pypkg:app/util")->parent, std::string("pypkg:app"));
+    CHECK_EQ(store.node("file:app/util/helpers.py")->parent, std::string("pypkg:app/util"));
+    CHECK_EQ(store.node("file:app/util/__init__.py")->parent, std::string("pypkg:app/util"));
+
+    // And the import from main.py is now an edge between packages.
+    CHECK(wait_for(src, store, [&] {
+        for (const auto& [id, e] : store.edges()) {
+            if (e.kind == EdgeKind::DependsOn && e.from == "pypkg:app" && e.to == "pypkg:app/util") return true;
+        }
+        return false;
+    }));
+}
+
+// -- symbols, end to end -------------------------------------------------------
+//
+// A component class defined in one file, written by one system and read by another.
+// The symbol arrives as a node under its file, the two systems attach to it with a
+// `calls` and a `references` edge, and changing the file lights both systems up.
+
+TEST(symbols_and_their_readers_and_writers_arrive_through_the_provider) {
+    PyRepo r("provider-py-symbols");
+    r.write("demo/__init__.py", "");
+    r.write("demo/components/__init__.py", "from .car import CarState\n");
+    r.write("demo/components/car.py", "class CarState:\n    pass\n");
+    r.write("demo/systems/__init__.py", "");
+    r.write("demo/systems/movement.py",
+            "import esper\nfrom ..components import CarState\n\n"
+            "def go(e):\n    esper.add_component(e, CarState())\n");
+    r.write("demo/systems/render.py",
+            "import esper\nfrom ..components.car import CarState\n\n"
+            "def draw():\n    for e, s in esper.get_component(CarState):\n        pass\n");
+
+    live::LiveSource src({RGV_WATCH_BIN, "--root", r.root}, 5000.0);
+    GraphStore       store;
+    store.reset(src.baseline());
+    settle(src, store);
+
+    const std::string sym = "sym:demo/components/car.py#CarState";
+    const Node*       n   = store.node(sym);
+    CHECK(n != nullptr);
+    CHECK(n->kind == NodeKind::Symbol);
+    CHECK_EQ(n->name, std::string("CarState"));
+    CHECK_EQ(n->parent, std::string("file:demo/components/car.py"));
+    CHECK_EQ(n->attrs.at("kind"), std::string("class"));
+    // `go` and `draw` are used by nobody else and are not nodes.
+    CHECK(store.node("sym:demo/systems/movement.py#go") == nullptr);
+
+    auto edge_of = [&](EdgeKind kind, const std::string& from) -> const Edge* {
+        for (const auto& [id, e] : store.edges()) {
+            if (e.kind == kind && e.from == from && e.to == sym && e.active()) return &e;
+        }
+        return nullptr;
+    };
+    const Edge* write = edge_of(EdgeKind::Calls, "file:demo/systems/movement.py");
+    CHECK(write != nullptr);
+    CHECK_EQ(write->provider, std::string("python-imports"));
+    CHECK_EQ(write->evidence->line, 5);
+    CHECK_EQ(write->evidence->snippet, std::string("esper.add_component(e, CarState())"));
+    const Edge* read = edge_of(EdgeKind::References, "file:demo/systems/render.py");
+    CHECK(read != nullptr);
+    CHECK(edge_of(EdgeKind::Calls, "file:demo/systems/render.py") == nullptr);
+
+    // Change the component: both systems are in its blast radius, one hop each.
+    { std::ofstream(r.root + "/demo/components/car.py", std::ios::app) << "    x = 1\n"; }
+    CHECK(wait_for(src, store, [&] { return store.impact(Level::Symbol) != nullptr; }));
+    const ImpactResult* res = store.impact(Level::Symbol);
+    CHECK_EQ(res->seed_nodes.size(), 1u);
+    CHECK_EQ(res->seed_nodes[0], sym);
+    std::map<std::string, const ImpactedNode*> hit;
+    for (const auto& in : res->impacted_nodes) hit[in.node_id] = &in;
+    CHECK(hit.count("file:demo/systems/movement.py") == 1);
+    CHECK(hit.count("file:demo/systems/render.py") == 1);
+    CHECK_EQ(hit["file:demo/systems/render.py"]->min_distance, 1);
+    CHECK_EQ(hit["file:demo/systems/render.py"]->paths.size(), 1u);
+    CHECK(store.edge(hit["file:demo/systems/render.py"]->paths[0].edges[0]) != nullptr);
+
+    // Stop reading it in render.py: that edge goes, the symbol stays for movement.
+    r.write("demo/systems/render.py", "def draw():\n    pass\n");
+    CHECK(wait_for(src, store, [&] { return edge_of(EdgeKind::References, "file:demo/systems/render.py") == nullptr; }));
+    CHECK(store.node(sym) != nullptr);
+    CHECK(edge_of(EdgeKind::Calls, "file:demo/systems/movement.py") != nullptr);
 }
