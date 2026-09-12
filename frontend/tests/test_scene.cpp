@@ -2057,3 +2057,75 @@ TEST(a_label_fades_in_over_a_quarter_second_and_back_out) {
     CHECK_EQ(h.registry().get<ecs::SideLabel>(ent).alpha, 0.0f);
 }
 
+// A name the graph's own shape would never have chosen, because the pointer asked for
+// it. The curves drawn on hover are the answer to a question, and an answer nobody can
+// read is not one.
+
+namespace {
+
+// Forty filler modules that each import two hubs, so they all outrank `beta`, which one
+// quiet module imports once. Crowded enough that beta's name loses.
+Snapshot crowded_with_a_quiet_pair() {
+    Snapshot s;
+    s.generation                  = 100;
+    s.session.baseline_generation = 100;
+    s.nodes = {mk_node("repo", NodeKind::Repository),
+               mk_node("dir:pkg", NodeKind::Directory, "repo"),
+               mk_node("file:pkg/hub_one.ts", NodeKind::File, "dir:pkg", "hub_one.ts"),
+               mk_node("file:pkg/hub_two.ts", NodeKind::File, "dir:pkg", "hub_two.ts")};
+    for (int i = 0; i < 40; ++i) {
+        const std::string n  = "filler_module_number_" + std::to_string(i) + ".ts";
+        const std::string id = "file:pkg/" + n;
+        s.nodes.push_back(mk_node(id, NodeKind::File, "dir:pkg", n));
+        s.edges.push_back(mk_edge("e:h1:" + std::to_string(i), EdgeKind::Imports, id,
+                                  "file:pkg/hub_one.ts"));
+        s.edges.push_back(mk_edge("e:h2:" + std::to_string(i), EdgeKind::Imports, id,
+                                  "file:pkg/hub_two.ts"));
+    }
+    s.nodes.push_back(mk_node("file:pkg/alpha_quiet_module.ts", NodeKind::File, "dir:pkg",
+                              "alpha_quiet_module.ts"));
+    s.nodes.push_back(mk_node("file:pkg/beta_quiet_module.ts", NodeKind::File, "dir:pkg",
+                              "beta_quiet_module.ts"));
+    s.edges.push_back(mk_edge("e:quiet", EdgeKind::Imports, "file:pkg/alpha_quiet_module.ts",
+                              "file:pkg/beta_quiet_module.ts"));
+    return s;
+}
+
+} // namespace
+
+TEST(a_node_a_hover_curve_points_at_is_named) {
+    rgvtest::Harness h;
+    h.store().reset(crowded_with_a_quiet_pair());
+    h.view().mode  = ecs::ViewMode::Filesystem;
+    h.view().level = Level::File;
+    h.request_rebuild();
+    h.settle();
+    view::fit_camera(h.world, {});
+    h.tick(1.0f / 60.0f, 40);
+
+    const auto beta = h.node("file:pkg/beta_quiet_module.ts");
+    CHECK(beta != entt::null);
+    // Forty busier modules take the room first.
+    CHECK_EQ(h.registry().get<ecs::SideLabel>(beta).alpha, 0.0f);
+
+    // Point at the one module that imports it: the curve arrives at beta, and so does
+    // its name.
+    h.selection().hovered      = "file:pkg/alpha_quiet_module.ts";
+    h.selection().hover_pinned = true;
+    h.tick(1.0f / 60.0f, 40);
+    CHECK(h.registry().get<ecs::SideLabel>(beta).alpha > 0.9f);
+
+    // And the busiest node is still named: promotion takes room from the middle of the
+    // list, not from the top of it.
+    CHECK(h.registry().get<ecs::SideLabel>(h.node("file:pkg/hub_one.ts")).alpha > 0.9f);
+
+    // The invariant survives the promotion.
+    const auto shown = shown_labels(h);
+    for (std::size_t i = 0; i < shown.size(); ++i) {
+        for (std::size_t j = i + 1; j < shown.size(); ++j) {
+            const bool over = shown[i].min.x < shown[j].max.x && shown[j].min.x < shown[i].max.x &&
+                              shown[i].min.y < shown[j].max.y && shown[j].min.y < shown[i].max.y;
+            CHECK(!over);
+        }
+    }
+}

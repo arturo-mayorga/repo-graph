@@ -28,4 +28,21 @@ struct LabelBox {
 // on index so the same picture always resolves the same way.
 std::vector<int> choose_labels(const std::vector<LabelBox>& boxes);
 
+// What a node's label is worth, out of how much is attached to it and what the user is
+// doing with it.
+struct LabelRank {
+    int  degree   = 0;       // dependency degree, plus what it holds on screen
+    bool on_path  = false;   // on the dependency path being explained
+    bool linked   = false;   // a curve from the node under the pointer arrives here
+    bool selected = false;
+    bool hovered  = false;
+};
+
+// Bands, not a sum. Attention is a ladder -- hovered above selected above the curves
+// that hover drew above the explanation above the graph's own shape -- and a sum would
+// let a node that is both selected and linked climb over the one being pointed at.
+// Degree orders nodes within a band and never between them, so a node keeps its place
+// relative to its equals when the whole band is promoted.
+float label_priority(const LabelRank& rank);
+
 } // namespace rgv::view

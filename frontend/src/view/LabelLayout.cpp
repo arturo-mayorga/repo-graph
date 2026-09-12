@@ -14,6 +14,22 @@ bool overlaps(const LabelBox& a, const LabelBox& b) {
 
 } // namespace
 
+float label_priority(const LabelRank& rank) {
+    // Wide enough that no real node's degree fills a band, and small enough that the
+    // whole range stays exactly representable in a float -- so a promoted node does not
+    // quietly lose the degree that orders it against its equals.
+    constexpr float kBand = 10000.0f;
+
+    int band = 0;
+    if (rank.on_path) band = 1;
+    if (rank.linked) band = 2;
+    if (rank.selected) band = 3;
+    if (rank.hovered) band = 4;
+
+    const float within = static_cast<float>(std::clamp(rank.degree, 0, 9999));
+    return static_cast<float>(band) * kBand + within;
+}
+
 std::vector<int> choose_labels(const std::vector<LabelBox>& boxes) {
     std::vector<int> order(boxes.size());
     for (std::size_t i = 0; i < boxes.size(); ++i) order[i] = static_cast<int>(i);

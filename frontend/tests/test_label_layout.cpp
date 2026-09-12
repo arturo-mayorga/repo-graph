@@ -78,3 +78,47 @@ TEST(a_wide_label_still_blocks_one_far_along_it) {
 TEST(nothing_in_gives_nothing_out) {
     CHECK(choose_labels({}).empty());
 }
+
+// -- the ladder -------------------------------------------------------------------
+
+namespace {
+
+using rgv::view::label_priority;
+using rgv::view::LabelRank;
+
+// Busier than any real node, so "a whole band above" means what it says.
+constexpr int kBusy = 9999;
+
+} // namespace
+
+TEST(attention_outranks_the_shape_of_the_graph) {
+    auto p = [](int degree, bool path, bool linked, bool selected, bool hovered) {
+        return label_priority(LabelRank{degree, path, linked, selected, hovered});
+    };
+    CHECK(p(0, false, false, false, true) > p(kBusy, false, false, true, false));
+    CHECK(p(0, false, false, true, false) > p(kBusy, false, true, false, false));
+    CHECK(p(0, false, true, false, false) > p(kBusy, true, false, false, false));
+    CHECK(p(0, true, false, false, false) > p(kBusy, false, false, false, false));
+}
+
+// The point of the bump: a node the pointer drew a curve to is named, and the ones it
+// drew several to keep their order among themselves.
+TEST(nodes_reached_by_a_curve_keep_their_relative_order) {
+    const float busier = label_priority(LabelRank{40, false, true, false, false});
+    const float quiet  = label_priority(LabelRank{2, false, true, false, false});
+    CHECK(busier > quiet);
+    CHECK(quiet > label_priority(LabelRank{kBusy, false, false, false, false}));
+}
+
+// A sum would let this one climb over the node being pointed at. Bands do not.
+TEST(being_both_selected_and_linked_does_not_outrank_being_pointed_at) {
+    const float both    = label_priority(LabelRank{kBusy, true, true, true, false});
+    const float pointed = label_priority(LabelRank{0, false, false, false, true});
+    CHECK(pointed > both);
+}
+
+TEST(an_absurd_degree_cannot_climb_out_of_its_band) {
+    CHECK(label_priority(LabelRank{1000000, false, false, false, false}) <
+          label_priority(LabelRank{0, true, false, false, false}));
+}
+

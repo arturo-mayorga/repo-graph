@@ -3,6 +3,7 @@
 #include "rgv/ecs/Components.h"
 #include "rgv/ecs/Resources.h"
 #include "rgv/model/GraphStore.h"
+#include "rgv/view/HoverLinks.h"
 #include "rgv/view/LabelLayout.h"
 #include "rgv/view/SemanticZoom.h"
 
@@ -10,6 +11,7 @@
 #include <cmath>
 #include <cstdint>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace rgv::systems {
@@ -18,12 +20,6 @@ namespace {
 // Long enough to read as a fade rather than a flicker, short enough that panning does
 // not feel like it is dragging the names behind it.
 constexpr float kFadeSeconds = 0.25f;
-
-// What the user is pointing at outranks everything, and what they have selected
-// outranks the rest. The gaps are wide enough that no amount of degree closes them.
-constexpr float kHovered  = 1.0e9f;
-constexpr float kSelected = 1.0e6f;
-constexpr float kOnPath   = 1.0e3f;
 
 } // namespace
 
@@ -59,6 +55,30 @@ void LabelSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
         }
         return n;
     };
+
+    // The far ends of the curves the filesystem view draws from the node under the
+    // pointer. They are the answer to the question the hover asked, so they are named
+    // ahead of whatever the graph's own shape would have chosen -- but not ahead of the
+    // node that asked, or of the selection.
+    //
+    // Recomputed here rather than shared with the renderer, which needs the same set to
+    // draw the curves. It is one pass over the store's edges; the alternative is a
+    // resource carrying it between two phases, which is more moving parts than the work
+    // it saves.
+    std::unordered_set<NodeId> linked;
+    if (view.mode == ecs::ViewMode::Filesystem) {
+        NodeId pointed;
+        for (auto [e, ref] : reg.view<const ecs::NodeRef, const ecs::Hovered>().each()) {
+            pointed = ref.id;
+        }
+        if (!pointed.empty()) {
+            for (const auto& link : view::hover_links(store, pointed, [&](const NodeId& id) {
+                     return index.node(id) != entt::null;
+                 })) {
+                linked.insert(link.other);
+            }
+        }
+    }
 
     std::vector<entt::entity>   entities;
     std::vector<Vec2>           anchors;
@@ -113,10 +133,10 @@ void LabelSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
         }
 
         const float w = static_cast<float>(label.text.size()) * px * view::kCharAdvanceRatio;
-        float       priority = static_cast<float>(degree_of(ref.id));
-        if (reg.all_of<ecs::OnExplainedPath>(ent)) priority += kOnPath;
-        if (reg.all_of<ecs::Selected>(ent)) priority += kSelected;
-        if (reg.all_of<ecs::Hovered>(ent)) priority += kHovered;
+        const float priority = view::label_priority(
+            view::LabelRank{degree_of(ref.id), reg.all_of<ecs::OnExplainedPath>(ent),
+                            linked.count(ref.id) > 0, reg.all_of<ecs::Selected>(ent),
+                            reg.all_of<ecs::Hovered>(ent)});
 
         entities.push_back(ent);
         anchors.push_back(anchor);

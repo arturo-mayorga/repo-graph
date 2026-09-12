@@ -335,9 +335,16 @@ not import anything, and the filesystem view is unreadable without directory nam
 while the only drawn edge a file has there is the one to its parent, which would make
 the module everything imports no more nameable than the module nothing imports.
 
-What you are pointing at outranks all of it, and what you have selected outranks the
-rest. Labels fade in and out over 250ms rather than appearing and vanishing, so panning
-does not strobe. The choice is greedy rather than optimal on purpose: an optimal packing
+Attention outranks all of it, as a ladder rather than a sum: the node under the pointer,
+then the selection, then the nodes a hover curve arrives at, then the nodes on the
+dependency path being explained, then everything else. A sum would let a node that is
+both selected and reached by a curve climb over the one being pointed at. Degree orders
+nodes within a rung and never between them, so a promoted group keeps its own order.
+
+The curves matter most here. They are the answer to the question a hover asked, and an
+answer nobody can read is not one, so the file at the far end of one is named even
+though the shape of the graph would never have chosen it. Labels fade in and out over
+250ms rather than appearing and vanishing, so panning does not strobe. The choice is greedy rather than optimal on purpose: an optimal packing
 reshuffles wholesale when one node moves, and a label that jumps to a different node is
 worse than a label that is missing.
 
