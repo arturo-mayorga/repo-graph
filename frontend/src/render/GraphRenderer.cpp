@@ -336,21 +336,21 @@ void GraphRenderer::begin(const Camera& camera, const Vec4& clear) {
     zoom_ = camera.zoom;
 }
 
-void GraphRenderer::add_edge(Vec2 a, Vec2 b, Vec4 c, float width, float dash) {
+void GraphRenderer::add_edge(Vec2 a, Vec2 b, Vec4 c, float width_px, float dash_world) {
     EdgeInstance e{};
     e.a[0] = a.x; e.a[1] = a.y;
     e.b[0] = b.x; e.b[1] = b.y;
     e.rgba[0] = c.r; e.rgba[1] = c.g; e.rgba[2] = c.b; e.rgba[3] = c.a;
-    e.width = width;
-    e.dash  = dash;
+    e.width = width_px;
+    e.dash  = dash_world;
     edges_.push_back(e);
 }
 
-void GraphRenderer::add_arrow(Vec2 tip, Vec2 dir, float size, Vec4 c) {
+void GraphRenderer::add_arrow(Vec2 tip, Vec2 dir, float size_px, Vec4 c) {
     ArrowInstance a{};
     a.tip[0] = tip.x; a.tip[1] = tip.y;
     a.dir[0] = dir.x; a.dir[1] = dir.y;
-    a.size   = size;
+    a.size   = size_px;
     a.rgba[0] = c.r; a.rgba[1] = c.g; a.rgba[2] = c.b; a.rgba[3] = c.a;
     arrows_.push_back(a);
 }

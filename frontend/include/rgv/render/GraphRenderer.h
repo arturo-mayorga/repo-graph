@@ -27,8 +27,12 @@ public:
     // Clears and sets up the camera for this frame.
     void begin(const Camera& camera, const Vec4& clear);
 
-    void add_edge(Vec2 a, Vec2 b, Vec4 color, float width, float dash = 0.0f);
-    void add_arrow(Vec2 tip, Vec2 dir, float size, Vec4 color);
+    // Widths and sizes are in SCREEN PIXELS. The shaders divide by the zoom
+    // themselves, which is what keeps a hairline a hairline over a monorepo -- so a
+    // caller that divides by the zoom as well gets a line that grows without bound as
+    // the user zooms out. Positions are world units; only these two are not.
+    void add_edge(Vec2 a, Vec2 b, Vec4 color, float width_px, float dash_world = 0.0f);
+    void add_arrow(Vec2 tip, Vec2 dir, float size_px, Vec4 color);
     // `dash > 0` outlines the node with a dashed stroke, which is how stale and
     // heuristic evidence is marked without relying on colour alone.
     void add_node(Vec2 center, Vec2 half, Vec4 fill, Vec4 stroke, float stroke_w,

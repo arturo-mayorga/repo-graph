@@ -98,10 +98,10 @@ void GraphRenderSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
                 color.a *= (0.35f + 0.65f * style.emphasis) * (0.45f + 0.55f * detail.t);
             }
         }
-        // Width is in world units, so at overview a 1.2-unit line is a fraction of a
-        // pixel and the dependencies vanish. A floor of one screen pixel keeps them.
-        const float width = std::max(style.stroke_w, 1.1f / std::max(camera.zoom, 1e-4f));
-        renderer_.add_edge(a, b, color, width, style.dash);
+        // Already pixels: the shader converts. Dividing by the zoom here as well made
+        // every line grow without bound on the way out -- nine pixels wide at 0.12 on a
+        // repository of seven hundred files, which is a grey sheet rather than a graph.
+        renderer_.add_edge(a, b, color, std::max(style.stroke_w, 1.0f), style.dash);
         if (view.show_arrows && detail.t > 0.15f) {
             // Backed off the node and drawn a little stronger than the line. An
             // arrowhead the same weight as its line, landing on top of the dot it
@@ -179,7 +179,7 @@ void GraphRenderSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
                 // Slightly translucent, so a bundle of them reads as several strands
                 // rather than one blob where they run together.
                 c.a *= 0.88f;
-                const float wpx = 1.5f / std::max(camera.zoom, 1e-4f);
+                const float wpx = 1.5f;
                 const auto  pts = view::sample_bow(a, b, hub, 0.55f, 24);
                 for (std::size_t i = 1; i < pts.size(); ++i) {
                     renderer_.add_edge(pts[i - 1], pts[i], c, wpx, 0.0f);
