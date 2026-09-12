@@ -138,9 +138,9 @@ void WindowSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
 
     auto key = [&](int k) { return glfwGetKey(window, k) == GLFW_PRESS; };
     static bool prev_f = false, prev_esc = false, prev_space = false, prev_dot = false,
-                prev_r = false;
+                prev_r = false, prev_tab = false;
     const bool f = key(GLFW_KEY_F), esc = key(GLFW_KEY_ESCAPE), space = key(GLFW_KEY_SPACE),
-               dot = key(GLFW_KEY_PERIOD), r = key(GLFW_KEY_R);
+               dot = key(GLFW_KEY_PERIOD), r = key(GLFW_KEY_R), tab = key(GLFW_KEY_TAB);
     const bool typing = input.ui_wants_keyboard;
 
     input.fit_pressed     = !typing && f && !prev_f;
@@ -148,7 +148,10 @@ void WindowSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
     input.play_pressed    = !typing && space && !prev_space;
     input.step_pressed    = !typing && dot && !prev_dot;
     input.restart_pressed = !typing && r && !prev_r;
+    // Tab is ImGui's own key while a field has focus, which `typing` already defers to.
+    input.panels_pressed  = !typing && tab && !prev_tab;
     prev_f = f; prev_esc = esc; prev_space = space; prev_dot = dot; prev_r = r;
+    prev_tab = tab;
 }
 
 void WindowSystem::teardown(ecs::World& world) {

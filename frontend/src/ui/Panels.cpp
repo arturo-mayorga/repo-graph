@@ -75,11 +75,17 @@ PanelMetrics panel_metrics(const Ui& ui) {
     const float          s  = ui.view.ui_text_scale;
 
     PanelMetrics m;
-    m.top    = ui.viewport.top_bar_height;
+    m.top = std::min(ui.viewport.top_bar_height, vp->WorkSize.y * 0.25f);
+    if (!ui.view.show_panels) {
+        // Zeroed rather than left alone: the defaults on this struct are the full panel
+        // widths, so an early return would hand back exactly what it meant to drop.
+        m.left = m.right = m.bottom = 0.0f;
+        return m;   // the graph gets everything below the toolbar
+    }
+
     m.left   = std::min(kLeftW * s, vp->WorkSize.x * 0.28f);
     m.right  = std::min(kRightW * s, vp->WorkSize.x * 0.34f);
     m.bottom = std::min(kBottomH * s, vp->WorkSize.y * 0.34f);
-    m.top    = std::min(m.top, vp->WorkSize.y * 0.25f);
     return m;
 }
 
@@ -306,6 +312,14 @@ void draw_top_bar(ecs::World& world) {
     flow.item(checkbox_w("Arrows"));
     ImGui::Checkbox("Arrows", &vs.show_arrows);
     flow.placed();
+
+    flow.item(checkbox_w("Panels"));
+    ImGui::Checkbox("Panels", &vs.show_panels);
+    flow.placed();
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("The session, inspector and scenario panels. Off gives the\n"
+                          "graph the whole window. Tab toggles it.");
+    }
 
     // -- filters (FR-35)
     label("FILTER");
@@ -928,6 +942,7 @@ void draw_inspector(ecs::World& world) {
         ImGui::BulletText("drag a node    move it; it settles back");
         ImGui::BulletText("double click   open a file; pin anything else");
         ImGui::BulletText("F              fit to view");
+        ImGui::BulletText("Tab            hide the panels; the graph takes the window");
         ImGui::BulletText("space          play / pause the scenario");
         ImGui::BulletText(".              step one event");
         ImGui::End();
@@ -1090,9 +1105,11 @@ void draw_timeline(ecs::World& world) {
 
 void draw_panels(ecs::World& world) {
     draw_top_bar(world);
-    draw_session_panel(world);
-    draw_inspector(world);
-    draw_timeline(world);
+    if (Ui(world).view.show_panels) {
+        draw_session_panel(world);
+        draw_inspector(world);
+        draw_timeline(world);
+    }
 
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     Ui                   ui(world);

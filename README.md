@@ -233,8 +233,18 @@ input always wins over `--hover`, so pointing at something else just works.
 | double click a file | open it with whatever this desktop opens files with |
 | double click anything else | pin / unpin in place |
 | `F` | fit to view |
+| `Tab` | hide the side and bottom panels; the graph takes the window |
 | `space` / `.` / `R` | play-pause / step one event / restart |
 | `Esc` | clear selection |
+
+**`Tab` gives the graph the window.** The session, inspector and scenario panels are
+about 45% of a 1920-wide screen between them, and a view whose job is to be looked at
+should be able to have that back. The toolbar stays: it is the way back, it holds the
+controls that change what the graph shows, and it is 64 pixels against their 880. The
+**Panels** checkbox on it does the same thing for anyone who has not read this.
+
+Hiding them widens the free viewport, so the labels recompute against the room they
+actually have and a good many more of them fit. `--no-panels` opens that way.
 
 ### Verifying a change you can see
 

@@ -21,6 +21,7 @@ bool parse_options(int argc, char** argv, const char* default_root, Options& o) 
                          "  --view MODE      architecture | filesystem | file-graph\n"
                          "  --filter TEXT    open with the name/path filter set\n"
                          "  --hide REGEX     hide nodes whose name or path matches (repeatable)\n"
+                         "  --no-panels      open with the side and bottom panels hidden\n"
                          "  --zoom F         hold this zoom instead of fitting to view\n"
                          "  --relevance F    start with the relevance filter at F (0..1)\n"
                          "  --text-settings  open the text size window on startup\n"
@@ -40,6 +41,7 @@ bool parse_options(int argc, char** argv, const char* default_root, Options& o) 
         else if (a == "--view" && i + 1 < argc) o.view = argv[++i];
         else if (a == "--filter" && i + 1 < argc) o.filter = argv[++i];
         else if (a == "--hide" && i + 1 < argc) o.hide.push_back(argv[++i]);
+        else if (a == "--no-panels") o.no_panels = true;
         else if (a == "--zoom" && i + 1 < argc) o.zoom = std::atof(argv[++i]);
         else if (a == "--relevance" && i + 1 < argc) o.relevance = std::atof(argv[++i]);
         else o.root = a;

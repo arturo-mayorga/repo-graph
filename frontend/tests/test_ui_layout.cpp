@@ -210,3 +210,72 @@ TEST(the_toolbar_reports_a_larger_height_as_text_grows) {
     CHECK(small > 0.0f);
     CHECK(large > small);
 }
+
+// -- hiding the panels ------------------------------------------------------------
+//
+// A view whose job is to be looked at should be able to have the window. The toolbar
+// stays, because it is the way back and the controls that change what the graph shows
+// live on it.
+
+namespace {
+
+// Drives the real panel pass and reports what the graph was left.
+Vec2 free_size_with_panels(UiHarness& ui, bool shown) {
+    ui.world().resource<ecs::ViewSettings>().show_panels = shown;
+    ImGuiIO& io = ImGui::GetIO();
+    for (int frame = 0; frame < 4; ++frame) {
+        io.FontGlobalScale = 1.0f;
+        ImGui::NewFrame();
+        rgv::ui::draw_panels(ui.world());
+        ImGui::Render();
+    }
+    return ui.world().resource<ecs::Viewport>().free_size;
+}
+
+} // namespace
+
+TEST(hiding_the_panels_gives_the_graph_the_rest_of_the_window) {
+    HeadlessImGui imgui;
+    UiHarness     ui(kFixture);
+
+    const Vec2 with    = free_size_with_panels(ui, true);
+    const Vec2 without = free_size_with_panels(ui, false);
+
+    CHECK(without.x > with.x);
+    CHECK(without.y > with.y);
+
+    // The whole width, and everything below the toolbar.
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    CHECK(std::abs(without.x - vp->WorkSize.x) < 0.5f);
+    const float top = vp->WorkSize.y - without.y;
+    CHECK(top > 0.0f);                     // the toolbar keeps its band
+    CHECK(top < vp->WorkSize.y * 0.26f);   // and nothing else does
+
+    // Back again, exactly as it was: the toggle is not a one-way door.
+    CHECK(close_enough(ImVec2(free_size_with_panels(ui, true).x,
+                              free_size_with_panels(ui, true).y),
+                       ImVec2(with.x, with.y)));
+}
+
+TEST(the_panels_are_not_drawn_at_all_when_hidden) {
+    HeadlessImGui imgui;
+    UiHarness     ui(kFixture);
+
+    free_size_with_panels(ui, true);
+    for (const char* name : {"Session", "Inspector", "Scenario"}) {
+        CHECK(ImGui::FindWindowByName(name) != nullptr);
+    }
+    // ImGui keeps a window object once it has existed, so the test is whether it was
+    // submitted this frame rather than whether it is remembered.
+    free_size_with_panels(ui, false);
+    const int frame = ImGui::GetFrameCount();
+    for (const char* name : {"Session", "Inspector", "Scenario"}) {
+        ImGuiWindow* w = ImGui::FindWindowByName(name);
+        CHECK(w == nullptr || w->LastFrameActive < frame - 1);
+    }
+    // The toolbar is still there: it is the way back.
+    ImGuiWindow* bar = ImGui::FindWindowByName("##topbar");
+    CHECK(bar != nullptr);
+    CHECK(bar->LastFrameActive >= frame - 1);
+}
+

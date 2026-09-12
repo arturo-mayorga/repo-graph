@@ -45,6 +45,11 @@ struct ViewSettings {
     ViewMode mode  = ViewMode::Architecture;
     Level    level = Level::Package;
 
+    // The side and bottom panels. Off gives the graph the whole window, which is the
+    // point of a view whose job is to be looked at. The toolbar stays: it is the way
+    // back, and the controls that change what the graph shows live on it.
+    bool show_panels        = true;
+
     bool layout_running     = true;
     bool show_labels        = true;
     bool show_arrows        = true;
@@ -149,6 +154,7 @@ struct FrameInput {
     bool ui_wants_mouse    = false;
     bool ui_wants_keyboard = false;
 
+    bool panels_pressed = false;
     bool fit_pressed     = false;
     bool escape_pressed  = false;
     bool play_pressed    = false;

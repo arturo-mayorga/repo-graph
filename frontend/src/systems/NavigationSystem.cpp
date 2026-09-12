@@ -87,6 +87,10 @@ void NavigationSystem::run(ecs::World& world, const ecs::FrameContext&) {
         }
     }
 
+    if (input.panels_pressed) {
+        auto& settings       = world.resource<ecs::ViewSettings>();
+        settings.show_panels = !settings.show_panels;
+    }
     if (input.fit_pressed) queue.push(ecs::FitView{});
     if (input.escape_pressed) queue.push(ecs::ClearSelection{});
 

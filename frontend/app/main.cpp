@@ -93,6 +93,7 @@ void install_resources(ecs::World& world, const app::Options& options) {
     }
 
     if (!options.filter.empty()) world.resource<ecs::Filters>().text = options.filter;
+    if (options.no_panels) view.show_panels = false;
     for (const auto& pattern : options.hide) {
         if (!ecs::add_hide_pattern(world.resource<ecs::Filters>(), pattern)) {
             std::fprintf(stderr, "rgv: --hide '%s' is not a valid regular expression; kept, hides nothing\n",
