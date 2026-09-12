@@ -102,7 +102,7 @@ watch what it produces without a UI at all:
 ./build/bin/rgv-watch --root . | head -3
 ```
 
-The provider has three adapters. The **filesystem** adapter reports containment: which
+The provider has four adapters. The **filesystem** adapter reports containment: which
 files and directories exist and when they change. The **manifest** adapter finds packages
 and their declared dependencies, which is what populates the Architecture view:
 
@@ -148,8 +148,32 @@ An import two source roots could satisfy resolves to the first and is marked
 `heuristic`, which the traversal skips by default. Imports inside strings and comments
 are not imports; imports inside functions and `if TYPE_CHECKING:` blocks are.
 
-It is a line scanner, not a parser, and it is meant to stay one: an import is a statement
-at the start of a logical line, and the cases a scanner cannot see are the ones a
+The **ts-imports** adapter does the same for `.ts`, `.tsx`, `.js`, `.jsx`, `.mts`,
+`.cts`, `.mjs` and `.cjs`, and the whole of the difference is resolution. It takes the
+specifier out of every static `import`, every re-export (`export … from`), every
+`require()` and every dynamic `import()`, `import type` included — erased at run time,
+still a dependency, since changing the type stops the importer compiling.
+
+Then it resolves the way Node and TypeScript do. A specifier is extensionless, so
+`./util` is tried as `.ts`, `.tsx`, `.mts`, `.cts`, `.d.ts` and then the JavaScript
+extensions, source before anything compiled beside it; a directory resolves to the
+`index` in it. A TypeScript file compiled for ESM writes `./util.js` and means the
+`./util.ts` beside it, so that mapping is applied — after looking for the literal file,
+so a specifier that meant what it said still gets it. A bare specifier is matched
+against the packages this repository declares, longest name first so `@acme/auth-core`
+is not mistaken for a subpath of `@acme/auth`: an exact match resolves through the
+manifest's `source`, `module` or `main`, falling back to the conventional `index` and
+`src/index`, because `main` usually points into a build directory nobody checks in. A
+subpath resolves inside the package directory. Everything else — `react`, `node:fs`, a
+path from a `tsconfig.json` alias — resolves to nothing, for the same reason as in
+Python: an edge to a node that does not exist is worse than a missing one.
+
+No symbols for TypeScript yet, so `reads` and `writes` edges are Python-only. Its export
+forms are varied enough that a line scanner would start guessing, and a wrong symbol
+edge is worse than a missing one.
+
+Both readers are line scanners, not parsers, and they are meant to stay that way: an
+import is a statement at the start of a logical line, and the cases a scanner cannot see are the ones a
 dependency graph should not claim to.
 
 **Symbols.** The same adapter extracts every top-level class and function and follows
@@ -533,10 +557,12 @@ the rules it enforces and why, layout and rendering, and how the pipeline is tes
 
 ## What is not here yet
 
-One language. `rgv-watch` extracts imports and symbols for Python only, so watching a
-TypeScript or C++ checkout gives you a live Filesystem view, an Architecture view if
-there are manifests it reads, and empty File graph and Symbols views. No git
-reconciliation in the live path: a rename arrives as a delete and a create.
+Two languages. `rgv-watch` extracts imports for Python and TypeScript/JavaScript, and
+symbols for Python only, so a C++ or Go checkout gives you a live Filesystem view and an
+Architecture view holding whatever its manifests declare, with nothing between the
+nodes. `tsconfig.json` path aliases and `package.json` `exports` maps are not read, so a
+repository leaning on either will lose the imports that go through them. No git
+reconciliation in the live path either: a rename arrives as a delete and a create.
 
 The temporal-compare view (FR-34) is represented in the contract (`valid_to` on edges) but
 has no view mode.

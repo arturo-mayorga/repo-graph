@@ -71,6 +71,15 @@ bool read_package_json(const fs::path& root, const std::string& rel, Package& ou
     out.manifest = manifest;
     out.provider = "npm";
     if (auto v = j.find("version"); v != j.end() && v->is_string()) out.version = *v;
+    // `source` first: the convention a source-first monorepo uses to point at the file
+    // a sibling package should actually be read from.
+    for (const char* key : {"source", "module", "main"}) {
+        auto it = j.find(key);
+        if (it != j.end() && it->is_string() && !it->get<std::string>().empty()) {
+            out.entry = it->get<std::string>();
+            break;
+        }
+    }
 
     const std::pair<const char*, bool> blocks[] = {
         {"dependencies", false}, {"peerDependencies", false}, {"devDependencies", true}};

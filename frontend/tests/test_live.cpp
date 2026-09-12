@@ -691,3 +691,67 @@ TEST(symbols_and_their_readers_and_writers_arrive_through_the_provider) {
     CHECK(store.node(sym) != nullptr);
     CHECK(edge_of(EdgeKind::Calls, "file:demo/systems/movement.py") != nullptr);
 }
+
+// -- typescript, end to end ------------------------------------------------------
+//
+// Resolution is the whole of the difference from Python, so this is where it is checked
+// against the real provider: extensionless specifiers, the `.js` a TypeScript file
+// writes when it means the `.ts` beside it, and a bare specifier that names a package
+// in this repository rather than something in node_modules.
+
+TEST(the_typescript_provider_resolves_node_style_imports) {
+    PyRepo r("provider-ts");
+    r.write("package.json", R"({"name":"acme","private":true,"workspaces":["packages/*"]})");
+    r.write("packages/logger/package.json",
+            R"({"name":"@acme/logger","version":"1.0.0","source":"src/index.ts"})");
+    r.write("packages/logger/src/index.ts", "export function log(m: string) {}\n");
+    r.write("packages/app/package.json",
+            R"({"name":"@acme/app","dependencies":{"@acme/logger":"workspace:*"}})");
+    r.write("packages/app/src/index.ts",
+            "import { log } from '@acme/logger';\n"
+            "import { util } from './util.js';\n"
+            "import react from 'react';\n"
+            "// import { fake } from './nope';\n"
+            "export const go = () => log(String(util));\n");
+    r.write("packages/app/src/util.ts", "export const util = 1;\n");
+
+    live::LiveSource src({RGV_WATCH_BIN, "--root", r.root}, 5000.0);
+    GraphStore       store;
+    store.reset(src.baseline());
+
+    // A bare specifier that names a package here, through the entry its manifest gives.
+    const Edge* cross =
+        import_edge(store, "packages/app/src/index.ts", "packages/logger/src/index.ts");
+    CHECK(cross != nullptr);
+    CHECK_EQ(cross->provider, std::string("ts-imports"));
+    CHECK(cross->confidence == Confidence::Exact);
+
+    // `./util.js` means the `.ts` beside it.
+    CHECK(import_edge(store, "packages/app/src/index.ts", "packages/app/src/util.ts") != nullptr);
+
+    // `react` is in node_modules and the commented-out line is not an import, so those
+    // are the only two.
+    int imports = 0;
+    for (const auto& [id, e] : store.edges()) {
+        if (e.kind == EdgeKind::Imports) ++imports;
+    }
+    CHECK_EQ(imports, 2);
+
+    // And the packages underneath them.
+    bool dep = false;
+    for (const auto& [id, e] : store.edges()) {
+        if (e.kind == EdgeKind::DependsOn && e.from == "pkg:@acme/app" &&
+            e.to == "pkg:@acme/logger" && e.provider == "ts-imports") {
+            dep = true;
+        }
+    }
+    CHECK(dep);
+
+    settle(src, store);
+    bool announced = false;
+    for (const auto& a : store.adapters()) {
+        if (a.name == "ts-imports") announced = true;
+    }
+    CHECK(announced);
+}
+

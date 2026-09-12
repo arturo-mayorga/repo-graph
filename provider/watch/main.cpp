@@ -18,6 +18,7 @@
 #include "Impact.h"
 #include "Packages.h"
 #include "PythonImports.h"
+#include "TsImports.h"
 
 #include <nlohmann/json.hpp>
 
@@ -242,6 +243,22 @@ bool is_python(const std::string& rel) {
     return rel.size() > 3 && rel.compare(rel.size() - 3, 3, ".py") == 0;
 }
 
+bool is_ts(const std::string& rel) {
+    for (const char* ext : {".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"}) {
+        const std::size_t n = std::strlen(ext);
+        if (rel.size() > n && rel.compare(rel.size() - n, n, ext) == 0) return true;
+    }
+    return false;
+}
+
+bool is_source(const std::string& rel) { return is_python(rel) || is_ts(rel); }
+
+// Which reader produced an edge, so the inspector can say and the contract's rule that
+// a `provider` names an announced adapter holds (section 6.2).
+const char* imports_provider(const std::string& rel) {
+    return is_ts(rel) ? "ts-imports" : "python-imports";
+}
+
 std::string read_text(const fs::path& p) {
     std::ifstream in(p, std::ios::binary);
     if (!in) return {};
@@ -267,7 +284,7 @@ json import_edge_json(const std::string& id, const ImportEdge& e) {
                 {"kind", "imports"},
                 {"from", file_id(e.from)},
                 {"to", file_id(e.to)},
-                {"provider", "python-imports"},
+                {"provider", imports_provider(e.from)},
                 {"confidence", e.heuristic ? "heuristic" : "exact"},
                 {"freshness", "current"},
                 {"valid_from", e.valid_from},
@@ -275,9 +292,11 @@ json import_edge_json(const std::string& id, const ImportEdge& e) {
 }
 
 struct ImportIndex {
-    std::map<std::string, std::vector<rgv::watch::ImportStmt>> parsed;   // rel -> statements
-    std::map<std::string, ImportEdge>                          edges;    // id -> file edge
-    std::vector<std::string>                                   roots;
+    std::map<std::string, std::vector<rgv::watch::ImportStmt>> parsed;      // python
+    std::map<std::string, std::vector<rgv::watch::TsImport>>   ts_parsed;   // typescript
+    std::map<std::string, ImportEdge>                          edges;       // id -> file edge
+    std::vector<std::string>                                   roots;       // python source roots
+    std::vector<rgv::watch::TsPackage>                         ts_packages;
 
     struct DepEdge {
         rgv::watch::PackageDep dep;
@@ -288,7 +307,10 @@ struct ImportIndex {
     void parse_text(const std::string& rel, const std::string& text) {
         parsed[rel] = rgv::watch::parse_python_imports(text);
     }
-    void forget(const std::string& rel) { parsed.erase(rel); }
+    void parse_ts(const std::string& rel, const std::string& text) {
+        ts_parsed[rel] = rgv::watch::parse_ts_imports(text);
+    }
+    void forget(const std::string& rel) { parsed.erase(rel); ts_parsed.erase(rel); }
 
     // Re-resolves everything and reports what moved: new edges carry `generation`,
     // surviving ones keep the generation they first appeared in, and a surviving edge
@@ -301,14 +323,20 @@ struct ImportIndex {
         }
         std::map<std::string, ImportEdge>                        next;
         std::vector<std::pair<std::string, rgv::watch::FileImport>> flat;
-        for (const auto& [rel, stmts] : parsed) {
-            for (const auto& fi : rgv::watch::resolve_python_imports(rel, stmts, files, roots)) {
+        auto take = [&](const std::string& rel, const std::vector<rgv::watch::FileImport>& found) {
+            for (const auto& fi : found) {
                 const std::string id = import_edge_id(rel, fi.to);
                 ImportEdge        e{rel, fi.to, fi.line, fi.snippet, fi.ambiguous, generation};
                 if (auto old = edges.find(id); old != edges.end()) e.valid_from = old->second.valid_from;
                 next[id] = std::move(e);
                 flat.emplace_back(rel, fi);
             }
+        };
+        for (const auto& [rel, stmts] : parsed) {
+            take(rel, rgv::watch::resolve_python_imports(rel, stmts, files, roots));
+        }
+        for (const auto& [rel, imports] : ts_parsed) {
+            take(rel, rgv::watch::resolve_ts_imports(rel, imports, files, ts_packages));
         }
         for (const auto& [id, e] : edges) {
             if (!next.count(id)) removed.push_back(id);
@@ -352,7 +380,7 @@ struct ImportIndex {
                     {"kind", "depends_on"},
                     {"from", d.dep.from},
                     {"to", d.dep.to},
-                    {"provider", "python-imports"},
+                    {"provider", imports_provider(d.dep.artifact)},
                     {"confidence", d.dep.heuristic ? "heuristic" : "exact"},
                     {"freshness", "current"},
                     {"valid_from", d.valid_from},
@@ -697,15 +725,29 @@ int main(int argc, char** argv) {
     std::set<std::string>              changed;   // files touched since the baseline
     const long                         baseline = generation;
 
-    auto parse_python = [&](const std::string& rel) {
+    auto parse_source = [&](const std::string& rel) {
         const std::string text = read_text(root / rel);
-        imports.parse_text(rel, text);
-        symbols.parse(rel, text, imports.parsed[rel]);
+        if (is_python(rel)) {
+            imports.parse_text(rel, text);
+            symbols.parse(rel, text, imports.parsed[rel]);
+        } else if (is_ts(rel)) {
+            // No symbol extraction for TypeScript yet: its export forms are varied
+            // enough that a line scanner would start guessing, and a wrong symbol edge
+            // is worse than a missing one.
+            imports.parse_ts(rel, text);
+        }
     };
     auto reroot = [&](const Tree& t) {
         std::vector<std::string> dirs;
         for (const auto& p : packages) dirs.push_back(p.rel);
         imports.roots = rgv::watch::python_source_roots(t.entries, dirs);
+
+        // What a bare specifier is allowed to name: the packages this repository
+        // declares. Everything else is node_modules, and not ours to report.
+        imports.ts_packages.clear();
+        for (const auto& p : packages) {
+            if (p.provider == "npm") imports.ts_packages.push_back({p.name, p.rel, p.entry});
+        }
     };
     auto merge_dirs = [&](const std::vector<rgv::watch::PyPackage>& py) {
         PackageDirs all = manifest_dirs;
@@ -734,7 +776,7 @@ int main(int argc, char** argv) {
         for (const auto& p : pypkgs) nodes.push_back(pypkg_node(p, pkg_dirs));
 
         for (const auto& [rel, is_dir] : tree.entries) {
-            if (!is_dir && is_python(rel)) parse_python(rel);
+            if (!is_dir && is_source(rel)) parse_source(rel);
         }
         json removed = json::array();
         json updated = json::array();
@@ -763,14 +805,14 @@ int main(int argc, char** argv) {
     // `idle` with the baseline as last success: the walk is done and nothing is queued.
     // (`ready` is not a contract state; the parser drops the line and the inspector
     // never learns the adapter exists.)
-    for (const char* adapter : {"filesystem", "npm", "python", "python-imports"}) {
+    for (const char* adapter : {"filesystem", "npm", "python", "python-imports", "ts-imports"}) {
         emit(json{{"t_ms", 0}, {"type", "adapter.status"}, {"generation", generation},
                   {"adapter", adapter}, {"state", "idle"}, {"queue_depth", 0},
                   {"last_success_generation", generation}, {"message", ""}});
     }
 
     std::fprintf(stderr,
-                 "rgv-watch: %zu entries, %zu packages, %zu python packages, %zu python imports, "
+                 "rgv-watch: %zu entries, %zu packages, %zu python packages, %zu imports, "
                  "%zu shared symbols under %s\n",
                  tree.entries.size(), packages.size(), pypkgs.size(), imports.edges.size(),
                  symbols.nodes.size(), root.c_str());
@@ -849,7 +891,7 @@ int main(int argc, char** argv) {
         for (const auto& [rel, is_dir] : fresh) {
             json n = node_for(root, rel, is_dir, pkg_dirs);
             if (!n.is_null()) added.push_back(std::move(n));
-            if (!is_dir && is_python(rel)) { parse_python(rel); reparsed = true; }
+            if (!is_dir && is_source(rel)) { parse_source(rel); reparsed = true; }
         }
 
         // Content changes do not show up in the tree listing, so mtimes decide. A file
@@ -864,7 +906,7 @@ int main(int argc, char** argv) {
             mtimes[rel]           = stamp;
             if (!moved) continue;
             modified.push_back(rel);
-            if (is_python(rel)) { parse_python(rel); reparsed = true; }
+            if (is_source(rel)) { parse_source(rel); reparsed = true; }
         }
 
         const bool structural = !added.empty() || !removed.empty() || !updated.empty();

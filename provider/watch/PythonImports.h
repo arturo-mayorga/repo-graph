@@ -19,6 +19,8 @@
 #pragma once
 
 #include <functional>
+#include "FileImport.h"
+
 #include <map>
 #include <set>
 #include <string>
@@ -46,13 +48,6 @@ std::vector<ImportStmt> parse_python_imports(const std::string& text);
 // `entries` is the provider's walk (repo-relative path -> is-directory).
 std::vector<std::string> python_source_roots(const std::map<std::string, bool>& entries,
                                              const std::vector<std::string>&    package_dirs);
-
-struct FileImport {
-    std::string to;               // repo-relative file the import resolves to
-    int         line = 0;
-    std::string snippet;
-    bool        ambiguous = false;   // more than one root satisfied it -> heuristic
-};
 
 // Resolves `stmts` found in `from_rel` against the files that exist. One entry per
 // distinct target, first occurrence wins; self-imports are dropped.

@@ -111,6 +111,7 @@ if(RGV_BUILD_TESTS)
     tests/test_schedule.cpp
     tests/test_packages.cpp
     tests/test_open_path.cpp
+    tests/test_ts_imports.cpp
     tests/test_python_imports.cpp
     tests/test_provider_impact.cpp
     # The manifest readers are the provider's, not the frontend's. Compiled into the
@@ -118,6 +119,7 @@ if(RGV_BUILD_TESTS)
     # frontend -- only the wire format.
     ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/Packages.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/PythonImports.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/TsImports.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/Impact.cpp
   )
   target_include_directories(rgv-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests
@@ -194,6 +196,7 @@ add_executable(rgv-watch
   ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/main.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/Packages.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/PythonImports.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/TsImports.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/Impact.cpp)
 target_include_directories(rgv-watch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/json)
 target_compile_features(rgv-watch PRIVATE cxx_std_20)

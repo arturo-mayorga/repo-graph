@@ -34,6 +34,10 @@ struct Package {
     std::string manifest;   // repo-relative manifest path
     std::string provider;   // npm | python
     std::string version;
+    // Where the manifest says the package starts, package-relative. Often points into a
+    // build directory nobody checks in, so a resolver has to fall back to the
+    // conventional `index` either way -- but when it names source, it is authoritative.
+    std::string entry;
 
     std::vector<Dependency> deps;
 };
