@@ -321,10 +321,30 @@ direct conflict. Files on an orbit sit ~18 world units apart while a filename bo
 morph is gated on room × zoom: the repository and its packages become proper boxes with
 the name inside; files and cramped directories stay circles and are named from outside.
 
-File names appear as you zoom in. That works because labels drawn *beside* a node hold
-a constant screen size while the graph spreads out beneath them — world-scaled text
-grows in step with the spacing and never uncrowds, however far you zoom. A label
-*inside* a box scales with the box, so it always fits. Gource makes the same split.
+Names appear as you zoom in, because a label drawn *beside* a node holds a constant
+screen size while the graph spreads out beneath it. World-scaled text grows in step with
+the spacing and never uncrowds, however far you zoom. Gource makes the same split.
+
+That constant size is also the problem: at any zoom there is a fixed amount of room and
+more names than room, so something has to choose. **Labels beside a node are sorted by
+priority and taken in order, and one is drawn only if it clears every label already
+drawn.** Priority is how much is attached to the node — its dependency degree in the
+repository plus what it holds on screen — so the names that survive are the ones the
+most of the picture connects to. Both halves of that sum are needed: a directory does
+not import anything, and the filesystem view is unreadable without directory names,
+while the only drawn edge a file has there is the one to its parent, which would make
+the module everything imports no more nameable than the module nothing imports.
+
+What you are pointing at outranks all of it, and what you have selected outranks the
+rest. Labels fade in and out over 250ms rather than appearing and vanishing, so panning
+does not strobe. The choice is greedy rather than optimal on purpose: an optimal packing
+reshuffles wholesale when one node moves, and a label that jumps to a different node is
+worse than a label that is missing.
+
+It is a system rather than something the panel works out as it draws, because the choice
+depends on every other label on screen and the fade has to remember what it was last
+frame — `LabelSystem` decides, `SideLabel` carries the answer, and the panel only draws
+it.
 
 **Dragging runs a live relaxation.** The layout itself has no forces — it is structural
 packing, deliberately, so nothing drifts — but a drag wants the graph to give way. So a

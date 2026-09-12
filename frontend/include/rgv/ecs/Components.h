@@ -131,6 +131,20 @@ struct Label {
     std::string sub;   // secondary line: package path, language
 };
 
+// A name drawn BESIDE a node rather than inside it, once the label system has decided
+// it gets one. Present only on nodes whose name is currently drawn or fading; where it
+// is absent the node is either off screen or has grown into a box that holds its own
+// name. Owner: LabelSystem.
+//
+// The anchor is screen space and the alpha is the fade, which is why this is a
+// component and not something the panel works out as it draws: the choice depends on
+// every other label on screen, and the fade has to remember what it was last frame.
+struct SideLabel {
+    Vec2  anchor;         // horizontal centre of the text, at its top
+    float px    = 0.0f;   // font size, constant on screen
+    float alpha = 0.0f;
+};
+
 // Fully derived from the state below plus Selected/Hovered/OnExplainedPath.
 // Owner: StyleSystem, and nothing else may write it -- the renderer reads it verbatim.
 struct Style {

@@ -23,7 +23,6 @@ inline constexpr float kCharAdvanceRatio = 0.55f;   // advance / font size, Prog
 struct NodeDetail {
     float t       = 1.0f;   // 0 = compact dot, 1 = full labelled box
     float font_px = kBaseFontPx;
-    bool  labels  = true;
 };
 
 NodeDetail node_detail(float zoom, float graph_text_scale);

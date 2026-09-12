@@ -68,6 +68,7 @@ add_library(rgv_core STATIC
   src/view/SemanticZoom.cpp
   src/view/CameraFit.cpp
   src/view/HoverLinks.cpp
+  src/view/LabelLayout.cpp
   src/platform/OpenPath.cpp
   src/ui/Theme.cpp
 
@@ -80,6 +81,7 @@ add_library(rgv_core STATIC
   src/systems/SelectionSystem.cpp
   src/systems/LayoutSystem.cpp
   src/systems/StyleSystem.cpp
+  src/systems/LabelSystem.cpp
   src/systems/PickingSystem.cpp
   src/systems/NavigationSystem.cpp
   src/systems/TransportSystem.cpp
@@ -112,6 +114,7 @@ if(RGV_BUILD_TESTS)
     tests/test_packages.cpp
     tests/test_open_path.cpp
     tests/test_ts_imports.cpp
+    tests/test_label_layout.cpp
     tests/test_python_imports.cpp
     tests/test_provider_impact.cpp
     # The manifest readers are the provider's, not the frontend's. Compiled into the

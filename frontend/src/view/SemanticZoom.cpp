@@ -16,7 +16,6 @@ NodeDetail node_detail(float zoom, float graph_text_scale) {
     constexpr float lo = 6.0f, hi = 11.0f;
     const float     x  = std::clamp((d.font_px - lo) / (hi - lo), 0.0f, 1.0f);
     d.t      = x * x * (3.0f - 2.0f * x);   // smoothstep, so the transition is not a pop
-    d.labels = d.t > 0.02f;
     return d;
 }
 

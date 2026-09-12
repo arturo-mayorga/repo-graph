@@ -21,6 +21,7 @@
 #include "rgv/systems/CommandSystem.h"
 #include "rgv/systems/GraphRenderSystem.h"
 #include "rgv/systems/ImpactStateSystem.h"
+#include "rgv/systems/LabelSystem.h"
 #include "rgv/systems/LayoutSystem.h"
 #include "rgv/systems/NavigationSystem.h"
 #include "rgv/systems/PickingSystem.h"
@@ -155,6 +156,7 @@ void install_systems(ecs::Schedule& schedule, const app::Options& options) {
         .add(Phase::Simulate, std::make_unique<SelectionSystem>())
         .add(Phase::Simulate, std::make_unique<LayoutSystem>())
         .add(Phase::Simulate, std::make_unique<StyleSystem>())
+        .add(Phase::Simulate, std::make_unique<LabelSystem>())
 
         // Draw. Panels first: they decide how much room the graph gets.
         .add(Phase::Render, std::make_unique<UiSystem>())

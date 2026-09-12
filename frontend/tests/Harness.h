@@ -13,6 +13,7 @@
 #include "rgv/systems/ImpactStateSystem.h"
 #include "rgv/systems/NavigationSystem.h"
 #include "rgv/systems/PickingSystem.h"
+#include "rgv/systems/LabelSystem.h"
 #include "rgv/systems/LayoutSystem.h"
 #include "rgv/systems/SceneSyncSystem.h"
 #include "rgv/systems/SelectionSystem.h"
@@ -67,7 +68,8 @@ struct Harness {
             .add(Phase::Simulate, std::make_unique<systems::ImpactStateSystem>())
             .add(Phase::Simulate, std::make_unique<systems::SelectionSystem>())
             .add(Phase::Simulate, std::make_unique<systems::LayoutSystem>())
-            .add(Phase::Simulate, std::make_unique<systems::StyleSystem>());
+            .add(Phase::Simulate, std::make_unique<systems::StyleSystem>())
+            .add(Phase::Simulate, std::make_unique<systems::LabelSystem>());
         schedule.setup(world);
     }
 

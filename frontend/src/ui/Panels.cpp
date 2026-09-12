@@ -1144,102 +1144,68 @@ void draw_graph_overlay(ecs::World& world, ImDrawList* dl) {
 
             const bool  changed = reg.all_of<ecs::Changed>(ent);
             const auto* imp     = reg.try_get<ecs::Impacted>(ent);
-
             const auto* disc    = reg.try_get<ecs::Disc>(ent);
             const auto* space   = reg.try_get<ecs::Spacing>(ent);
             const auto* prom    = reg.try_get<ecs::Prominence>(ent);
             const float pscale  = prom ? prom->scale : 1.0f;
-
-            // What the user is pointing at is always named, however crowded it is.
-            const bool asked_for = reg.all_of<ecs::Selected>(ent) ||
-                                   reg.all_of<ecs::Hovered>(ent) ||
-                                   reg.all_of<ecs::OnExplainedPath>(ent);
 
             const rgv::view::DiscShape shape{disc ? disc->radius : 0.0f,
                                              space ? space->room : 1e9f};
             const Vec2  half = rgv::view::node_half(
                 cam.zoom, detail, ext.half, shape,
                 rgv::view::dot_px_for(changed, imp != nullptr, false, pscale));
-            const float morph  = rgv::view::disc_morph(detail, shape, ext.half);
-            const bool  inside = rgv::view::label_belongs_inside(morph);
+            const bool inside =
+                rgv::view::label_belongs_inside(rgv::view::disc_morph(detail, shape, ext.half));
 
             Vec4 col = t.node_text;
             if (changed) col = t.changed;
             else if (imp) col = impact_color(imp->distance);
 
-            // A prominent node's box is bigger because it matters, so its name grows
-            // with it. Leaving the font alone would turn the extra size into padding,
-            // which reads as a rendering accident rather than as emphasis.
-            float px    = inside ? detail.font_px * pscale : outside_px;
-            float alpha = 1.0f;
-
             if (inside) {
-                // Shrunk to fit. Half-morphed the box is narrower than the text wants,
+                // A prominent node's box is bigger because it matters, so its name grows
+                // with it. Leaving the font alone would turn the extra size into padding,
+                // which reads as a rendering accident rather than as emphasis.
+                //
+                // Shrunk to fit: half-morphed the box is narrower than the text wants,
                 // and drawing at full size spills the name out of the rectangle that is
                 // supposed to contain it.
+                float        px     = detail.font_px * pscale;
                 const ImVec2 want   = font->CalcTextSizeA(px, FLT_MAX, 0.0f, label.text.c_str());
                 const float  room_x = half.x * cam.zoom * 1.80f;
                 const float  room_y = half.y * cam.zoom * 1.70f;
                 if (want.x > room_x && want.x > 0.0f) px *= room_x / want.x;
                 px = std::max(std::min(px, room_y), 1.0f);
-            } else {
-                // Fade out rather than pop when the node itself is barely visible.
-                alpha = std::clamp(half.y * cam.zoom / 3.0f, 0.0f, 1.0f);
-                if (!asked_for && alpha < 0.05f) continue;
-            }
-            col.a *= alpha;
 
-            const ImVec2 sz = font->CalcTextSizeA(px, FLT_MAX, 0.0f, label.text.c_str());
+                const ImVec2 sz = font->CalcTextSizeA(px, FLT_MAX, 0.0f, label.text.c_str());
+                const bool   two_lines =
+                    !label.sub.empty() && half.y * cam.zoom > px * 1.15f;
+                const float line_h = px;
+                const Vec2  anchor{s.x, s.y - (two_lines ? line_h * 0.98f : line_h * 0.5f)};
 
-            // Too crowded to name. Eases as the user zooms in and the nodes spread out.
-            //
-            // A node that owns an orbit is exempt: its nearest neighbour is something
-            // it holds, so `room` understates the empty space its name goes into, and
-            // applying the test there hides the structure. A node that holds nothing
-            // gets no such benefit -- in the architecture view the foundation ring is
-            // packed tight, and exempting all of it stacked every label on the centre.
-            const bool dense_exempt = disc && disc->halo > disc->radius + 1.0f;
-            if (!inside && !asked_for && !dense_exempt && space &&
-                space->room * cam.zoom < sz.x * 0.55f) {
-                continue;
-            }
-
-            const bool  two_lines = inside && !label.sub.empty() &&
-                                   half.y * cam.zoom > px * 1.15f;
-            const float line_h    = px;
-
-            Vec2 anchor{s.x, 0.0f};
-            if (inside) {
-                anchor.y = s.y - (two_lines ? line_h * 0.98f : line_h * 0.5f);
-            } else if (disc) {
-                // Along the direction it orbits away from, so names around a ring fan
-                // outward instead of stacking, staggered so neighbours miss each other.
-                std::uint32_t hash = 2166136261u;
-                for (unsigned char ch : ref.id) { hash ^= ch; hash *= 16777619u; }
-                const float stagger = (hash & 1u) ? px * 1.05f : 0.0f;
-                // Clear the whole cluster: a directory's files orbit it, so its own name
-                // has to sit outside the outermost orbit.
-                const float reach = std::max(half.y, disc->halo);
-                const float away  = reach * cam.zoom + px * 0.55f + stagger;
-                anchor   = Vec2{s.x + disc->outward.x * away, s.y + disc->outward.y * away};
-                anchor.y -= px * 0.5f;
-            } else {
-                // Below the node in the layered views, where rows already separate them.
-                anchor.y = s.y + half.y * cam.zoom + px * 0.25f;
-            }
-
-            dl->AddText(font, px, ImVec2(anchor.x - sz.x * 0.5f, anchor.y), to_u32(col),
-                        label.text.c_str());
-
-            if (two_lines) {
-                Vec4 sub = t.node_text;
-                sub.a *= 0.5f * alpha;
-                const float  sub_size = px * 0.85f;
-                const ImVec2 ssz =
-                    font->CalcTextSizeA(sub_size, FLT_MAX, 0.0f, label.sub.c_str());
-                dl->AddText(font, sub_size,
-                            ImVec2(anchor.x - ssz.x * 0.5f, anchor.y + line_h * 0.96f),
-                            to_u32(sub), label.sub.c_str());
+                dl->AddText(font, px, ImVec2(anchor.x - sz.x * 0.5f, anchor.y), to_u32(col),
+                            label.text.c_str());
+                if (two_lines) {
+                    Vec4 sub = t.node_text;
+                    sub.a *= 0.5f;
+                    const float  sub_size = px * 0.85f;
+                    const ImVec2 ssz =
+                        font->CalcTextSizeA(sub_size, FLT_MAX, 0.0f, label.sub.c_str());
+                    dl->AddText(font, sub_size,
+                                ImVec2(anchor.x - ssz.x * 0.5f, anchor.y + line_h * 0.96f),
+                                to_u32(sub), label.sub.c_str());
+                }
+            } else if (const auto* side = reg.try_get<ecs::SideLabel>(ent);
+                       side != nullptr && side->alpha > 0.004f) {
+                // Beside the node, where it goes and whether it goes at all were decided
+                // by LabelSystem: the choice depends on every other label on screen, and
+                // the fade has to remember what it was last frame.
+                Vec4 c = col;
+                c.a *= side->alpha;
+                const ImVec2 sz =
+                    font->CalcTextSizeA(side->px, FLT_MAX, 0.0f, label.text.c_str());
+                dl->AddText(font, side->px,
+                            ImVec2(side->anchor.x - sz.x * 0.5f, side->anchor.y), to_u32(c),
+                            label.text.c_str());
             }
 
             // Distance badge. The number is the whole point of the impact view.
@@ -1249,13 +1215,12 @@ void draw_graph_overlay(ecs::World& world, ImDrawList* dl) {
                 const float  r = std::clamp(9.0f * cam.zoom * vs.graph_text_scale, 7.0f, 14.0f);
                 const ImVec2 c(s.x + half.x * cam.zoom - r * 0.5f,
                                s.y - half.y * cam.zoom + r * 0.5f);
-                dl->AddCircleFilled(c, r, ImGui::GetColorU32(ImVec4(0.06f, 0.07f, 0.08f,
-                                                                   0.96f * alpha)));
+                dl->AddCircleFilled(c, r,
+                                    ImGui::GetColorU32(ImVec4(0.06f, 0.07f, 0.08f, 0.96f)));
                 dl->AddCircle(c, r, to_u32(impact_color(imp->distance)));
                 const float  bs  = r * 1.35f;
                 const ImVec2 bsz = font->CalcTextSizeA(bs, FLT_MAX, 0.0f, buf);
-                Vec4 bc = impact_color(imp->distance);
-                bc.a *= alpha;
+                const Vec4 bc = impact_color(imp->distance);
                 dl->AddText(font, bs, ImVec2(c.x - bsz.x * 0.5f, c.y - bsz.y * 0.5f),
                             to_u32(bc), buf);
             }

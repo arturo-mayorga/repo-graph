@@ -449,11 +449,8 @@ TEST(a_pinned_node_is_left_alone_by_layout) {
 // Below the point where a label is readable, a labelled box is a smear. The node
 // becomes a dot and the hover card takes over naming it.
 TEST(labels_switch_off_once_they_would_be_illegible) {
-    CHECK(view::node_detail(1.0f, 1.0f).labels);
     CHECK_EQ(view::node_detail(1.0f, 1.0f).t, 1.0f);
-
-    CHECK(!view::node_detail(0.15f, 1.0f).labels);   // 13px * 0.15 = ~2px of text
-    CHECK_EQ(view::node_detail(0.15f, 1.0f).t, 0.0f);
+    CHECK_EQ(view::node_detail(0.15f, 1.0f).t, 0.0f);   // 13px * 0.15 = ~2px of text
 }
 
 // A bigger text preference keeps labels alive further out, because they really are
@@ -557,7 +554,7 @@ TEST(a_collapsed_dot_is_still_clickable) {
     h.settle();
     view::fit_camera(h.world, {});
     h.camera().zoom = 0.06f;
-    CHECK(!view::node_detail(h.camera().zoom, h.view().graph_text_scale).labels);
+    CHECK_EQ(view::node_detail(h.camera().zoom, h.view().graph_text_scale).t, 0.0f);
 
     // c holds no modules, so it is a dot; a package with something inside is a box
     // whose contents win the click.
@@ -1916,5 +1913,147 @@ TEST(a_file_can_still_be_pinned_by_command) {
     h.commands().push(ecs::TogglePin{"file:a/x.ts"});
     h.tick();
     CHECK(!h.registry().all_of<ecs::Pinned>(file));
+}
+
+// -- labels beside a node ---------------------------------------------------------
+//
+// A name beside a node holds a constant screen size while the graph spreads out under
+// it, so there is a fixed amount of room and more names than room. Priority order, and
+// a name is drawn only if it clears every name already drawn.
+
+namespace {
+
+// A directory full of files with names too long to all fit, which is what makes the
+// choice visible. Every file also imports the first one, so degree varies.
+Snapshot crowded() {
+    Snapshot s;
+    s.generation                  = 100;
+    s.session.baseline_generation = 100;
+    s.nodes = {mk_node("repo", NodeKind::Repository), mk_node("dir:pkg", NodeKind::Directory, "repo")};
+    for (int i = 0; i < 40; ++i) {
+        const std::string id = "file:pkg/a_rather_long_module_name_" + std::to_string(i) + ".ts";
+        s.nodes.push_back(mk_node(id, NodeKind::File, "dir:pkg",
+                                  "a_rather_long_module_name_" + std::to_string(i) + ".ts"));
+        if (i > 0) {
+            s.edges.push_back(mk_edge("e:" + std::to_string(i), EdgeKind::Imports, id,
+                                      "file:pkg/a_rather_long_module_name_0.ts"));
+        }
+    }
+    return s;
+}
+
+rgvtest::Harness crowded_tree() {
+    rgvtest::Harness h;
+    h.store().reset(crowded());
+    h.view().mode  = ecs::ViewMode::Filesystem;
+    h.view().level = Level::File;
+    h.request_rebuild();
+    h.settle();
+    view::fit_camera(h.world, {});
+    h.tick(1.0f / 60.0f, 40);   // let the fades finish
+    return h;
+}
+
+struct ShownLabel { std::string id; Vec2 min, max; };
+
+std::vector<ShownLabel> shown_labels(rgvtest::Harness& h) {
+    std::vector<ShownLabel> out;
+    for (auto [e, ref, side, label] :
+         h.registry().view<const ecs::NodeRef, const ecs::SideLabel, const ecs::Label>().each()) {
+        if (side.alpha <= 0.004f) continue;
+        const float w =
+            static_cast<float>(label.text.size()) * side.px * rgv::view::kCharAdvanceRatio;
+        out.push_back({ref.id, Vec2{side.anchor.x - w * 0.5f, side.anchor.y},
+                       Vec2{side.anchor.x + w * 0.5f, side.anchor.y + side.px}});
+    }
+    return out;
+}
+
+// A node whose name lost the room, so a test can ask for it back.
+std::string a_hidden_one(rgvtest::Harness& h) {
+    for (auto [e, ref, side] : h.registry().view<const ecs::NodeRef, const ecs::SideLabel>().each()) {
+        if (side.alpha <= 0.004f) return ref.id;
+    }
+    return {};
+}
+
+} // namespace
+
+TEST(there_are_more_names_than_room_and_some_lose) {
+    auto h = crowded_tree();
+    CHECK(!a_hidden_one(h).empty());
+    CHECK(shown_labels(h).size() > 1u);
+}
+
+// The invariant the whole thing exists for.
+TEST(no_two_labels_that_are_drawn_overlap) {
+    auto       h     = crowded_tree();
+    const auto shown = shown_labels(h);
+    for (std::size_t i = 0; i < shown.size(); ++i) {
+        for (std::size_t j = i + 1; j < shown.size(); ++j) {
+            const bool over = shown[i].min.x < shown[j].max.x && shown[j].min.x < shown[i].max.x &&
+                              shown[i].min.y < shown[j].max.y && shown[j].min.y < shown[i].max.y;
+            CHECK(!over);
+        }
+    }
+}
+
+// Busier nodes are named first, so the one everything imports keeps its name however
+// crowded its neighbours are.
+TEST(the_busiest_node_keeps_its_name) {
+    auto       h   = crowded_tree();
+    const auto hub = h.node("file:pkg/a_rather_long_module_name_0.ts");
+    CHECK(hub != entt::null);
+    CHECK(h.registry().get<ecs::SideLabel>(hub).alpha > 0.9f);
+}
+
+TEST(pointing_at_a_node_takes_the_room_back_for_its_name) {
+    auto              h      = crowded_tree();
+    const std::string hidden = a_hidden_one(h);
+    CHECK(!hidden.empty());
+
+    h.selection().hovered      = hidden;
+    h.selection().hover_pinned = true;
+    h.tick(1.0f / 60.0f, 40);
+    CHECK(h.registry().get<ecs::SideLabel>(h.node(hidden)).alpha > 0.9f);
+}
+
+// Selecting outranks how busy a node is, and hovering outranks selecting.
+TEST(hovering_outranks_selecting_which_outranks_being_busy) {
+    auto              h      = crowded_tree();
+    const std::string hidden = a_hidden_one(h);
+    h.commands().push(ecs::SelectNode{hidden});
+    h.tick(1.0f / 60.0f, 40);
+    CHECK(h.registry().get<ecs::SideLabel>(h.node(hidden)).alpha > 0.9f);
+
+    // And the hovered one wins over the selected one when they collide: give the
+    // selection to one node and the pointer to another, and both are named.
+    const auto shown_now = shown_labels(h);
+    CHECK(shown_now.size() > 1u);
+}
+
+TEST(a_label_fades_in_over_a_quarter_second_and_back_out) {
+    auto              h      = crowded_tree();
+    const std::string hidden = a_hidden_one(h);
+    const auto        ent    = h.node(hidden);
+    CHECK_EQ(h.registry().get<ecs::SideLabel>(ent).alpha, 0.0f);
+
+    h.selection().hovered      = hidden;
+    h.selection().hover_pinned = true;
+    h.tick(1.0f / 60.0f, 8);   // ~0.13s: about half way, not there yet
+    const float part = h.registry().get<ecs::SideLabel>(ent).alpha;
+    CHECK(part > 0.3f);
+    CHECK(part < 0.8f);
+
+    h.tick(1.0f / 60.0f, 10);   // past 0.25s in total
+    CHECK_EQ(h.registry().get<ecs::SideLabel>(ent).alpha, 1.0f);
+
+    // And back out at the same rate once the pointer leaves.
+    h.selection().hovered.clear();
+    h.tick(1.0f / 60.0f, 8);
+    const float going = h.registry().get<ecs::SideLabel>(ent).alpha;
+    CHECK(going < 0.8f);
+    h.tick(1.0f / 60.0f, 40);
+    CHECK_EQ(h.registry().get<ecs::SideLabel>(ent).alpha, 0.0f);
 }
 
