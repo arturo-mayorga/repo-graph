@@ -106,6 +106,12 @@ struct Disc {
     // label has to clear this, not just the disc, or a directory's own name lands on
     // top of its files.
     float halo = 6.0f;
+    // Radius of the soft glow drawn behind a directory, from the number of files in
+    // its whole subtree rather than from anything it holds directly. Gource sizes a
+    // directory by the mass beneath it and then draws only a bloom, never a disc --
+    // which is how a tree reads as structure at a glance. We draw the disc too, so the
+    // disc stays a node and the glow carries the mass. Zero on a file.
+    float glow = 0.0f;
     // Unit vector pointing away from whatever this node orbits. Labels are placed
     // along it, so the names around a ring fan outward instead of stacking on top of
     // one another. Zero for a node with no parent.

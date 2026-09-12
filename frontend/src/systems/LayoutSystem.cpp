@@ -333,6 +333,16 @@ void LayoutSystem::radial_tree(ecs::World& world) {
     // and the exact radius of the disc that encloses all of it.
     struct Sub {
         float                                        radius = 0.0f;
+        // Centre of that enclosing disc, relative to the subtree's root node. Not the
+        // root itself: a directory holding one large child sits off to the side of what
+        // it holds, and pretending otherwise is what used to double a subtree's radius
+        // at every level of nesting.
+        Vec2                                         centre{0.0f, 0.0f};
+        // Mean of the node offsets: which way the subtree leans. The enclosing centre
+        // cannot say that on its own -- a directory with one file on an orbit encloses
+        // symmetrically about itself, yet plainly leans toward the file.
+        Vec2                                         facing{0.0f, 0.0f};
+        std::size_t                                  mass = 0;   // files anywhere beneath
         std::vector<std::pair<entt::entity, Vec2>>   nodes;
     };
 
@@ -355,8 +365,10 @@ void LayoutSystem::radial_tree(ecs::World& world) {
     };
 
     // Explicit stack rather than recursion: a vendored dependency tree gets deep.
-    std::unordered_map<std::uint32_t, Vec2>  outward;
-    std::unordered_map<std::uint32_t, float> halo;
+    std::unordered_map<std::uint32_t, Vec2>        outward;
+    std::unordered_map<std::uint32_t, float>       halo;
+    std::unordered_map<std::uint32_t, std::size_t> mass;   // files anywhere beneath
+    std::unordered_map<std::uint32_t, float>       span;   // radius of the whole subtree
 
     struct Frame { entt::entity node; std::size_t next; std::vector<Sub> done; };
     std::vector<Frame>                            stack;
@@ -383,12 +395,14 @@ void LayoutSystem::radial_tree(ecs::World& world) {
             Sub out;
             if (is_file(f.node)) {
                 out.radius = params_.file_radius;
+                out.mass   = 1;
                 out.nodes.push_back({f.node, Vec2{0.0f, 0.0f}});
             } else {
                 std::size_t files = 0;
                 for (auto c : ch) {
                     if (is_file(c)) ++files;
                 }
+                out.mass += files;
                 const float draw = draw_radius(files);
                 out.nodes.push_back({f.node, Vec2{0.0f, 0.0f}});
 
@@ -438,69 +452,132 @@ void LayoutSystem::radial_tree(ecs::World& world) {
                 halo[to_raw(f.node)] = hull;
                 out.radius           = hull;
 
-                // Child subtrees, largest first, packed into shells that fill outward.
-                // One shell would put every sibling at the same radius; at 240 siblings
-                // that degenerates into a ring with a void in the middle.
+                // Child subtrees, largest first, each brought in as close as it can
+                // sit without touching the parent's own files or a sibling already
+                // placed.
+                //
+                // They used to share one ring whose radius was set by the largest of
+                // them, so a directory holding a single file was flung as far out as
+                // one holding sixty and the annulus between them went to waste. Seating
+                // each on its own terms is what lets a small subtree tuck into the gap
+                // between two big ones, which is most of why Gource looks dense.
                 std::vector<Sub>& subs = f.done;
-                std::sort(subs.begin(), subs.end(),
-                          [](const Sub& a, const Sub& b) { return a.radius > b.radius; });
+                std::sort(subs.begin(), subs.end(), [](const Sub& a, const Sub& b) {
+                    if (a.radius != b.radius) return a.radius > b.radius;
+                    // Deterministic: equal-sized subtrees must not swap between runs.
+                    return a.nodes.front().first < b.nodes.front().first;
+                });
 
-                // Where the first ring sits decides whether this looks like a flower
-                // or like a comet. Starting as tight as possible seats a few children
-                // and flings the rest into a distant second shell; starting wide
-                // enough to seat everything degenerates into an annulus once there are
-                // hundreds. So: seat them all on one ring when that ring is a sane size
-                // relative to the children, and spill into shells only when it is not.
-                float need_all = 0.0f, largest = 0.0f;
-                for (const auto& sub : subs) {
-                    need_all += 2.0f * sub.radius + params_.dir_gap;
-                    largest = std::max(largest, sub.radius);
-                }
-                const float one_ring = need_all * 1.02f / 6.2831853f;
-                const float widest   = params_.shell_spread * std::max(largest, 1.0f);
+                // Discs already placed in this parent's frame, the first being the
+                // parent's own dot and its file orbits.
+                struct Placed { Vec2 at; float radius; };
+                std::vector<Placed> placed;
+                placed.reserve(subs.size() + 1);
+                placed.push_back({Vec2{0.0f, 0.0f}, hull});
 
-                float       r = std::max(hull + params_.dir_gap + largest,
-                                         std::min(one_ring, widest));
-                std::size_t i     = 0;
-                const float base  = phase_of(f.node) * 0.5f;
-                int         shell = 0;
-                while (i < subs.size()) {
-                    r = std::max(r, hull + params_.dir_gap + subs[i].radius);
-
-                    const float arc  = r * 6.2831853f;
-                    float       used = 0.0f, tallest = 0.0f;
-                    std::size_t j    = i;
-                    while (j < subs.size()) {
-                        const float need = 2.0f * subs[j].radius + params_.dir_gap;
-                        if (j > i && used + need > arc) break;   // always seat at least one
-                        used += need;
-                        tallest = std::max(tallest, subs[j].radius);
-                        ++j;
-                    }
-
-                    // Each shell is rotated off the last, so successive rings do not
-                    // line up into spokes radiating from the parent.
-                    float a = base + 0.5f * static_cast<float>(shell++);
-                    for (std::size_t k = i; k < j; ++k) {
-                        const float need  = 2.0f * subs[k].radius + params_.dir_gap;
-                        const float share = 6.2831853f * need / std::max(1.0f, used);
-                        const float mid   = a + share * 0.5f;
-                        a += share;
-
-                        const Vec2 at{std::cos(mid) * r, std::sin(mid) * r};
-                        for (const auto& [e, off] : subs[k].nodes) {
-                            out.nodes.push_back({e, at + off});
+                const float spin = phase_of(f.node);
+                for (const Sub& sub : subs) {
+                    // Start at the closest this subtree could possibly sit and walk
+                    // outward until some angle is free.
+                    Vec2 at{0.0f, 0.0f};
+                    for (float d = hull + params_.dir_gap + sub.radius;; 
+                         d += std::max(1.0f, sub.radius * 0.25f)) {
+                        // Enough angles that the coarsest step is half this subtree
+                        // wide, so a real gap is never stepped over.
+                        const int steps = std::clamp(
+                            static_cast<int>(6.2831853f * d / std::max(1.0f, sub.radius * 0.5f)),
+                            24, 720);
+                        bool seated = false;
+                        for (int k = 0; k < steps && !seated; ++k) {
+                            const float a = spin + 6.2831853f * static_cast<float>(k) /
+                                                       static_cast<float>(steps);
+                            const Vec2  p{std::cos(a) * d, std::sin(a) * d};
+                            bool        ok = true;
+                            for (const Placed& q : placed) {
+                                const float need = sub.radius + q.radius + params_.dir_gap;
+                                const Vec2  sep  = p - q.at;
+                                if (sep.x * sep.x + sep.y * sep.y < need * need) {
+                                    ok = false;
+                                    break;
+                                }
+                            }
+                            if (ok) { at = p; seated = true; }
                         }
-                        // Only the subtree root moves relative to this parent; the rest
-                        // already have an outward direction from their own.
-                        outward[to_raw(subs[k].nodes.front().first)] =
-                            Vec2{std::cos(mid), std::sin(mid)};
-                        out.radius = std::max(out.radius, r + subs[k].radius);
+                        if (seated) break;
                     }
-                    r += 2.0f * tallest + params_.dir_gap;
-                    i = j;
+
+                    placed.push_back({at, sub.radius});
+
+                    // Turn the subtree so its bulk faces away from this parent. Its
+                    // root then sits on the near side of its own disc with everything
+                    // it holds blooming outward, which is both what makes the tree read
+                    // outward from the repository and what keeps a parent nearer the
+                    // centre than its children.
+                    const float reach = length(at);
+                    const Vec2  u     = reach > 1e-4f ? at * (1.0f / reach) : Vec2{0.0f, 1.0f};
+                    const float lean = length(sub.facing);
+                    float       ca = 1.0f, sa = 0.0f;
+                    if (lean > 1e-4f) {
+                        const Vec2 v = sub.facing * (1.0f / lean);
+                        ca = v.x * u.x + v.y * u.y;
+                        sa = v.x * u.y - v.y * u.x;
+                    }
+                    auto rot = [ca, sa](Vec2 q) {
+                        return Vec2{q.x * ca - q.y * sa, q.x * sa + q.y * ca};
+                    };
+
+                    // Rotating about the disc centre leaves the disc where it was, so
+                    // nothing that was just checked for collisions moves.
+                    const Vec2 root_at = at - rot(sub.centre);
+                    for (const auto& [e, off] : sub.nodes) {
+                        out.nodes.push_back({e, root_at + rot(off)});
+                        auto o = outward.find(to_raw(e));
+                        if (o != outward.end()) o->second = rot(o->second);
+                    }
+                    // Only the subtree root moves relative to this parent; everything
+                    // below it already has an outward direction from its own.
+                    outward[to_raw(sub.nodes.front().first)] = u;
+                    out.mass += sub.mass;
+                }
+
+                // The enclosing disc of what was placed, found where it actually is.
+                // Assuming it was centred on the parent is what cost a factor of two
+                // per level: a parent holding one child of radius R came out at 2R, and
+                // six levels of pass-through directories at 64R.
+                //
+                // Badoiu-Clarkson: step the centre toward the farthest point of the
+                // farthest disc by 1/i. It converges fast, needs no special cases, and
+                // is deterministic -- which an exact minimal enclosing circle is not
+                // worth being for a handful of discs.
+                Vec2 c{0.0f, 0.0f};
+                for (const Placed& q : placed) c = c + q.at;
+                c = c * (1.0f / static_cast<float>(placed.size()));
+                for (int i = 1; i <= 64; ++i) {
+                    const Placed* worst = nullptr;
+                    float         reach = -1.0f;
+                    for (const Placed& q : placed) {
+                        const float far = length(q.at - c) + q.radius;
+                        if (far > reach) { reach = far; worst = &q; }
+                    }
+                    const Vec2  away = worst->at - c;
+                    const float len  = length(away);
+                    const Vec2  u    = len > 1e-4f ? away * (1.0f / len) : Vec2{1.0f, 0.0f};
+                    c = c + (worst->at + u * worst->radius - c) * (1.0f / static_cast<float>(i + 1));
+                }
+                out.centre = c;
+                out.radius = 0.0f;
+                for (const Placed& q : placed) {
+                    out.radius = std::max(out.radius, length(q.at - c) + q.radius);
                 }
             }
+
+            for (const auto& [e, off] : out.nodes) out.facing = out.facing + off;
+            if (!out.nodes.empty()) {
+                out.facing = out.facing * (1.0f / static_cast<float>(out.nodes.size()));
+            }
+
+            mass[to_raw(f.node)] = out.mass;
+            span[to_raw(f.node)] = out.radius;
 
             stack.pop_back();
             if (stack.empty()) built[to_raw(f.node)] = std::move(out);
@@ -529,8 +606,26 @@ void LayoutSystem::radial_tree(ecs::World& world) {
             const float radius = is_file(e) ? params_.file_radius : draw_radius(files);
             auto        dir    = outward.find(to_raw(e));
             auto        h      = halo.find(to_raw(e));
+
+            // Mass goes into the glow, not the disc. The disc has to stay clear of the
+            // files orbiting it, so growing it with the whole subtree would shove that
+            // subtree outward -- which is the trade Gource sidesteps by drawing a
+            // directory as a bloom and no disc at all. Same rule as theirs for the
+            // size: the square root of the file count, so area tracks mass. Never
+            // larger than the subtree it stands for, or a package would glow over
+            // things it does not hold.
+            float glow = 0.0f;
+            if (!is_file(e)) {
+                const auto  m = mass.find(to_raw(e));
+                const auto  w = span.find(to_raw(e));
+                const float want =
+                    params_.glow_scale * params_.file_radius *
+                    std::sqrt(static_cast<float>(m == mass.end() ? 0u : m->second));
+                glow = std::min(want, w == span.end() ? want : w->second);
+            }
+
             reg.emplace_or_replace<ecs::Disc>(
-                e, ecs::Disc{radius, h == halo.end() ? radius : h->second,
+                e, ecs::Disc{radius, h == halo.end() ? radius : h->second, glow,
                              dir == outward.end() ? Vec2{0.0f, 1.0f} : dir->second});
         }
     };

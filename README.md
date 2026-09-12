@@ -278,21 +278,42 @@ A directory's **drawn size** and the **orbit its files sit on** are separate. Co
 them puts every file dot exactly on its directory's edge, half-occluding it, and makes
 the size ratio between a file and a directory the ratio of a dot to a whole orbit.
 
-Children — files and subtrees alike — are packed onto **successive orbits** rather than
-one ring, which is what Gource does and for the same reason. A single orbit seating 57
-icons needs a radius of 160 around a disc of radius 16: a vast empty annulus with most
-of the screen wasted. Filling orbits outward keeps a wide directory compact.
+Files are packed onto **successive orbits** rather than one ring, which is what Gource
+does and for the same reason. A single orbit seating 57 icons needs a radius of 160
+around a disc of radius 16: a vast empty annulus with most of the screen wasted.
+Filling orbits outward keeps a wide directory compact.
 
 Gource pushes nodes apart with a force simulation. This does it by construction: every
 subtree is laid out in its own frame first, so its enclosing radius is exact rather than
 estimated, and a parent packs those subtrees as rigid discs. Nothing overlaps, nothing
 settles, and the same repository always draws identically.
 
-Where a parent's children sit decides whether it reads as a flower or a comet. They go
-on one ring when that ring is a sane size relative to the children, and spill into
-further shells when it is not. Starting as tight as possible seats a few and flings the
-rest into a distant second shell; starting wide enough to seat all of them degenerates
-into an annulus with a void in the middle once there are hundreds.
+**Each child comes in as close as it can sit.** They used to share one ring whose radius
+was set by the largest of them, so a directory holding a single file was flung as far
+out as one holding sixty, and the annulus between them went to waste. Seating each on
+its own terms is what lets a small subtree tuck into the gap between two big ones.
+
+**A subtree's enclosing disc is measured where it actually is, not assumed to be centred
+on the subtree's root.** This is the whole ball game for a deep tree. A parent holding
+one child of radius `R` is `R` plus a constant, not `2R`: assuming the parent sat at the
+centre made every level of nesting double, so six levels of `var/state/platform/…` cost
+`2⁶`. A 723-file repository came out twenty thousand units across with three thousandths
+of a percent of it covered in anything. It is now about a thousand, and the on-screen ink
+roughly triples once the camera fits it.
+
+A subtree is then **turned so its bulk faces away from its parent**, which puts its root
+on the near side with everything it holds blooming outward — the reason the tree reads
+outward from the repository, and the reason a parent is nearer the centre than its
+children.
+
+**Mass goes into the glow, not the disc.** A directory's disc has to stay clear of the
+files orbiting it, so growing it with everything underneath would shove that subtree
+outward; Gource sidesteps the trade by drawing a directory as a bloom and no disc at
+all. We keep the disc — it is what you click — and add the bloom behind it, sized by
+Gource's rule: the square root of the file count beneath, so area tracks mass. It is
+never larger than the subtree it stands for, and its alpha comes down as it grows,
+because Gource can hold intensity constant by blending additively into black and we are
+compositing.
 
 Impact colouring still wins over the extension palette. The repository looks like
 Gource; the blast radius lights up on top of it.

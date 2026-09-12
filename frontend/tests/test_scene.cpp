@@ -896,6 +896,132 @@ TEST(no_two_discs_overlap) {
     CHECK_EQ(overlaps, 0);
 }
 
+// A chain of pass-through directories costs a constant per level, not a doubling.
+//
+// It used to double. A child was seated on a ring of its own radius, so a parent came
+// out at its own hull plus clearance plus TWICE the child -- and the bounding disc was
+// assumed to be centred on the parent, which is what forced that. Six levels of
+// `var/state/platform/...` cost 2^6, which is how a 723-file repository ended up
+// twenty thousand units across with a tenth of a percent of it covered in anything.
+// The fix is to measure the enclosing disc where it actually is instead of assuming
+// the parent sits at its centre.
+TEST(a_deep_chain_of_directories_grows_by_a_constant_per_level) {
+    auto extent = [](int depth) {
+        Snapshot s;
+        s.generation                  = 100;
+        s.session.baseline_generation = 100;
+        s.nodes = {mk_node("repo", NodeKind::Repository)};
+        std::string parent = "repo", path;
+        for (int i = 0; i < depth; ++i) {
+            path += "/d" + std::to_string(i);
+            s.nodes.push_back(mk_node("dir:" + path, NodeKind::Directory, parent));
+            parent = "dir:" + path;
+        }
+        for (int i = 0; i < 4; ++i) {
+            s.nodes.push_back(mk_node("file:" + path + "/f" + std::to_string(i) + ".ts",
+                                      NodeKind::File, parent));
+        }
+        rgvtest::Harness h;
+        h.store().reset(s);
+        h.view().mode  = ecs::ViewMode::Filesystem;
+        h.view().level = Level::File;
+        h.request_rebuild();
+        h.settle();
+
+        float far = 0.0f;
+        for (auto [e, t, d] :
+             h.registry().view<const ecs::LayoutTarget, const ecs::Disc>().each()) {
+            far = std::max(far, length(t.p) + d.radius);
+        }
+        return far;
+    };
+
+    const float shallow = extent(3);
+    const float deep    = extent(9);
+
+    // Six more levels, each holding nothing but the next one.
+    CHECK(deep - shallow < 6.0f * 60.0f);
+    // And not merely because both are already enormous.
+    CHECK(deep < 500.0f);
+}
+
+// A small directory sits close to its parent however large its siblings are.
+//
+// Every child used to be seated on one ring whose radius was set by the LARGEST of
+// them, so a directory holding a single file was thrown as far out as one holding
+// sixty, and the space in between went to waste. Each child now comes in as far as it
+// can without touching what is already placed.
+TEST(a_small_directory_sits_closer_than_a_large_sibling) {
+    Snapshot s;
+    s.generation                  = 100;
+    s.session.baseline_generation = 100;
+    s.nodes = {mk_node("repo", NodeKind::Repository),
+               mk_node("dir:big", NodeKind::Directory, "repo"),
+               mk_node("dir:small", NodeKind::Directory, "repo"),
+               mk_node("file:small/one.ts", NodeKind::File, "dir:small")};
+    for (int i = 0; i < 60; ++i) {
+        s.nodes.push_back(mk_node("file:big/f" + std::to_string(i) + ".ts", NodeKind::File,
+                                  "dir:big"));
+    }
+
+    rgvtest::Harness h;
+    h.store().reset(s);
+    h.view().mode  = ecs::ViewMode::Filesystem;
+    h.view().level = Level::File;
+    h.request_rebuild();
+    h.settle();
+
+    const Vec2 repo  = h.registry().get<ecs::LayoutTarget>(h.node("repo")).p;
+    const Vec2 big   = h.registry().get<ecs::LayoutTarget>(h.node("dir:big")).p;
+    const Vec2 small = h.registry().get<ecs::LayoutTarget>(h.node("dir:small")).p;
+
+    CHECK(length(small - repo) < length(big - repo) * 0.6f);
+}
+
+// Mass is carried by the glow, not by the disc.
+//
+// A directory's disc has to stay clear of its own files, so it cannot grow with what
+// its subtree holds without shoving that subtree outwards -- which is why it is sized
+// by the files it holds directly and saturates. Gource's answer is to size a directory
+// by the mass beneath it and then draw only a bloom. We keep the disc and add the
+// bloom, so a package with six hundred files under it reads as big without any of it
+// touching the packing.
+TEST(a_directorys_glow_grows_with_everything_beneath_it) {
+    Snapshot s;
+    s.generation                  = 100;
+    s.session.baseline_generation = 100;
+    s.nodes = {mk_node("repo", NodeKind::Repository),
+               mk_node("dir:heavy", NodeKind::Directory, "repo"),
+               mk_node("file:heavy/one.ts", NodeKind::File, "dir:heavy"),
+               mk_node("dir:heavy/inner", NodeKind::Directory, "dir:heavy"),
+               mk_node("dir:light", NodeKind::Directory, "repo"),
+               mk_node("file:light/one.ts", NodeKind::File, "dir:light")};
+    // Both hold exactly one file directly, so their discs are identical and only the
+    // mass further down can be telling them apart.
+    for (int i = 0; i < 80; ++i) {
+        s.nodes.push_back(mk_node("file:heavy/inner/f" + std::to_string(i) + ".ts",
+                                  NodeKind::File, "dir:heavy/inner"));
+    }
+
+    rgvtest::Harness h;
+    h.store().reset(s);
+    h.view().mode  = ecs::ViewMode::Filesystem;
+    h.view().level = Level::File;
+    h.request_rebuild();
+    h.settle();
+
+    const auto& heavy = h.registry().get<ecs::Disc>(h.node("dir:heavy"));
+    const auto& light = h.registry().get<ecs::Disc>(h.node("dir:light"));
+    const auto& file  = h.registry().get<ecs::Disc>(h.node("file:light/one.ts"));
+
+    // The discs are the same size -- neither holds a file directly.
+    CHECK(std::abs(heavy.radius - light.radius) < 0.01f);
+    // The glows are not.
+    CHECK(heavy.glow > light.glow * 4.0f);
+    // A file has no glow at all; a glow means "this holds things".
+    CHECK_EQ(file.glow, 0.0f);
+}
+
 // Node sizes step by the golden ratio: file, directory, largest directory are r, r*phi,
 // r*phi^2. Three sizes on one geometric scale read as a family.
 TEST(node_sizes_step_by_the_golden_ratio) {

@@ -67,14 +67,20 @@ that is genuinely superlinear in the graph, is gated on its inputs changing.
 ### Layout and rendering
 
 Layout has two strategies, and both are radial. The filesystem view is a Gource-inspired
-tree over containment: discs sized by what they hold, files on their orbits, children
-packed into shells inside their parent's wedge. The architecture view is the same
-algorithm over a different hierarchy -- the import graph, spanned breadth first from the
-modules that import nothing, so the foundation is at the centre and a disc's size is how
-much is built on it. `LayoutSystem::tree_parents` is where the hierarchy is chosen, and
-it is the only difference between the two. The file graph is concentric instead. The filesystem view is a Gource-inspired
-tree: discs sized by file count, files on the rim, children packed into shells inside
-their parent's wedge. The dependency views are concentric: the ring is **reach** — how
+tree over containment: discs sized by what they hold, files on their orbits, each child
+subtree seated as close in as it can sit without touching a sibling. The architecture
+view is the same algorithm over a different hierarchy -- the import graph, spanned
+breadth first from the modules that import nothing, so the foundation is at the centre
+and a disc's size is how much is built on it. `LayoutSystem::tree_parents` is where the
+hierarchy is chosen, and it is the only difference between the two.
+
+A subtree's enclosing disc is measured where it actually lies rather than assumed to be
+centred on the subtree's root, and the subtree is turned so its bulk faces away from its
+parent. Both matter more than they sound: assuming the root sat at the centre of its own
+disc made a parent twice its only child, so nesting compounded as `2^depth` and a deep
+repository came out orders of magnitude larger than its contents.
+
+The file graph is concentric instead. The dependency views are concentric: the ring is **reach** — how
 much of the repository transitively depends on a node — so the core sits in the middle
 and consumers end up on the rim, and angle is ordered by circular barycentre so
 dependency lines run roughly radially instead of chording across the middle.

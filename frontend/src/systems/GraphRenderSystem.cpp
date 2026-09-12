@@ -247,11 +247,17 @@ void GraphRenderSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
         // than a glow.
         // Gone entirely by the time the node is a box, not merely faint: a halo behind
         // a rectangle reads as a second, misaligned rectangle rather than a glow.
-        if (d && ref.kind != NodeKind::File && shape_t < 0.5f) {
-            Vec4 bloom = style.stroke;
-            bloom.a    = 0.13f * (1.0f - shape_t * 2.0f);
-            renderer_.add_node(pos.p, half * 1.55f, bloom, Vec4{0, 0, 0, 0}, 0.0f, 0.0f,
-                               radius * 1.55f);
+        if (d && d->glow > 0.0f && shape_t < 0.5f) {
+            // Sized by everything beneath the node, not by the node -- see Disc::glow.
+            // Alpha comes down as the glow grows so a package holding six hundred files
+            // does not wash the graph out: Gource can hold its intensity constant
+            // because it blends additively into black, and we are compositing.
+            const Vec2 reach = view::disc_half(camera.zoom, d->glow, 6.0f);
+            Vec4       bloom = style.stroke;
+            bloom.a          = 0.16f * (1.0f - shape_t * 2.0f) *
+                      std::clamp(40.0f / std::max(d->glow, 40.0f), 0.3f, 1.0f);
+            renderer_.add_node(pos.p, reach, bloom, Vec4{0, 0, 0, 0}, 0.0f, 0.0f,
+                               std::min(reach.x, reach.y));
         }
 
         renderer_.add_node(pos.p, half, fill, style.stroke, style.stroke_w, style.dash, radius);

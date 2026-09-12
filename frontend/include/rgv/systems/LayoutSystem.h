@@ -59,12 +59,20 @@ struct LayoutParams {
 
     // Spacing is set relative to those sizes: shrinking the discs without shrinking the
     // gaps leaves the graph spatially large and every node a few pixels once fitted.
-    float file_gap        = 6.0f;    // arc gap between files sharing an orbit
-    float orbit_gap       = 5.0f;    // clearance between a directory and its file ring
-    float dir_gap         = 12.0f;   // clearance between a subtree and its neighbours
-    // How wide the first ring of children may get, as a multiple of the largest child.
-    // Past this, children spill into further shells rather than one enormous ring.
-    float shell_spread    = 5.0f;
+    // Gource packs file dots edge to edge -- 8 units apart at a radius of 4 -- and a
+    // directory there is a glow with nothing drawn at its centre, so its files start
+    // at the middle and step outward from there. We do draw the disc, so the orbits
+    // have to clear it; what we can do is stop padding on top of that. These were
+    // 6, 5 and 12, which put four files on a ring of radius 29 around a disc of 12 and
+    // left a leaf directory holding one sixth of its own area.
+    float file_gap        = 2.0f;    // arc gap between files sharing an orbit
+    float orbit_gap       = 2.0f;    // clearance between a directory and its file ring
+    float dir_gap         = 6.0f;    // clearance between a subtree and its neighbours
+
+    // A directory's glow, as a multiple of a file dot times the square root of the
+    // files beneath it. Gource's `sqrt(dir_area) * 1.5`, with the area written out:
+    // sqrt(pi) * 1.5 = 2.66.
+    float glow_scale      = 2.66f;
 
     // Live relaxation, which runs only while a node is being dragged.
     //
