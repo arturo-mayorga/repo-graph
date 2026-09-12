@@ -594,6 +594,30 @@ void draw_node_inspector(Ui& ui, const Node& n) {
         chip(n.language.c_str(), Vec4{0.45f, 0.50f, 0.60f, 1.0f});
     }
 
+    // Opening and pinning. The gesture for opening is a double click, the way it is
+    // everywhere else; these are the discoverable version of it, and the only way to
+    // pin a file now that its double click belongs to the desktop.
+    {
+        const entt::entity ent = ui.world.resource<ecs::EntityIndex>().node(n.id);
+        const bool         can_open =
+            !n.path.empty() && (n.kind == NodeKind::File || n.kind == NodeKind::Directory ||
+                                n.kind == NodeKind::Package);
+        ImGui::Spacing();
+        if (can_open) {
+            if (ImGui::Button("Open")) ui.cmd.push(ecs::OpenNode{n.id});
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Hand it to whatever this desktop opens files with.");
+            }
+            ImGui::SameLine();
+        }
+        if (ent != entt::null) {
+            const bool pinned = ui.world.registry.all_of<ecs::Pinned>(ent);
+            if (ImGui::Button(pinned ? "Unpin" : "Pin in place")) {
+                ui.cmd.push(ecs::TogglePin{n.id});
+            }
+        }
+    }
+
     // How much information "something depends on this" carries.
     {
         const auto& idx  = ui.derived.specificity;
@@ -902,7 +926,7 @@ void draw_inspector(ecs::World& world) {
         ImGui::BulletText("drag           pan");
         ImGui::BulletText("wheel          zoom");
         ImGui::BulletText("drag a node    move it; it settles back");
-        ImGui::BulletText("double click   pin / unpin in place");
+        ImGui::BulletText("double click   open a file; pin anything else");
         ImGui::BulletText("F              fit to view");
         ImGui::BulletText("space          play / pause the scenario");
         ImGui::BulletText(".              step one event");

@@ -206,7 +206,8 @@ input always wins over `--hover`, so pointing at something else just works.
 | hover a node | lights every edge it has: what it reads, writes, and imports |
 | hover a node | fades in a card: what it is, what changed, why it is impacted |
 | drag a node | move it; it settles back into place on release |
-| double click | pin / unpin in place |
+| double click a file | open it with whatever this desktop opens files with |
+| double click anything else | pin / unpin in place |
 | `F` | fit to view |
 | `space` / `.` / `R` | play-pause / step one event / restart |
 | `Esc` | clear selection |
@@ -317,7 +318,21 @@ a dropped node travels on to a position its neighbours agree with rather than fr
 wherever the cursor left it. A drag that pinned turned every node the user had ever
 touched into a fixed point; after a few of those the relaxation had nothing left to move
 and the graph became a static picture that stopped reacting to itself. Pinning is still
-available, explicitly, on double click.
+available, explicitly, on double click -- or from the inspector, which is where a file
+pins now that its double click belongs to the desktop.
+
+**Double-clicking a file opens it** with whatever this desktop already opens that kind
+of file with: `xdg-open` on Linux, `open` on macOS. Not a viewer of our own. The user
+has already chosen their editor, the desktop already knows the association, and a
+built-in viewer would be a worse editor than the one they have plus another thing to
+keep current with the graph.
+
+The path it will hand over is bounded: it has to exist and to resolve, symlinks and
+all, to somewhere inside the repository being watched. A path arrives over the wire from
+a provider, which is a separate process speaking a wire format, so it is input rather
+than something this program wrote -- and handing a path to a desktop launcher is handing
+it a program to run. There is no shell anywhere in the path either, so a space or a
+quote in a filename is part of the name and nothing more.
 
 The layered views have no containment to relax, so a drag there stays rigid and the row
 structure is not shaken apart.

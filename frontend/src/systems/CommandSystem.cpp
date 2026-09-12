@@ -1,9 +1,11 @@
 #include "rgv/systems/CommandSystem.h"
 
 #include "rgv/ecs/Commands.h"
+#include "rgv/ecs/Components.h"
 #include "rgv/ecs/Resources.h"
 #include "rgv/fixture/FixtureSource.h"
 #include "rgv/model/GraphStore.h"
+#include "rgv/platform/OpenPath.h"
 #include "rgv/view/CameraFit.h"
 
 #include <cstdio>
@@ -65,6 +67,34 @@ void CommandSystem::run(ecs::World& world, const ecs::FrameContext&) {
                         view.level = ecs::default_level(mode);
                         requests.rebuild = true;
                         requests.refit   = true;
+                    }
+
+                } else if constexpr (std::is_same_v<T, ecs::OpenNode>) {
+                    // The desktop owns the choice of program. We only decide whether
+                    // the path is one we are willing to hand it.
+                    const auto& store = world.resource<GraphStore>();
+                    if (const Node* n = store.node(c.id)) {
+                        const std::string abs =
+                            platform::openable_path(store.baseline().repo.root, n->path);
+                        std::string err;
+                        if (abs.empty()) {
+                            std::fprintf(stderr,
+                                         "rgv: not opening '%s': no such file inside %s\n",
+                                         n->path.c_str(), store.baseline().repo.root.c_str());
+                        } else if (!platform::open_in_default_app(abs, &err)) {
+                            std::fprintf(stderr, "rgv: could not open '%s': %s\n", abs.c_str(),
+                                         err.c_str());
+                        }
+                    }
+
+                } else if constexpr (std::is_same_v<T, ecs::TogglePin>) {
+                    const entt::entity e = world.resource<ecs::EntityIndex>().node(c.id);
+                    if (e != entt::null) {
+                        if (world.registry.all_of<ecs::Pinned>(e)) {
+                            world.registry.remove<ecs::Pinned>(e);
+                        } else {
+                            world.registry.emplace<ecs::Pinned>(e);
+                        }
                     }
 
                 } else if constexpr (std::is_same_v<T, ecs::SetImpactLevel>) {

@@ -79,8 +79,12 @@ void NavigationSystem::run(ecs::World& world, const ecs::FrameContext&) {
     }
 
     if (target.over_graph && input.double_click && target.entity != entt::null) {
-        if (registry.all_of<ecs::Pinned>(target.entity)) registry.remove<ecs::Pinned>(target.entity);
-        else registry.emplace<ecs::Pinned>(target.entity);
+        // A file goes to the desktop, the way double-clicking a file does everywhere
+        // else. Anything else has no such program, so the gesture still pins it.
+        if (const auto* ref = registry.try_get<ecs::NodeRef>(target.entity)) {
+            if (ref->kind == NodeKind::File) queue.push(ecs::OpenNode{ref->id});
+            else queue.push(ecs::TogglePin{ref->id});
+        }
     }
 
     if (input.fit_pressed) queue.push(ecs::FitView{});

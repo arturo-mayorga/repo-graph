@@ -25,6 +25,10 @@ struct FocusNodes      { std::vector<NodeId> ids; };
 struct SetViewMode     { int mode = 0; };    // ecs::ViewMode
 struct SetImpactLevel  { int level = 0; };   // rgv::Level
 
+// Hand a file to whatever the desktop opens files with, and hold a node where it is.
+struct OpenNode        { NodeId id; };
+struct TogglePin       { NodeId id; };
+
 struct ReloadFixture   {};
 struct SelectFixture   { int index = 0; };
 struct SelectScenario  { int index = 0; };
@@ -32,8 +36,8 @@ struct SelectScenario  { int index = 0; };
 struct SaveSettings    {};
 
 using Command = std::variant<SelectNode, SelectEdge, ClearSelection, CyclePath, FitView,
-                             FocusNodes, SetViewMode, SetImpactLevel, ReloadFixture,
-                             SelectFixture, SelectScenario, SaveSettings>;
+                             FocusNodes, SetViewMode, SetImpactLevel, OpenNode, TogglePin,
+                             ReloadFixture, SelectFixture, SelectScenario, SaveSettings>;
 
 // Drained once per frame, in the order they were pushed.
 struct CommandQueue {

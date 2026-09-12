@@ -1866,3 +1866,55 @@ TEST(a_forced_hover_holds_until_the_pointer_actually_moves) {
     CHECK_EQ(h.selection().hovered, std::string("file:a/x.ts"));
 }
 
+// -- double click ---------------------------------------------------------------
+//
+// The desktop already knows what opens a `.py`, so a file is handed to it rather than
+// to a viewer of our own. Everything else keeps the gesture it had.
+
+namespace {
+
+void double_click(rgvtest::Harness& h, entt::entity target) {
+    const Vec2 at = h.registry().get<ecs::Position>(target).p;
+    h.point_at(h.camera().world_to_screen(at));
+    h.input().double_click = true;
+    h.tick();
+    h.input().double_click = false;
+    h.tick();   // the command lands on the next frame
+}
+
+} // namespace
+
+TEST(double_clicking_a_file_opens_it_rather_than_pinning_it) {
+    auto h = make_filesystem();
+    view::fit_camera(h.world, {});
+    const entt::entity file = h.node("file:a/x.ts");
+    double_click(h, file);
+    CHECK(h.pointer().entity == file);
+    // Nothing is launched here: the fixture's repository root is not a real directory,
+    // so the path is refused before any launcher is asked for.
+    CHECK(!h.registry().all_of<ecs::Pinned>(file));
+}
+
+TEST(double_clicking_something_that_is_not_a_file_still_pins_it) {
+    auto h = make_filesystem();
+    view::fit_camera(h.world, {});
+    const entt::entity dir = h.node("dir:a");
+    double_click(h, dir);
+    CHECK(h.pointer().entity == dir);
+    CHECK(h.registry().all_of<ecs::Pinned>(dir));
+    double_click(h, dir);
+    CHECK(!h.registry().all_of<ecs::Pinned>(dir));
+}
+
+// Pinning is still reachable for a file, through the inspector rather than the gesture.
+TEST(a_file_can_still_be_pinned_by_command) {
+    auto h = make_filesystem();
+    const entt::entity file = h.node("file:a/x.ts");
+    h.commands().push(ecs::TogglePin{"file:a/x.ts"});
+    h.tick();
+    CHECK(h.registry().all_of<ecs::Pinned>(file));
+    h.commands().push(ecs::TogglePin{"file:a/x.ts"});
+    h.tick();
+    CHECK(!h.registry().all_of<ecs::Pinned>(file));
+}
+

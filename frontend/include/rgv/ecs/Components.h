@@ -119,6 +119,8 @@ struct Disc {
 // Written by SceneSyncSystem on creation, cleared by LayoutSystem.
 struct Unplaced {};
 
+// Held where the user put it: layout proposes a place, this refuses it. Owner:
+// CommandSystem, so there is one place the pin can change and one order it happens in.
 struct Pinned {};
 
 // -- presentation -------------------------------------------------------------

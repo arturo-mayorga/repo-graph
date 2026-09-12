@@ -68,6 +68,7 @@ add_library(rgv_core STATIC
   src/view/SemanticZoom.cpp
   src/view/CameraFit.cpp
   src/view/HoverLinks.cpp
+  src/platform/OpenPath.cpp
   src/ui/Theme.cpp
 
   # systems that need neither a GPU nor a window, and are therefore testable headless
@@ -109,6 +110,7 @@ if(RGV_BUILD_TESTS)
     tests/test_specificity.cpp
     tests/test_schedule.cpp
     tests/test_packages.cpp
+    tests/test_open_path.cpp
     tests/test_python_imports.cpp
     tests/test_provider_impact.cpp
     # The manifest readers are the provider's, not the frontend's. Compiled into the
