@@ -20,8 +20,10 @@
 #include "rgv/systems/SpecificitySystem.h"
 #include "rgv/systems/CycleSystem.h"
 #include "rgv/systems/FocusSystem.h"
+#include "rgv/systems/HoverLinkSystem.h"
 #include "rgv/systems/ShapeSystem.h"
 #include "rgv/systems/StyleSystem.h"
+#include "rgv/systems/TransportSystem.h"
 
 #include <memory>
 
@@ -48,6 +50,7 @@ struct Harness {
         world.add_resource<DragState>();
         world.add_resource<DerivedState>();
         world.add_resource<CycleReport>();
+        world.add_resource<HoverLinkSet>();
         world.add_resource<EntityIndex>();
         world.add_resource<SceneStats>();
         world.add_resource<FrameTiming>();
@@ -66,6 +69,9 @@ struct Harness {
 
         schedule.add(Phase::Input, std::make_unique<systems::PickingSystem>())
             .add(Phase::Input, std::make_unique<systems::NavigationSystem>())
+            // Ahead of CommandSystem, and in Input, because it owns the timeline and
+            // takes the transport commands off the queue before Sync sees them.
+            .add(Phase::Input, std::make_unique<systems::TransportSystem>())
             .add(Phase::Sync, std::make_unique<systems::CommandSystem>())
             .add(Phase::Sync, std::make_unique<systems::SpecificitySystem>())
             .add(Phase::Sync, std::make_unique<systems::SceneSyncSystem>())
@@ -74,6 +80,7 @@ struct Harness {
             .add(Phase::Simulate, std::make_unique<systems::FocusSystem>())
             .add(Phase::Simulate, std::make_unique<systems::LayoutSystem>())
             .add(Phase::Simulate, std::make_unique<systems::ShapeSystem>())
+            .add(Phase::Simulate, std::make_unique<systems::HoverLinkSystem>())
             .add(Phase::Simulate, std::make_unique<systems::CycleSystem>())
             .add(Phase::Simulate, std::make_unique<systems::StyleSystem>())
             .add(Phase::Simulate, std::make_unique<systems::LabelSystem>());

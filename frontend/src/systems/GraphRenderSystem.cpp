@@ -144,14 +144,10 @@ void GraphRenderSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
     // drawn over instead of cutting across it. And they are produced here, from the
     // store, rather than as entities -- so the layout never learns they exist and
     // hovering moves nothing.
-    if (view.mode == ecs::ViewMode::Filesystem) {
-        const auto& index = world.resource<ecs::EntityIndex>();
-        const auto& store = world.resource<GraphStore>();
-
-        NodeId hovered;
-        for (auto [ent, ref] : registry.view<const ecs::NodeRef, const ecs::Hovered>().each()) {
-            hovered = ref.id;
-        }
+    {
+        const auto& index   = world.resource<ecs::EntityIndex>();
+        const auto& hovers  = world.resource<ecs::HoverLinkSet>();
+        const NodeId hovered = hovers.of;
         const entt::entity src = hovered.empty() ? entt::null : index.node(hovered);
         if (src != entt::null && registry.all_of<ecs::Position>(src)) {
             Vec2 hub{0.0f, 0.0f};
@@ -160,10 +156,7 @@ void GraphRenderSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
                 if (ref.kind == NodeKind::Repository) { hub = pos.p; break; }
             }
 
-            const auto links = view::hover_links(store, hovered, [&](const NodeId& id) {
-                return index.node(id) != entt::null;
-            });
-            for (const auto& link : links) {
+            for (const auto& link : hovers.links) {
                 const entt::entity far = index.node(link.other);
                 if (far == entt::null || !registry.all_of<ecs::Position>(far)) continue;
 

@@ -6,6 +6,7 @@
 #pragma once
 
 #include "rgv/analysis/Cycles.h"
+#include "rgv/view/HoverLinks.h"
 #include "rgv/analysis/Reach.h"
 #include "rgv/analysis/Specificity.h"
 #include "rgv/contract/IGraphSource.h"
@@ -192,6 +193,18 @@ struct DerivedState {
     analysis::SpecificityIndex      specificity;
     analysis::ReachIndex            reach;
     std::vector<analysis::HubAlert> hub_alerts;
+};
+
+// The dependency curves for whatever the pointer is on, walked once.
+//
+// Two systems need exactly this set and used to each walk the store for it: the labels,
+// so a far end gets named, and the renderer, so the curve gets drawn. Two walks can
+// disagree -- they read `Hovered` in different phases and applied their own
+// drawn-node predicates -- and a label naming a curve that is not drawn is the failure
+// that makes a reader distrust the whole view. Owner: HoverLinkSystem.
+struct HoverLinkSet {
+    NodeId                       of;      // the node the pointer is on; empty for none
+    std::vector<view::HoverLink> links;
 };
 
 // What the architecture view found wrong, rather than merely drew. Recomputed from

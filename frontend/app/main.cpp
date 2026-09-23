@@ -31,6 +31,7 @@
 #include "rgv/systems/SpecificitySystem.h"
 #include "rgv/systems/CycleSystem.h"
 #include "rgv/systems/FocusSystem.h"
+#include "rgv/systems/HoverLinkSystem.h"
 #include "rgv/systems/ShapeSystem.h"
 #include "rgv/systems/StyleSystem.h"
 #include "rgv/systems/TransportSystem.h"
@@ -65,6 +66,7 @@ void install_resources(ecs::World& world, const app::Options& options) {
     world.add_resource<ecs::DragState>();
     world.add_resource<ecs::DerivedState>();
     world.add_resource<ecs::CycleReport>();
+    world.add_resource<ecs::HoverLinkSet>();
     world.add_resource<ecs::EntityIndex>();
     world.add_resource<ecs::SceneStats>();
     world.add_resource<ecs::FrameTiming>();
@@ -164,6 +166,8 @@ void install_systems(ecs::Schedule& schedule, const app::Options& options) {
         .add(Phase::Simulate, std::make_unique<LayoutSystem>())
         // After layout, before anything that draws: turns the mode into a shape once.
         .add(Phase::Simulate, std::make_unique<ShapeSystem>())
+        // Before the labels name a curve's far end and the renderer draws it.
+        .add(Phase::Simulate, std::make_unique<HoverLinkSystem>())
         .add(Phase::Simulate, std::make_unique<CycleSystem>())
         .add(Phase::Simulate, std::make_unique<StyleSystem>())
         .add(Phase::Simulate, std::make_unique<LabelSystem>())

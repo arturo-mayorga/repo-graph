@@ -83,6 +83,7 @@ add_library(rgv_core STATIC
   src/systems/LayoutSystem.cpp
   src/systems/CycleSystem.cpp
   src/systems/FocusSystem.cpp
+  src/systems/HoverLinkSystem.cpp
   src/systems/ShapeSystem.cpp
   src/systems/StyleSystem.cpp
   src/systems/LabelSystem.cpp

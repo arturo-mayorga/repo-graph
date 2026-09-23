@@ -61,23 +61,11 @@ void LabelSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
     // ahead of whatever the graph's own shape would have chosen -- but not ahead of the
     // node that asked, or of the selection.
     //
-    // Recomputed here rather than shared with the renderer, which needs the same set to
-    // draw the curves. It is one pass over the store's edges; the alternative is a
-    // resource carrying it between two phases, which is more moving parts than the work
-    // it saves.
+    // The same set the renderer draws, walked once by HoverLinkSystem. Walking it
+    // again here would let a label name a curve the renderer did not draw.
     std::unordered_set<NodeId> linked;
-    if (view.mode == ecs::ViewMode::Filesystem) {
-        NodeId pointed;
-        for (auto [e, ref] : reg.view<const ecs::NodeRef, const ecs::Hovered>().each()) {
-            pointed = ref.id;
-        }
-        if (!pointed.empty()) {
-            for (const auto& link : view::hover_links(store, pointed, [&](const NodeId& id) {
-                     return index.node(id) != entt::null;
-                 })) {
-                linked.insert(link.other);
-            }
-        }
+    for (const auto& link : world.resource<ecs::HoverLinkSet>().links) {
+        linked.insert(link.other);
     }
 
     std::vector<entt::entity>   entities;

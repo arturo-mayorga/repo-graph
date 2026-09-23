@@ -11,6 +11,7 @@ Simulate/SelectionSystem
 Simulate/FocusSystem
 Simulate/LayoutSystem
 Simulate/ShapeSystem
+Simulate/HoverLinkSystem
 Simulate/CycleSystem
 Simulate/StyleSystem
 Simulate/LabelSystem
