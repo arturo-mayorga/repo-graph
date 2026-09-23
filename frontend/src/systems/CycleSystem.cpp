@@ -15,10 +15,18 @@ void CycleSystem::run(ecs::World& world, const ecs::FrameContext&) {
     const auto& index    = world.resource<ecs::EntityIndex>();
     auto&       report   = world.resource<ecs::CycleReport>();
 
-    // Cleared and rebuilt every frame rather than diffed. A cycle that has been
-    // untangled must stop being reported in the frame it goes, and the alternative --
-    // keeping marks until something says to drop them -- is how a view ends up
-    // accusing code that was fixed three saves ago.
+    // Entanglement is a property of which edges exist, and of nothing else that moves
+    // per frame. A full SCC plus three maps, sixty times a second, to reach the answer
+    // it already had. The marks must never be STALE -- an untangled cycle has to stop
+    // being reported in the frame it goes -- and the revision is exactly the signal for
+    // that, because untangling means an edge entity was dropped.
+    if (primed_ && index.revision == last_revision_) return;
+    primed_        = true;
+    last_revision_ = index.revision;
+
+    // Cleared and rebuilt whole rather than diffed. Diffing would mean deciding which
+    // marks to retire, and getting that wrong leaves the view accusing code that was
+    // fixed three saves ago.
     registry.clear<ecs::InCycle>();
     report.groups.clear();
     report.lines = 0;

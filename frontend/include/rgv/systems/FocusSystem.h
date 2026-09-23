@@ -10,7 +10,11 @@
 // the answer differs by altitude.
 #pragma once
 
+#include "rgv/contract/Types.h"
 #include "rgv/ecs/System.h"
+
+#include <cstdint>
+#include <string>
 
 namespace rgv::systems {
 
@@ -18,6 +22,11 @@ class FocusSystem final : public ecs::System {
 public:
     std::string_view name() const override { return "FocusSystem"; }
     void             run(ecs::World& world, const ecs::FrameContext& frame) override;
+
+private:
+    NodeId        last_selection_;
+    std::uint64_t last_revision_ = 0;
+    bool          primed_        = false;
 };
 
 } // namespace rgv::systems

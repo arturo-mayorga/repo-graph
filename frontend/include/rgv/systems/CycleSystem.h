@@ -10,12 +10,18 @@
 
 #include "rgv/ecs/System.h"
 
+#include <cstdint>
+
 namespace rgv::systems {
 
 class CycleSystem final : public ecs::System {
 public:
     std::string_view name() const override { return "CycleSystem"; }
     void             run(ecs::World& world, const ecs::FrameContext& frame) override;
+
+private:
+    std::uint64_t last_revision_ = 0;
+    bool          primed_        = false;
 };
 
 } // namespace rgv::systems

@@ -207,6 +207,13 @@ struct CycleReport {
 // id -> entity, maintained by SceneSyncSystem. A resource rather than a private map
 // because selection, picking, and the panels all need to resolve ids.
 struct EntityIndex {
+    // Bumped whenever an entity is added or dropped. Derived systems that walk the
+    // whole scene -- the focus distances, the cycle groups -- gate on this rather than
+    // rebuilding every frame: their answers depend on which entities exist and on
+    // nothing else that changes per frame, and `docs/architecture.md` promises Simulate
+    // is linear passes with no allocation after warm-up.
+    std::uint64_t revision = 0;
+
     std::unordered_map<NodeId, entt::entity> nodes;
     std::unordered_map<EdgeId, entt::entity> edges;
     // Edges that are not drawn because other drawn edges explain them: a package-level

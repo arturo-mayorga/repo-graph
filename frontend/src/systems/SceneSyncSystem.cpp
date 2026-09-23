@@ -433,6 +433,7 @@ void SceneSyncSystem::upsert_node(ecs::World& world, const Node& n) {
     if (ent == entt::null) {
         ent              = registry.create();
         index.nodes[n.id] = ent;
+        ++index.revision;
         registry.emplace<ecs::NodeRef>(ent, ecs::NodeRef{n.id, n.kind});
         registry.emplace<ecs::Style>(ent);
         // No Position: the node is Unplaced, and placing things is LayoutSystem's
@@ -467,6 +468,7 @@ void SceneSyncSystem::upsert_edge(ecs::World& world, const Edge& e) {
     if (ent == entt::null) {
         ent               = registry.create();
         index.edges[e.id] = ent;
+        ++index.revision;
         registry.emplace<ecs::EdgeRef>(ent, ecs::EdgeRef{e.id, e.kind});
         registry.emplace<ecs::Style>(ent);
     } else {
@@ -500,6 +502,7 @@ void SceneSyncSystem::drop_node(ecs::World& world, const NodeId& id) {
 
     registry.destroy(ent);
     index.nodes.erase(id);
+    ++index.revision;
 }
 
 void SceneSyncSystem::drop_edge(ecs::World& world, const EdgeId& id) {
@@ -508,6 +511,7 @@ void SceneSyncSystem::drop_edge(ecs::World& world, const EdgeId& id) {
     if (ent == entt::null) return;
     world.registry.destroy(ent);
     index.edges.erase(id);
+    ++index.revision;
 }
 
 // -- whole and incremental passes ---------------------------------------------
@@ -521,6 +525,7 @@ void SceneSyncSystem::rebuild(ecs::World& world) {
     registry.clear();
     index.nodes.clear();
     index.edges.clear();
+    ++index.revision;
     built_mode_ = view.mode;
     primed_     = true;
     world.resource<ecs::SceneRequests>().relayout = true;

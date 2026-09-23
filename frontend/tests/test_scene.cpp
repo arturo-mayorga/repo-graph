@@ -457,6 +457,39 @@ TEST(the_view_decides_the_shape_and_says_so_in_one_place) {
     }
 }
 
+// The derived walks are gated on the scene changing, so the gate has to OPEN when it
+// does. A cycle that appears after an edge arrives must be reported in that frame, and
+// one that is untangled must stop being reported -- a stale finding accuses code that
+// is already fixed, which is the same failure as rendering stale evidence.
+TEST(a_cycle_appearing_or_going_is_seen_despite_the_gate) {
+    auto        h      = make(nested());
+    const auto& report = h.world.resource<ecs::CycleReport>();
+    CHECK_EQ(report.groups.size(), 0u);
+
+    GraphUpdatedPayload add;
+    add.added_edges = {mk_edge("e:back", EdgeKind::Imports,
+                               "file:src/app/components/motion.py",
+                               "file:src/app/systems/movement.py")};
+    Event ev;
+    ev.type       = EventType::GraphUpdated;
+    ev.generation = 102;
+    ev.payload    = add;
+    h.store().on_event(ev);
+    h.settle();
+    CHECK_EQ(report.groups.size(), 1u);
+
+    GraphUpdatedPayload gone;
+    gone.removed_edges = {"e:back"};
+    Event ev2;
+    ev2.type       = EventType::GraphUpdated;
+    ev2.generation = 103;
+    ev2.payload    = gone;
+    h.store().on_event(ev2);
+    h.settle();
+    CHECK_EQ(report.groups.size(), 0u);
+    CHECK(!h.registry().all_of<ecs::InCycle>(h.node("file:src/app/systems/movement.py")));
+}
+
 // A finding has to look like one. Colour plus weight, and the weight is the channel
 // that survives evidence quality overruling the colour -- a stale relationship inside a
 // cycle must still read as stale (NFR-04) without the entanglement going quiet.

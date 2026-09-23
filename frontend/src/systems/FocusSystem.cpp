@@ -14,6 +14,14 @@ void FocusSystem::run(ecs::World& world, const ecs::FrameContext&) {
     const auto& index    = world.resource<ecs::EntityIndex>();
     const auto& selected = world.resource<ecs::Selection>().node;
 
+    // The walk depends on the selection and on which entities exist, and on nothing
+    // else. Redoing it every frame would allocate an adjacency map, a distance map and
+    // a queue sixty times a second to reach the same answer.
+    if (primed_ && selected == last_selection_ && index.revision == last_revision_) return;
+    primed_         = true;
+    last_selection_ = selected;
+    last_revision_  = index.revision;
+
     // Nothing focused: the component goes away entirely rather than being set to some
     // neutral value, so "is anything focused" is a question about presence and every
     // reader answers it the same way.
