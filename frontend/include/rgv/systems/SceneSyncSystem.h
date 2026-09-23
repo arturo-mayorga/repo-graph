@@ -42,7 +42,6 @@ private:
     void upsert_edge(ecs::World& world, const Edge& e);
     void drop_node(ecs::World& world, const NodeId& id);
     void drop_edge(ecs::World& world, const EdgeId& id);
-    void seed_position(ecs::World& world, entt::entity e, const Node& n);
 
     ecs::ViewMode built_mode_ = ecs::ViewMode::Architecture;
     // Architecture view: the store edges that are drawn, and the nodes each one is

@@ -676,11 +676,51 @@ void LayoutSystem::measure_spacing(ecs::World& world) {
     }
 }
 
+// A deterministic scatter, so two nodes arriving together do not land on each other
+// and the same graph always seeds the same way.
+static float hash_unit(const std::string& s, std::uint32_t salt) {
+    std::uint32_t h = 2166136261u ^ salt;
+    for (unsigned char c : s) { h ^= c; h *= 16777619u; }
+    return static_cast<float>(h % 10007u) / 10007.0f;
+}
+
+void LayoutSystem::seed_unplaced(ecs::World& world) {
+    auto& reg = world.registry;
+
+    // Neighbours through drawn relationships AND through containment: a file arriving
+    // in the filesystem view has no dependency edge to go beside, only a parent.
+    std::unordered_map<std::uint32_t, std::vector<entt::entity>> nbrs;
+    for (auto [e, ref, ends] : reg.view<const ecs::EdgeRef, const ecs::Endpoints>().each()) {
+        nbrs[to_raw(ends.from)].push_back(ends.to);
+        nbrs[to_raw(ends.to)].push_back(ends.from);
+    }
+
+    for (auto [e, ref] : reg.view<const ecs::NodeRef, const ecs::Unplaced>().each()) {
+        if (reg.all_of<ecs::Position>(e)) continue;
+
+        Vec2 sum{0.0f, 0.0f};
+        int  count = 0;
+        if (auto it = nbrs.find(to_raw(e)); it != nbrs.end()) {
+            for (auto nb : it->second) {
+                if (const auto* p = reg.try_get<ecs::Position>(nb)) { sum += p->p; ++count; }
+            }
+        }
+        const Vec2  base = count > 0 ? sum / static_cast<float>(count) : Vec2{0.0f, 0.0f};
+        const float jx   = (hash_unit(ref.id, 1) - 0.5f) * 140.0f;
+        const float jy   = (hash_unit(ref.id, 2) - 0.5f) * 90.0f;
+        reg.emplace<ecs::Position>(e, ecs::Position{base + Vec2{jx, jy}});
+    }
+}
+
 bool LayoutSystem::tree_mode(const ecs::World& world) {
     return world.resource<ecs::ViewSettings>().mode == ecs::ViewMode::Filesystem;
 }
 
 void LayoutSystem::reset(ecs::World& world) {
+    // Arrivals get a starting point before anything places them, so the ease has
+    // somewhere to come from.
+    seed_unplaced(world);
+
     // One view packs a containment tree; the dependency views are concentric.
     if (tree_mode(world)) {
         radial_tree(world);
@@ -969,6 +1009,7 @@ void LayoutSystem::relax(ecs::World& world, float dt) {
 //
 // Returns whether anything was seated, so the caller can start the relaxation.
 bool LayoutSystem::seat_newcomers(ecs::World& world) {
+    seed_unplaced(world);
     auto& reg = world.registry;
 
     std::vector<entt::entity> fresh;

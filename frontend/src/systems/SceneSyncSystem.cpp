@@ -423,33 +423,6 @@ bool SceneSyncSystem::edge_visible(const ecs::World& world, const Edge& e) const
 
 // -- entity lifecycle ---------------------------------------------------------
 
-void SceneSyncSystem::seed_position(ecs::World& world, entt::entity ent, const Node& n) {
-    auto&       registry = world.registry;
-    const auto& index    = world.resource<ecs::EntityIndex>();
-    const auto& store    = world.resource<GraphStore>();
-
-    // Place a new node near whatever it connects to that is already on screen, so a
-    // package appearing mid-session does not fly in from the origin.
-    Vec2 sum{0.0f, 0.0f};
-    int  count  = 0;
-    auto sample = [&](const NodeId& other) {
-        const entt::entity e = index.node(other);
-        if (e == entt::null) return;
-        if (auto* p = registry.try_get<ecs::Position>(e)) { sum += p->p; ++count; }
-    };
-    for (const auto& eid : store.out_edges(n.id)) {
-        if (const Edge* e = store.edge(eid)) sample(e->to);
-    }
-    for (const auto& eid : store.in_edges(n.id)) {
-        if (const Edge* e = store.edge(eid)) sample(e->from);
-    }
-    if (!n.parent.empty()) sample(n.parent);
-
-    const float jx   = (hash_unit(n.id, 1) - 0.5f) * 140.0f;
-    const float jy   = (hash_unit(n.id, 2) - 0.5f) * 90.0f;
-    const Vec2  base = count > 0 ? sum / static_cast<float>(count) : Vec2{0.0f, 0.0f};
-    registry.emplace_or_replace<ecs::Position>(ent, ecs::Position{base + Vec2{jx, jy}});
-}
 
 void SceneSyncSystem::upsert_node(ecs::World& world, const Node& n) {
     auto&       registry = world.registry;
@@ -462,8 +435,9 @@ void SceneSyncSystem::upsert_node(ecs::World& world, const Node& n) {
         index.nodes[n.id] = ent;
         registry.emplace<ecs::NodeRef>(ent, ecs::NodeRef{n.id, n.kind});
         registry.emplace<ecs::Style>(ent);
+        // No Position: the node is Unplaced, and placing things is LayoutSystem's
+        // job. Constructing an entity is not owning its components.
         registry.emplace<ecs::Unplaced>(ent);
-        seed_position(world, ent, n);
     } else {
         registry.get<ecs::NodeRef>(ent).kind = n.kind;
     }

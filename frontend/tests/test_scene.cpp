@@ -1979,10 +1979,6 @@ Snapshot nested_with_symbols() {
     return s;
 }
 
-float gap(rgvtest::Harness& h, const std::string& a, const std::string& b) {
-    return length(h.registry().get<ecs::Position>(h.index().node(a)).p -
-                  h.registry().get<ecs::Position>(h.index().node(b)).p);
-}
 
 // The layout tree, read back from where things ended up: a node's parent is whichever
 // node it orbits. Asserting on the arrangement rather than on an internal map.

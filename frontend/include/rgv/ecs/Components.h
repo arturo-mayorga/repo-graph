@@ -52,8 +52,10 @@ struct Endpoints {
 
 // -- spatial ------------------------------------------------------------------
 
-// Owner: LayoutSystem. Seeded once at creation near whatever the node connects to,
-// so a package appearing mid-session does not fly in from the origin.
+// Owner: LayoutSystem, and only LayoutSystem -- including the seed an arrival gets
+// before it is placed, so it eases in from beside whatever it connects to rather than
+// flying in from the origin. SceneSyncSystem creates the entity without this; placing
+// things is not a construction detail.
 struct Position { Vec2 p; };
 
 // Where layout wants this node. Positions ease toward it, so a topology change

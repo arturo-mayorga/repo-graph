@@ -117,6 +117,11 @@ private:
     void relax(ecs::World& world, float dt);
     void relax_rings(ecs::World& world, float dt);
     bool seat_newcomers(ecs::World& world);
+    // Gives an arrival somewhere to ease FROM. Without it a node appearing mid-session
+    // flies in from the origin, which reads as the graph lurching rather than as
+    // something arriving. Here rather than in SceneSyncSystem because Position has one
+    // owner and this is a placement, not a construction detail.
+    void seed_unplaced(ecs::World& world);
     void capture_rest_lengths(ecs::World& world);
 
     LayoutParams params_;
