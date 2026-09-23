@@ -75,9 +75,6 @@ struct Extent { Vec2 half{54.0f, 17.0f}; };
 // a distinction the colour and the layout already carry. Owner: SceneSyncSystem.
 struct Prominence { float scale = 1.0f; };
 
-// Dependency depth: 0 = depends on nothing else in view. Owner: LayoutSystem.
-struct Depth { int value = 0; };
-
 // Where a node sits in the concentric dependency layout, under whichever key the
 // arrangement is currently using. Nothing focused: ring 0 is the core -- what the most
 // of the repository transitively depends on -- and the index rises outward as reach

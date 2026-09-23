@@ -461,7 +461,6 @@ void SceneSyncSystem::upsert_node(ecs::World& world, const Node& n) {
         ent              = registry.create();
         index.nodes[n.id] = ent;
         registry.emplace<ecs::NodeRef>(ent, ecs::NodeRef{n.id, n.kind});
-        registry.emplace<ecs::Depth>(ent);
         registry.emplace<ecs::Style>(ent);
         registry.emplace<ecs::Unplaced>(ent);
         seed_position(world, ent, n);

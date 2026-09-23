@@ -21,57 +21,6 @@ std::unordered_map<std::uint32_t, entt::entity> containment_parents(entt::regist
 
 } // namespace
 
-void LayoutSystem::assign_depths(ecs::World& world) {
-    auto& reg = world.registry;
-
-    // Adjacency over what is on screen, not over the whole store: depth has to
-    // describe the picture the user is actually looking at.
-    std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> deps;
-    for (auto [ent, ref, ends] : reg.view<const ecs::EdgeRef, const ecs::Endpoints>().each()) {
-        if (ref.kind == EdgeKind::Contains) continue;
-        deps[to_raw(ends.from)].push_back(to_raw(ends.to));
-    }
-
-    std::unordered_map<std::uint32_t, int> depth;
-    std::unordered_map<std::uint32_t, int> state;   // 0 unvisited, 1 open, 2 done
-    std::vector<std::uint32_t>             stack;
-
-    // Longest path to a sink. Iterative because a deep monorepo would blow a
-    // recursive stack, and cycle-tolerant because import graphs really do cycle.
-    for (auto [ent, ref] : reg.view<const ecs::NodeRef>().each()) {
-        const std::uint32_t root = to_raw(ent);
-        if (state[root] == 2) continue;
-        stack.push_back(root);
-        while (!stack.empty()) {
-            const std::uint32_t cur = stack.back();
-            if (state[cur] == 0) {
-                state[cur]  = 1;
-                bool pushed = false;
-                for (auto next : deps[cur]) {
-                    if (state[next] == 0) { stack.push_back(next); pushed = true; }
-                }
-                if (pushed) continue;
-            }
-            stack.pop_back();
-            if (state[cur] == 2) continue;
-            int d = 0;
-            for (auto next : deps[cur]) {
-                // A back-edge into an open node is a cycle. Treating it as depth 0
-                // keeps the layout finite instead of diverging.
-                if (state[next] == 2) d = std::max(d, depth[next] + 1);
-            }
-            depth[cur] = d;
-            state[cur] = 2;
-        }
-    }
-
-    depth_span_ = 1;
-    for (auto [ent, ref] : reg.view<const ecs::NodeRef>().each()) {
-        const int d = depth[to_raw(ent)];
-        reg.emplace_or_replace<ecs::Depth>(ent, ecs::Depth{d});
-        depth_span_ = std::max(depth_span_, d + 1);
-    }
-}
 
 // Which ring a node belongs on. See the declaration for why this is one function.
 //
@@ -125,20 +74,22 @@ void LayoutSystem::concentric_place(ecs::World& world) {
     for (auto [ent, ref] : reg.view<const ecs::NodeRef>().each()) all.push_back(ent);
     if (all.empty()) { energy_ = 1e9f; return; }
 
-    // How far each node is from what is focused, walked once by FocusSystem and read
-    // here so the seating and the dimming can never disagree about what is near.
-    const entt::entity focus = [&] {
-        for (auto [e, fd] : reg.view<const ecs::FocusDistance>().each()) {
-            if (fd.hops == 0) return e;
-        }
-        return entt::entity{entt::null};
-    }();
+    // Whether anything is focused, asked of the resource that decides it. Recovering
+    // it by scanning for `hops == 0` would depend on an encoding nothing documents,
+    // and edges carry `FocusDistance` too -- a self-edge on the focused node would
+    // have answered with an edge entity.
+    //
+    // The same condition FocusSystem uses, so the two cannot disagree about whether
+    // this frame has a focus at all.
+    const auto& index   = world.resource<ecs::EntityIndex>();
+    const bool  focused = index.node(world.resource<ecs::Selection>().node) != entt::null;
+
+    // How far the graph reaches from it, walked once by FocusSystem and read here so
+    // the seating and the dimming can never disagree about what is near.
     int furthest = 0;
-    if (focus != entt::null) {
-        for (auto [e, fd] : reg.view<const ecs::FocusDistance>().each()) {
-            if (reg.all_of<ecs::NodeRef>(e) && fd.hops != ecs::kUnreached) {
-                furthest = std::max(furthest, fd.hops);
-            }
+    if (focused) {
+        for (auto [e, ref, fd] : reg.view<const ecs::NodeRef, const ecs::FocusDistance>().each()) {
+            if (fd.hops != ecs::kUnreached) furthest = std::max(furthest, fd.hops);
         }
     }
 
@@ -157,12 +108,12 @@ void LayoutSystem::concentric_place(ecs::World& world) {
     // spoke -- true when the key is reach, and exactly backwards when the key is
     // distance from a selection, where ring 0 holding precisely one node IS the point.
     const int rings =
-        focus != entt::null
+        focused
             ? std::clamp(std::min(params_.max_rings, furthest + 1), 2, params_.max_rings)
             : std::clamp(std::min({params_.max_rings, widest + 1, by_population}), 2,
                          params_.max_rings);
 
-    rings_keyed_on_focus_ = focus != entt::null;
+    rings_keyed_on_focus_ = focused;
 
     std::vector<std::vector<entt::entity>> layer(static_cast<std::size_t>(rings));
     for (auto e : all) {
@@ -680,13 +631,6 @@ void LayoutSystem::radial_tree(ecs::World& world) {
         }
     }
 
-    // Depth, for anything that wants it.
-    for (auto [ent, ref] : reg.view<const ecs::NodeRef>().each()) {
-        int           d   = 0;
-        std::uint32_t cur = to_raw(ent);
-        while (parent.count(cur) && d < 64) { cur = parent[cur]; ++d; }
-        reg.emplace_or_replace<ecs::Depth>(ent, ecs::Depth{d});
-    }
     energy_ = 1e9f;
 }
 
@@ -732,15 +676,15 @@ void LayoutSystem::measure_spacing(ecs::World& world) {
     }
 }
 
+bool LayoutSystem::tree_mode(const ecs::World& world) {
+    return world.resource<ecs::ViewSettings>().mode == ecs::ViewMode::Filesystem;
+}
+
 void LayoutSystem::reset(ecs::World& world) {
-    const auto mode = world.resource<ecs::ViewSettings>().mode;
-    // Two views are trees now: the filesystem by containment, the architecture by
-    // imports. Same algorithm, different hierarchy.
-    tree_mode_ = mode == ecs::ViewMode::Filesystem;
-    if (tree_mode_) {
+    // One view packs a containment tree; the dependency views are concentric.
+    if (tree_mode(world)) {
         radial_tree(world);
     } else {
-        assign_depths(world);
         concentric_place(world);
     }
     // Every layout, so every view can answer the same questions about crowding.
@@ -766,71 +710,13 @@ std::unordered_map<std::uint32_t, entt::entity> containment_parents(entt::regist
 // toward some invented ideal.
 // child -> parent for the tree the layout is built on.
 //
-// Containment in the filesystem view. In the architecture view it is the import graph
-// instead: the same radial algorithm, driven by what imports what. Spanned breadth
-// first from the modules that import nothing, so the foundation sits at the centre and
-// each ring outward is code built on the ring inside it. A module's orbiting children
-// are the modules that import it, which makes a disc's size "how much is built on this".
-//
-// Breadth first is also what makes it a tree at all: an import graph has cycles, and
-// visiting each node once turns any back edge into a cross-link the layout ignores.
+// Containment, and only containment. The architecture view used to span a tree over
+// the import graph here instead, which is why this was a function rather than a call
+// to `containment_parents`. That view is concentric now: it draws every dependency
+// rather than a spanning tree, which is what let cycles be reported instead of quietly
+// becoming cross-links the arrangement ignored.
 std::unordered_map<std::uint32_t, entt::entity> LayoutSystem::tree_parents(ecs::World& world) const {
-    auto& reg = world.registry;
-    if (world.resource<ecs::ViewSettings>().mode != ecs::ViewMode::Architecture) {
-        return containment_parents(reg);
-    }
-
-    std::unordered_map<std::uint32_t, std::vector<entt::entity>> importers;
-    std::unordered_map<std::uint32_t, int>                       imports_out;
-    for (auto [e, ref, ends] : reg.view<const ecs::EdgeRef, const ecs::Endpoints>().each()) {
-        if (ref.kind != EdgeKind::Imports) continue;
-        importers[to_raw(ends.to)].push_back(ends.from);
-        ++imports_out[to_raw(ends.from)];
-    }
-
-    auto id_of = [&](entt::entity e) {
-        const auto* ref = reg.try_get<ecs::NodeRef>(e);
-        return ref ? ref->id : std::string{};
-    };
-    auto by_id = [&](entt::entity a, entt::entity b) { return id_of(a) < id_of(b); };
-
-    entt::entity              root = entt::null;
-    std::vector<entt::entity> all;
-    for (auto [e, ref] : reg.view<const ecs::NodeRef>().each()) {
-        all.push_back(e);
-        if (ref.kind == NodeKind::Repository) root = e;
-    }
-    std::sort(all.begin(), all.end(), by_id);
-
-    std::unordered_map<std::uint32_t, entt::entity> parent;
-    if (root == entt::null) return parent;
-
-    std::deque<entt::entity>         queue;
-    std::unordered_set<std::uint32_t> seen{to_raw(root)};
-    for (auto e : all) {
-        if (e == root || imports_out[to_raw(e)] != 0) continue;
-        parent[to_raw(e)] = root;   // imports nothing: the foundation, on the first ring
-        seen.insert(to_raw(e));
-        queue.push_back(e);
-    }
-    while (!queue.empty()) {
-        const entt::entity cur = queue.front();
-        queue.pop_front();
-        auto it = importers.find(to_raw(cur));
-        if (it == importers.end()) continue;
-        std::vector<entt::entity> next = it->second;
-        std::sort(next.begin(), next.end(), by_id);
-        for (auto imp : next) {
-            if (!seen.insert(to_raw(imp)).second) continue;
-            parent[to_raw(imp)] = cur;
-            queue.push_back(imp);
-        }
-    }
-    // Anything a cycle kept out of the traversal still has to be somewhere.
-    for (auto e : all) {
-        if (e != root && !seen.count(to_raw(e))) parent[to_raw(e)] = root;
-    }
-    return parent;
+    return containment_parents(world.registry);
 }
 
 void LayoutSystem::capture_rest_lengths(ecs::World& world) {
@@ -1092,7 +978,7 @@ bool LayoutSystem::seat_newcomers(ecs::World& world) {
     // A containment layout has no meaningful "near": a file belongs on its parent's
     // orbit, and the orbits are packed as a whole. Repacking the tree is cheap and
     // stable, so the tree view keeps taking the full path.
-    if (tree_mode_) {
+    if (tree_mode(world)) {
         reset(world);
         return false;
     }
@@ -1168,7 +1054,7 @@ void LayoutSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
     // changes. Nodes ease to their new seats, so this reads as the graph turning to
     // face the question rather than as a new picture.
     const NodeId& selected = world.resource<ecs::Selection>().node;
-    if (!tree_mode_ && (!focus_primed_ || selected != focus_)) {
+    if (!tree_mode(world) && (!focus_primed_ || selected != focus_)) {
         focus_        = selected;
         focus_primed_ = true;
         requests.relayout = true;
@@ -1178,7 +1064,7 @@ void LayoutSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
         reset(world);
         requests.relayout = false;
         world.registry.clear<ecs::Unplaced>();
-    } else if ((seat_newcomers(world) | requests.resettle) && !relaxing_ && !tree_mode_) {
+    } else if ((seat_newcomers(world) | requests.resettle) && !relaxing_ && !tree_mode(world)) {
         // Let the arrivals settle against what is already there, the same way a drop
         // does. Without this they sit exactly on top of whatever shares their angle.
         relaxing_      = true;
@@ -1205,7 +1091,10 @@ void LayoutSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
     // instead of being frozen where the cursor happened to leave it.
     const auto& drag = world.resource<ecs::DragState>();
     if (drag.active && !relaxing_) {
-        capture_rest_lengths(world);
+        // Only the tree relaxation springs along containment, so only it has rest
+        // lengths to capture. The concentric views relax within their rings instead,
+        // and walking the tree for them was a full traversal thrown away per drag.
+        if (tree_mode(world)) capture_rest_lengths(world);
         relaxing_      = true;
         relax_motion_  = 1e9f;
         relax_elapsed_ = 0.0f;
@@ -1214,7 +1103,7 @@ void LayoutSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
     if (relaxing_) {
         relax_elapsed_ += frame.dt;
         apply_drag(world);
-        if (tree_mode_) relax(world, frame.dt);
+        if (tree_mode(world)) relax(world, frame.dt);
         else relax_rings(world, frame.dt);
 
         // Held open while the cursor is down; afterwards it ends when the motion dies

@@ -123,6 +123,7 @@ if(RGV_BUILD_TESTS)
     tests/test_label_layout.cpp
     tests/test_python_imports.cpp
     tests/test_provider_impact.cpp
+    tests/test_ignore.cpp
     # The manifest readers are the provider's, not the frontend's. Compiled into the
     # tests directly rather than linked, because a provider shares no library with the
     # frontend -- only the wire format.
@@ -131,6 +132,7 @@ if(RGV_BUILD_TESTS)
     ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/TsImports.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/CppImports.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/Impact.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/Ignore.cpp
   )
   target_include_directories(rgv-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests
                                                ${CMAKE_CURRENT_SOURCE_DIR}/third_party/json
@@ -208,7 +210,8 @@ add_executable(rgv-watch
   ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/PythonImports.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/TsImports.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/CppImports.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/Impact.cpp)
+  ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/Impact.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/Ignore.cpp)
 target_include_directories(rgv-watch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/json)
 target_compile_features(rgv-watch PRIVATE cxx_std_20)
 target_link_libraries(rgv-watch PRIVATE rgv_warnings)

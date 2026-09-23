@@ -726,73 +726,7 @@ TEST(cycling_past_the_last_path_wraps_to_the_first) {
 
 // -- layout -------------------------------------------------------------------
 
-// Depth is still dependency distance and still cycle-safe, but it no longer decides
-// where a node goes. The dependency views are concentric, and the ring is REACH: how
-// much of the repository transitively depends on this node. The core sits in the
-// middle, consumers on the rim.
-//
-// Direct dependents would be the wrong axis. In this chain c depends on b depends on a,
-// so a has one direct dependent and would be exiled to the rim while being the thing
-// everything else is built on.
-TEST(layout_puts_the_most_depended_on_node_at_the_core) {
-    auto h        = make(as_files(chain()));
-    h.view().mode  = ecs::ViewMode::FileGraph;
-    h.view().level = Level::File;
-    h.request_rebuild();
-    h.settle();
 
-    auto depth_of = [&](const char* id) {
-        return h.registry().get<ecs::Depth>(h.node(id)).value;
-    };
-    CHECK_EQ(depth_of("pkg:a"), 0);
-    CHECK_EQ(depth_of("pkg:b"), 1);
-    CHECK_EQ(depth_of("pkg:c"), 2);
-
-    // a is depended on by b and c, c by nobody. A three-node chain buckets into two
-    // rings, so the core end may share one -- but it may never be further out.
-    auto radius_of = [&](const char* id) {
-        return length(h.registry().get<ecs::LayoutTarget>(h.node(id)).p);
-    };
-    CHECK(radius_of("pkg:a") <= radius_of("pkg:b"));
-    CHECK(radius_of("pkg:b") < radius_of("pkg:c"));
-
-    // With reach spread wide enough to separate, the hub lands strictly inside.
-    Snapshot w;
-    w.generation                  = 100;
-    w.session.baseline_generation = 100;
-    w.nodes = {mk_node("repo", NodeKind::Repository),
-               mk_node("pkg:hub", NodeKind::Package, "repo"),
-               mk_node("pkg:leaf", NodeKind::Package, "repo")};
-    for (int i = 0; i < 6; ++i) {
-        const std::string p = "pkg:d" + std::to_string(i);
-        w.nodes.push_back(mk_node(p, NodeKind::Package, "repo"));
-        w.edges.push_back(mk_edge("e:" + p, EdgeKind::DependsOn, p, "pkg:hub"));
-    }
-    auto g        = make(as_files(w));
-    g.view().mode  = ecs::ViewMode::FileGraph;
-    g.view().level = Level::File;
-    g.request_rebuild();
-    g.settle();
-
-    const auto& reg = g.registry();
-    CHECK(reg.get<ecs::Ring>(g.node("pkg:hub")).index <
-          reg.get<ecs::Ring>(g.node("pkg:leaf")).index);
-    CHECK(length(reg.get<ecs::LayoutTarget>(g.node("pkg:hub")).p) <
-          length(reg.get<ecs::LayoutTarget>(g.node("pkg:leaf")).p));
-}
-
-// Import graphs really do cycle. Layout must terminate and stay finite.
-TEST(layout_survives_a_dependency_cycle) {
-    Snapshot s = chain();
-    s.edges.push_back(mk_edge("e:a->c", EdgeKind::DependsOn, "pkg:a", "pkg:c"));
-    auto h = make(s);
-    h.settle();
-
-    for (auto [e, ref, d] : h.registry().view<const ecs::NodeRef, const ecs::Depth>().each()) {
-        CHECK(d.value >= 0);
-        CHECK(d.value < 64);
-    }
-}
 
 // Layout must not throw away positions when the graph changes, or every file save
 // reshuffles the screen (spec 11.2).

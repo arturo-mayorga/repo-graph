@@ -2,15 +2,15 @@
 //
 // Two strategies, picked by view mode:
 //
-//   * File graph -- concentric. Reach fixes the ring; ordering within a ring is
-//     solved by barycentre sweeps (the ordering phase of a Sugiyama layout). Deterministic,
-//     nothing to settle, and legible at thousands of files. A spring simulation was
-//     tried first and produced a hairball that never stopped drifting.
+//   * The dependency views (architecture, file graph) -- concentric. A ring fixes
+//     how far out a node sits, and ordering within a ring is solved by barycentre
+//     sweeps (the ordering phase of a Sugiyama layout). Deterministic, nothing to
+//     settle, and legible at thousands of files. A spring simulation was tried first
+//     and produced a hairball that never stopped drifting.
 //
-//   * Architecture -- the same radial tree, driven by imports instead of containment.
-//     The foundation sits at the centre, each ring outward is code built on the ring
-//     inside it, and a node's orbiting children are the modules that import it. See
-//     `tree_parents`.
+//     What the ring MEANS depends on whether anything is selected: reach at rest,
+//     hops from the selection when there is one. `ring_index_for` is the single place
+//     that knows which, and both the placer and the incremental seat ask it.
 //
 //   * Filesystem -- a radial tree, inspired by Gource. Directories are discs whose
 //     radius is set by how many files they hold, files ring the directory that owns
@@ -98,8 +98,12 @@ public:
 
 private:
     void reset(ecs::World& world);
-    void assign_depths(ecs::World& world);
     void concentric_place(ecs::World& world);
+    // Whether this view packs a containment tree. Asked of `ViewSettings` every time
+    // rather than cached: the cached copy was refreshed only inside `reset()`, so on
+    // the frame a mode change arrived every other reader saw the previous view's
+    // answer -- which cost a second full relayout on the frame after.
+    static bool  tree_mode(const ecs::World& world);
     // Which ring a node belongs on, under whichever key the current arrangement uses.
     // One function because two callers need the same answer: the placer chooses the
     // radii, and `seat_newcomers` drops arrivals into them. A newcomer seated by a
@@ -117,8 +121,6 @@ private:
 
     LayoutParams params_;
     float        energy_     = 1e9f;
-    int          depth_span_ = 1;
-    bool         tree_mode_  = false;
     // The selection the current arrangement was keyed on. When it changes the layers
     // are re-seated -- the node set is untouched, so this is a move, never a rebuild.
     NodeId       focus_;

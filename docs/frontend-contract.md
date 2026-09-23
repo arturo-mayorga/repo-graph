@@ -442,11 +442,23 @@ it understands it must:
 - Re-parse a file when it changes and report the difference as `graph.updated`
   `added_edges` / `removed_edges` — never as a full replacement. A surviving edge whose
   evidence or confidence changed is an `updated_edges` entry.
-- Set `attrs.module_file` on a `package` node to the repo-relative file that *is* that
-  package, when the language has one (`__init__.py` for Python). The frontend folds a
-  package's modules into it at overview and drops dependency edges that only restate
-  containment; this attribute is how it keeps the one that does not, a real import of
-  the package as a unit.
+- Set `attrs.module_nodes` on a `package` or `build_target` node to the **node ids** of
+  the file or files that *are* that unit, comma-separated with no spaces, when the
+  language has such a file. The frontend folds a unit's files into it at overview and
+  drops dependency edges that only restate containment; this attribute is how it keeps
+  the one that does not, a real import of the unit as a whole. A provider whose unit has
+  no such file omits the attribute rather than naming its best guess — a wrong answer
+  here silently re-draws a box that should have been folded away.
+
+  **Ids, not paths.** §2 says identifiers are opaque and the frontend must never parse
+  them; an attribute carrying a path forces it to do the inverse, to *build* an id out
+  of one, and that is the same bet with the same loser. The first provider that ids a
+  file by anything but its path — a content hash, a build label, a URI — then draws a
+  duplicate box beside every package, with no error and no failing test to show for it.
+
+  **Plural.** One path cannot say what a unit is in most languages. A C++ module is a
+  header and a translation unit, and it is the header that other code includes; Python's
+  single `__init__.py` is the special case, not the general one.
 - Emit a `symbol` node for every top-level definition that another file uses, parented
   to the file that defines it, with `attrs.kind` of `class` or `function`. A file that
   constructs or invokes a symbol has a `calls` edge to it; a file that mentions it in
