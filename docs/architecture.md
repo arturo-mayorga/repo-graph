@@ -34,6 +34,7 @@ Sync/SceneSyncSystem        store deltas -> entities. The only creator/destroyer
 Simulate/ImpactStateSystem  Changed / Impacted / HubSeed
 Simulate/SelectionSystem    Selected / Hovered / OnExplainedPath
 Simulate/LayoutSystem       depth, row ordering, easing
+Simulate/CycleSystem        InCycle / CycleReport, over what is drawn rather than the store
 Simulate/StyleSystem        derives Style. The renderer reads it verbatim.
 Render/UiSystem             panels first: they decide how much room the graph gets
 Render/GraphRenderSystem    three instanced draw calls

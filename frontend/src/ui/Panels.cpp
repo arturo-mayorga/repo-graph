@@ -5,6 +5,7 @@
 #include "rgv/ecs/Resources.h"
 #include "rgv/fixture/FixtureSource.h"
 #include "rgv/model/GraphStore.h"
+#include "rgv/view/Focus.h"
 #include "rgv/view/SemanticZoom.h"
 
 #include "rgv/analysis/Specificity.h"
@@ -632,6 +633,34 @@ void draw_node_inspector(Ui& ui, const Node& n) {
         }
     }
 
+    // The finding, said in words. The colour is the at-a-glance channel and cannot
+    // say WHO the entanglement is with -- and "who" is the whole question, because
+    // breaking a cycle means choosing which of its members gives way.
+    {
+        const auto&        cycles = ui.world.resource<ecs::CycleReport>();
+        const entt::entity ent    = ui.world.resource<ecs::EntityIndex>().node(n.id);
+        const auto*        in =
+            ent == entt::null ? nullptr : ui.world.registry.try_get<ecs::InCycle>(ent);
+        if (in && in->group >= 0 && in->group < static_cast<int>(cycles.groups.size())) {
+            ImGui::Spacing();
+            ImGui::TextColored(to_v4(theme().cycle), "IN A DEPENDENCY CYCLE");
+            ImGui::TextWrapped(
+                "These depend on each other, directly or through a chain. None of them "
+                "can be read, tested or replaced without the rest.");
+            for (const auto& id : cycles.groups[static_cast<std::size_t>(in->group)].nodes) {
+                if (id == n.id) continue;
+                const Node* other = ui.store.node(id);
+                ImGui::Bullet();
+                ImGui::SameLine();
+                if (ImGui::SmallButton(other ? other->name.c_str() : id.c_str())) {
+                    ui.cmd.push(ecs::SelectNode{id});
+                }
+            }
+            ImGui::Spacing();
+            ImGui::Separator();
+        }
+    }
+
     // How much information "something depends on this" carries.
     {
         const auto& idx  = ui.derived.specificity;
@@ -1178,6 +1207,16 @@ void draw_graph_overlay(ecs::World& world, ImDrawList* dl) {
             if (changed) col = t.changed;
             else if (imp) col = impact_color(imp->distance);
 
+            // A name recedes with the node it belongs to. Left at full strength it is
+            // the loudest thing on a dim node and the falloff reads as a rendering
+            // glitch rather than as distance. Exempt when the agent touched it, for
+            // the same reason the node itself is.
+            if (!changed) {
+                const float fb = rgv::view::focus_brightness(
+                    reg.try_get<ecs::FocusDistance>(ent), rgv::view::kFocusTextFloor);
+                col = Vec4{col.r * fb, col.g * fb, col.b * fb, col.a};
+            }
+
             if (inside) {
                 // A prominent node's box is bigger because it matters, so its name grows
                 // with it. Leaving the font alone would turn the extra size into padding,
@@ -1263,6 +1302,12 @@ void draw_graph_overlay(ecs::World& world, ImDrawList* dl) {
     // for a state nothing is in is just clutter.
     if (ui.stats.muted > 0) {
         rows.push_back({"muted: only via a hub", t.pending, true});
+    }
+    // Same rule, and the reason the finding needs no panel of its own: a healthy
+    // repository never sees this row, and an entangled one cannot miss it.
+    const auto& cycles = world.resource<ecs::CycleReport>();
+    if (!cycles.groups.empty()) {
+        rows.push_back({"in a dependency cycle", t.cycle, false});
     }
     // The legend's glyphs come from the global font, so its box follows the UI scale.
     const float  us   = vs.ui_text_scale;

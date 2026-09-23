@@ -18,6 +18,8 @@
 #include "rgv/systems/SceneSyncSystem.h"
 #include "rgv/systems/SelectionSystem.h"
 #include "rgv/systems/SpecificitySystem.h"
+#include "rgv/systems/CycleSystem.h"
+#include "rgv/systems/FocusSystem.h"
 #include "rgv/systems/StyleSystem.h"
 
 #include <memory>
@@ -44,6 +46,7 @@ struct Harness {
         world.add_resource<CameraControl>();
         world.add_resource<DragState>();
         world.add_resource<DerivedState>();
+        world.add_resource<CycleReport>();
         world.add_resource<EntityIndex>();
         world.add_resource<SceneStats>();
         world.add_resource<FrameTiming>();
@@ -67,7 +70,9 @@ struct Harness {
             .add(Phase::Sync, std::make_unique<systems::SceneSyncSystem>())
             .add(Phase::Simulate, std::make_unique<systems::ImpactStateSystem>())
             .add(Phase::Simulate, std::make_unique<systems::SelectionSystem>())
+            .add(Phase::Simulate, std::make_unique<systems::FocusSystem>())
             .add(Phase::Simulate, std::make_unique<systems::LayoutSystem>())
+            .add(Phase::Simulate, std::make_unique<systems::CycleSystem>())
             .add(Phase::Simulate, std::make_unique<systems::StyleSystem>())
             .add(Phase::Simulate, std::make_unique<systems::LabelSystem>());
         schedule.setup(world);

@@ -107,6 +107,11 @@ void SceneSyncSystem::revisit(ecs::World& world) {
     const auto& store = world.resource<GraphStore>();
     auto&       index = world.resource<ecs::EntityIndex>();
 
+    // A package arriving or leaving changes which files are modules, so the altitude is
+    // re-derived before anything is asked whether it is visible.
+    if (world.resource<ecs::ViewSettings>().mode == ecs::ViewMode::Architecture) {
+        choose_module_altitude(world);
+    }
     std::vector<NodeId> gone;
     for (const auto& [id, n] : store.nodes()) {
         const bool visible = node_visible(world, n);
@@ -170,14 +175,36 @@ bool SceneSyncSystem::node_visible(const ecs::World& world, const Node& n) const
 
     switch (view.mode) {
         case ecs::ViewMode::Architecture:
-            // Everything, from the start. The repository is included because the radial
-            // layout needs one centre to grow from, the same reason the filesystem view
-            // includes it. Directories are not: they are filesystem structure, and this
-            // view's structure is what imports what.
+            // Packages and the modules beside them. The repository is included because
+            // the radial layout needs one centre to grow from, the same reason the
+            // filesystem view includes it. Directories are not: they are filesystem
+            // structure, and this view's structure is what imports what.
             if (n.kind == NodeKind::ExternalPackage) return f.show_external;
             if (n.kind != NodeKind::Repository && n.kind != NodeKind::Package &&
                 n.kind != NodeKind::File && n.kind != NodeKind::BuildTarget) {
                 return false;
+            }
+            // A module is a file whose owner builds or packages it. That is what makes
+            // it part of the architecture rather than part of the repository: a test, a
+            // CSV, a shader or a README sits under a plain DIRECTORY, and none of them
+            // is a thing the code depends on.
+            //
+            // Package or build target, because the relation is the point and each
+            // language expresses it differently -- Python with `__init__.py`, C++ with
+            // an `add_library`. Keying on one of them would give a C++ repository its
+            // target boxes and none of the modules that do the work.
+            //
+            // A package's own `__init__.py` is still not drawn beside it -- that file
+            // IS the package, and the package node keeps receiving every import that
+            // names the package rather than something inside it.
+            if (n.kind == NodeKind::File) {
+                const Node* owner = store.node(n.parent);
+                if (!owner || (owner->kind != NodeKind::Package &&
+                               owner->kind != NodeKind::BuildTarget)) {
+                    return false;
+                }
+                auto it = package_module_file_.find(n.parent);
+                if (it != package_module_file_.end() && it->second == n.id) return false;
             }
             break;
         case ecs::ViewMode::Filesystem:
@@ -280,6 +307,33 @@ NodeId SceneSyncSystem::representative(const ecs::World& world, NodeId id) const
     return {};
 }
 
+// The altitude the architecture view reads at: modules, not files.
+//
+// A module is a file something builds or packages. Everything else a repository holds
+// -- tests, fixtures, shaders, documentation -- sits under a plain directory, and the
+// containment tree already says which is which, so this needs no new contract field.
+//
+// Drawing every file instead is the file graph with a different layout, and at
+// repository scale that is a hairball. Folding a package's modules away instead hides
+// the pieces that do the work: on `elevators` the eleven systems that are the
+// application's actual functionality collapsed into one box called `systems`.
+//
+// The only thing this pass has to collect is which file IS each package, so that file
+// is not drawn a second time beside it.
+void SceneSyncSystem::choose_module_altitude(ecs::World& world) {
+    const auto& store = world.resource<GraphStore>();
+    package_module_file_.clear();
+    for (const auto& [id, n] : store.nodes()) {
+        if (n.kind != NodeKind::Package) continue;
+        // A package's own `__init__.py` is the package. Drawing it beside its package
+        // is a second box with the same meaning, which is exactly what the provider
+        // drops the distribution twin to avoid.
+        if (auto it = n.attrs.find("module_file"); it != n.attrs.end()) {
+            package_module_file_[id] = "file:" + it->second;
+        }
+    }
+}
+
 // Which store edges are drawn in the nested architecture view, and between what.
 //
 // Edges live at their own level -- imports between files, reads and writes from a file
@@ -317,11 +371,21 @@ void SceneSyncSystem::choose_drawn_edges(ecs::World& world) {
     struct Pick { EdgeId id; NodeId from, to; int count = 0; };
     std::map<std::pair<NodeId, NodeId>, Pick> best;
 
+    // The repository is the centre the layout grows from, not a module. Anything
+    // outside every package -- a test suite, a tools directory -- has it as its nearest
+    // drawn ancestor, so without this every such import arrives as a line from the one
+    // node that means "here is the middle", and it becomes a hub wired to everything.
+    auto folds_onto_repository = [&](const NodeId& id) {
+        const Node* n = store.node(id);
+        return n && n->kind == NodeKind::Repository;
+    };
+
     for (const auto& [id, e] : store.edges()) {
         if (!passes(e)) continue;
         const NodeId rf = representative(world, e.from);
         const NodeId rt = representative(world, e.to);
         if (rf.empty() || rt.empty() || rf == rt) continue;
+        if (folds_onto_repository(rf) || folds_onto_repository(rt)) continue;
 
         auto [it, fresh] = best.try_emplace({rf, rt}, Pick{id, rf, rt, 0});
         if (!fresh && id < it->second.id) it->second.id = id;   // deterministic
@@ -488,6 +552,8 @@ void SceneSyncSystem::rebuild(ecs::World& world) {
     primed_     = true;
     world.resource<ecs::SceneRequests>().relayout = true;
 
+    // Altitude first: what a node is depends on what else is drawn beside it.
+    if (view.mode == ecs::ViewMode::Architecture) choose_module_altitude(world);
     for (const auto& [id, n] : store.nodes()) {
         if (node_visible(world, n)) upsert_node(world, n);
     }
@@ -539,6 +605,12 @@ void SceneSyncSystem::incremental(ecs::World& world) {
     const auto&     store = world.resource<GraphStore>();
     const DirtySet& dirty = store.dirty();
 
+    // A new package in the dirty set makes modules of its siblings' files, which are
+    // not themselves dirty -- `revisit` is what picks those up. This keeps the dirty
+    // nodes judged against the altitude they are actually being drawn at.
+    if (world.resource<ecs::ViewSettings>().mode == ecs::ViewMode::Architecture) {
+        choose_module_altitude(world);
+    }
     for (const auto& id : dirty.nodes) {
         const Node* n = store.node(id);
         if (!n || !node_visible(world, *n)) drop_node(world, id);

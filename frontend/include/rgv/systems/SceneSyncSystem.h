@@ -10,6 +10,7 @@
 #include "rgv/ecs/System.h"
 
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace rgv::systems {
@@ -30,6 +31,7 @@ private:
     bool hidden(const ecs::World& world, const Node& n) const;
     NodeId representative(const ecs::World& world, NodeId id) const;
     void   choose_drawn_edges(ecs::World& world);
+    void   choose_module_altitude(ecs::World& world);
     void   sync_containment(ecs::World& world);
     // The change itself, or a seed everything else is explained against. Exempt from
     // every filter -- hiding either would remove the thing the view is about.
@@ -48,6 +50,8 @@ private:
     std::unordered_map<EdgeId, std::pair<NodeId, NodeId>> drawn_;
     // How many contract edges each drawn line stands for.
     std::unordered_map<EdgeId, int> weights_;
+    // The file that *is* each package, by package id -- `__init__.py` and its kind.
+    std::unordered_map<NodeId, NodeId> package_module_file_;
     bool          primed_     = false;
 };
 

@@ -25,11 +25,13 @@
 // where they already are, so adding a node cannot reshuffle the picture.
 #pragma once
 
+#include "rgv/contract/Types.h"
 #include "rgv/ecs/System.h"
 
 #include <entt/entt.hpp>
 
 #include <cstdint>
+#include <string>
 #include <unordered_map>
 
 namespace rgv::systems {
@@ -68,11 +70,6 @@ struct LayoutParams {
     float file_gap        = 2.0f;    // arc gap between files sharing an orbit
     float orbit_gap       = 2.0f;    // clearance between a directory and its file ring
     float dir_gap         = 6.0f;    // clearance between a subtree and its neighbours
-
-    // A directory's glow, as a multiple of a file dot times the square root of the
-    // files beneath it. Gource's `sqrt(dir_area) * 1.5`, with the area written out:
-    // sqrt(pi) * 1.5 = 2.66.
-    float glow_scale      = 2.66f;
 
     // Live relaxation, which runs only while a node is being dragged.
     //
@@ -116,6 +113,10 @@ private:
     float        energy_     = 1e9f;
     int          depth_span_ = 1;
     bool         tree_mode_  = false;
+    // The selection the current arrangement was keyed on. When it changes the layers
+    // are re-seated -- the node set is untouched, so this is a move, never a rebuild.
+    NodeId       focus_;
+    bool         focus_primed_ = false;
 
     // The radius each ring was placed at. A dependency drag relaxes within the rings
     // rather than freely: the ring is the reach reading, so a node that drifts off its

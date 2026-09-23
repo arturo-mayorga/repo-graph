@@ -106,12 +106,6 @@ struct Disc {
     // label has to clear this, not just the disc, or a directory's own name lands on
     // top of its files.
     float halo = 6.0f;
-    // Radius of the soft glow drawn behind a directory, from the number of files in
-    // its whole subtree rather than from anything it holds directly. Gource sizes a
-    // directory by the mass beneath it and then draws only a bloom, never a disc --
-    // which is how a tree reads as structure at a glance. We draw the disc too, so the
-    // disc stays a node and the glow carries the mass. Zero on a file.
-    float glow = 0.0f;
     // Unit vector pointing away from whatever this node orbits. Labels are placed
     // along it, so the names around a ring fan outward instead of stacking on top of
     // one another. Zero for a node with no parent.
@@ -211,5 +205,27 @@ struct Selected {};
 
 // On the dependency path currently being explained in the inspector.
 struct OnExplainedPath { int hop = 0; };
+
+// -- focus --------------------------------------------------------------------
+
+// Hops from the focused node, over the dependency graph read as UNDIRECTED. Direction
+// is the right question for "what breaks if I change this"; it is the wrong one for
+// "what is near what I am looking at", where a thing that imports me is exactly as
+// close as a thing I import.
+//
+// Present on every node and every line whenever something is focused, absent on all of
+// them when nothing is. `hops` is `kUnreached` for what the focus cannot reach at all
+// -- never absent, because the whole point is that nothing is hidden and unreachable
+// is a legitimate, and dim, answer. Owner: FocusSystem.
+inline constexpr int kUnreached = 1 << 20;
+struct FocusDistance { int hops = 0; };
+
+// -- findings -----------------------------------------------------------------
+
+// This node, or this line, is inside a dependency cycle: every other member of the
+// group reaches it and it reaches them. `group` indexes `CycleReport::groups`.
+// Absent on everything that is in no cycle, which is the ordinary case and why this is
+// a tag to look for rather than a field to check. Owner: CycleSystem.
+struct InCycle { int group = 0; };
 
 } // namespace rgv::ecs

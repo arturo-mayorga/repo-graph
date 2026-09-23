@@ -56,6 +56,7 @@ add_library(rgv_core STATIC
   src/fixture/FixtureSource.cpp
   src/live/LiveSource.cpp
   src/sim/ImpactSim.cpp
+  src/analysis/Cycles.cpp
   src/analysis/Reach.cpp
   src/analysis/Specificity.cpp
   src/config/Settings.cpp
@@ -80,6 +81,8 @@ add_library(rgv_core STATIC
   src/systems/ImpactStateSystem.cpp
   src/systems/SelectionSystem.cpp
   src/systems/LayoutSystem.cpp
+  src/systems/CycleSystem.cpp
+  src/systems/FocusSystem.cpp
   src/systems/StyleSystem.cpp
   src/systems/LabelSystem.cpp
   src/systems/PickingSystem.cpp
@@ -110,10 +113,12 @@ if(RGV_BUILD_TESTS)
     tests/test_live.cpp
     tests/test_settings.cpp
     tests/test_specificity.cpp
+    tests/test_cycles.cpp
     tests/test_schedule.cpp
     tests/test_packages.cpp
     tests/test_open_path.cpp
     tests/test_ts_imports.cpp
+    tests/test_cpp_imports.cpp
     tests/test_label_layout.cpp
     tests/test_python_imports.cpp
     tests/test_provider_impact.cpp
@@ -123,6 +128,7 @@ if(RGV_BUILD_TESTS)
     ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/Packages.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/PythonImports.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/TsImports.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/CppImports.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/Impact.cpp
   )
   target_include_directories(rgv-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests
@@ -200,6 +206,7 @@ add_executable(rgv-watch
   ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/Packages.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/PythonImports.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/TsImports.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/CppImports.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/Impact.cpp)
 target_include_directories(rgv-watch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/json)
 target_compile_features(rgv-watch PRIVATE cxx_std_20)

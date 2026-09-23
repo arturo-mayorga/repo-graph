@@ -4,11 +4,18 @@
 #include "rgv/ecs/Resources.h"
 #include "rgv/ui/Theme.h"
 #include "rgv/view/Evidence.h"
+#include "rgv/view/Focus.h"
 
 #include <algorithm>
 #include <cmath>
 
 namespace rgv::systems {
+
+namespace {
+
+Vec4 dim(const Vec4& c, float b) { return {c.r * b, c.g * b, c.b * b, c.a}; }
+
+} // namespace
 
 void StyleSystem::run(ecs::World& world, const ecs::FrameContext&) {
     auto&        registry = world.registry;
@@ -57,6 +64,15 @@ void StyleSystem::run(ecs::World& world, const ecs::FrameContext&) {
             style.emphasis = 0.55f;
         }
 
+        // A finding, before evidence quality rather than after it: a stale node in a
+        // cycle must still read as stale (NFR-04), so the colour may be overwritten
+        // below and the weight is the channel that survives.
+        if (registry.all_of<ecs::InCycle>(ent)) {
+            style.stroke   = t.cycle;
+            style.stroke_w = std::max(style.stroke_w, 2.8f);
+            style.emphasis = std::max(style.emphasis, 0.85f);
+        }
+
         switch (effective) {
             case Freshness::Stale:
                 // Colour plus a dashed outline: two channels, because one colour cue is
@@ -90,6 +106,19 @@ void StyleSystem::run(ecs::World& world, const ecs::FrameContext&) {
             style.stroke_w = 3.4f;
         }
         if (registry.all_of<ecs::Pinned>(ent)) style.fill = mix(style.fill, t.direct, 0.10f);
+
+        // Distance from the focus, applied last, to whatever colour the rules above
+        // settled on -- so it darkens the answer rather than replacing it, and a stale
+        // node five hops out still reads as stale (NFR-04), just further away.
+        //
+        // What the agent touched is exempt. A change is the thing the view exists to
+        // report, and dimming it because the user happens to be looking elsewhere is
+        // precisely the failure the relevance filter is forbidden from committing.
+        if (!changed) {
+            const float b = view::focus_brightness(registry.try_get<ecs::FocusDistance>(ent));
+            style.fill    = dim(style.fill, b);
+            style.stroke  = dim(style.stroke, b);
+        }
     }
 
     // -- edges
@@ -117,6 +146,13 @@ void StyleSystem::run(ecs::World& world, const ecs::FrameContext&) {
         } else if (ref.kind == EdgeKind::References) {
             style.stroke   = t.reads;
             style.emphasis = on_impact ? 0.95f : 0.45f;
+        }
+        // Same rule as the nodes: the finding is stated first so evidence quality can
+        // still overrule the colour, and the extra weight carries it either way.
+        if (registry.all_of<ecs::InCycle>(ent)) {
+            style.stroke   = t.cycle;
+            style.stroke_w = std::max(style.stroke_w, 2.6f);
+            style.emphasis = std::max(style.emphasis, 0.9f);
         }
         if (const auto* c = registry.try_get<ecs::ConfidenceState>(ent)) {
             if (c->value == Confidence::Heuristic || c->value == Confidence::Unresolved) {
@@ -157,6 +193,15 @@ void StyleSystem::run(ecs::World& world, const ecs::FrameContext&) {
         if (registry.all_of<ecs::Selected>(ent)) {
             style.stroke   = t.selection;
             style.stroke_w = 3.0f;
+        }
+
+        // A line dims with its farther end, so the neighbourhood's own relationships
+        // stay legible and the rest recedes without leaving. A line on the explained
+        // path is exempt for the same reason a changed node is: it is the answer to a
+        // question the user asked, not context around one.
+        if (!registry.all_of<ecs::OnExplainedPath>(ent)) {
+            style.stroke = dim(style.stroke, view::focus_brightness(
+                                                 registry.try_get<ecs::FocusDistance>(ent)));
         }
     }
 }

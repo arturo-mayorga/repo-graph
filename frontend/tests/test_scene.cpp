@@ -7,11 +7,14 @@
 #include "TestMain.h"
 
 #include "rgv/model/GraphStore.h"
+#include "rgv/ui/Theme.h"
 #include "rgv/view/CameraFit.h"
 #include "rgv/view/HoverLinks.h"
 #include "rgv/view/SemanticZoom.h"
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 
 using namespace rgv;
 
@@ -121,7 +124,9 @@ rgvtest::Harness make(Snapshot s = chain()) {
 // Getting this wrong means a view mode silently renders the wrong universe.
 TEST(view_mode_selects_which_nodes_exist_on_screen) {
     auto h = make();
-    CHECK_EQ(count_nodes(h), 6);   // repo, three packages, two files; no directories
+    // repo, three packages, and the one file a package holds directly. `file:a/x.ts`
+    // sits under a directory, so it is repository structure rather than a module.
+    CHECK_EQ(count_nodes(h), 5);
 
     h.view().mode = ecs::ViewMode::FileGraph;
     h.tick();
@@ -132,6 +137,318 @@ TEST(view_mode_selects_which_nodes_exist_on_screen) {
     // repo + 3 packages + 1 directory + 2 files. The repository is included here and
     // nowhere else: it is the centre the radial layout grows from.
     CHECK_EQ(count_nodes(h), 7);
+}
+
+namespace {
+
+// The shape a real single-distribution repository has: a package with sub-packages, and
+// loose modules sitting directly beside them. `src/app/assembly.py` is the composition
+// root and `src/app/world.py` is the foundation -- both live in `pkg:app`, and folding
+// them into it puts the top and the bottom of the stack in one box, which is what turns
+// a layered graph into a cycle.
+Snapshot nested() {
+    Snapshot s;
+    s.generation                  = 100;
+    s.session.baseline_generation = 100;
+
+    Node app = mk_node("pkg:app", NodeKind::Package, "dir:src", "app");
+    app.path = "src/app";
+    app.attrs["module_file"] = "src/app/__init__.py";
+
+    s.nodes = {mk_node("repo", NodeKind::Repository),
+               mk_node("dir:src", NodeKind::Directory, "repo"),
+               app,
+               mk_node("file:src/app/__init__.py", NodeKind::File, "pkg:app"),
+               mk_node("file:src/app/world.py", NodeKind::File, "pkg:app"),
+               mk_node("file:src/app/assembly.py", NodeKind::File, "pkg:app"),
+               [] { Node n = mk_node("pypkg:src/app/systems", NodeKind::Package, "pkg:app",
+                                     "app.systems");
+                    n.path = "src/app/systems";
+                    n.attrs["module_file"] = "src/app/systems/__init__.py";
+                    return n; }(),
+               mk_node("file:src/app/systems/__init__.py", NodeKind::File, "pypkg:src/app/systems"),
+               mk_node("file:src/app/systems/movement.py", NodeKind::File, "pypkg:src/app/systems"),
+               mk_node("pypkg:src/app/components", NodeKind::Package, "pkg:app", "app.components"),
+               mk_node("file:src/app/components/motion.py", NodeKind::File,
+                       "pypkg:src/app/components")};
+    s.edges = {mk_edge("e:i1", EdgeKind::Imports, "file:src/app/systems/movement.py",
+                       "file:src/app/components/motion.py"),
+               mk_edge("e:i2", EdgeKind::Imports, "file:src/app/assembly.py",
+                       "file:src/app/systems/movement.py"),
+               mk_edge("e:i3", EdgeKind::Imports, "file:src/app/systems/movement.py",
+                       "file:src/app/world.py")};
+    return s;
+}
+
+} // namespace
+
+// The architecture view's unit is the module: a file a package holds directly. That is
+// what separates the architecture from the repository -- a test, a CSV, a shader or a
+// README lives under a DIRECTORY, never under a package, and none of them is something
+// the code depends on. Folding a package's modules away instead hides the pieces that
+// do the work: on `elevators` the eleven systems that are the application's actual
+// functionality were one box called `systems`.
+TEST(the_architecture_view_draws_every_module_a_package_holds) {
+    rgvtest::Harness h;
+    h.store().reset(nested());
+    h.view().mode  = ecs::ViewMode::Architecture;
+    h.view().level = Level::Package;
+    h.request_rebuild();
+    h.tick();
+
+    // repo, the package, its two sub-packages, and every module any of them holds.
+    CHECK_EQ(count_nodes(h), 8);
+    CHECK(h.index().node("pkg:app") != entt::null);
+    CHECK(h.index().node("pypkg:src/app/systems") != entt::null);
+    CHECK(h.index().node("file:src/app/world.py") != entt::null);
+    CHECK(h.index().node("file:src/app/assembly.py") != entt::null);
+    // The modules that do the work, each one visible in its own right.
+    CHECK(h.index().node("file:src/app/systems/movement.py") != entt::null);
+    CHECK(h.index().node("file:src/app/components/motion.py") != entt::null);
+
+    // `__init__.py` IS its package. Drawing it beside the package is the same duplicate
+    // box the distribution twin already exists to avoid.
+    CHECK(h.index().node("file:src/app/__init__.py") == entt::null);
+    CHECK(h.index().node("file:src/app/systems/__init__.py") == entt::null);
+    // A directory is repository structure, not architecture.
+    CHECK(h.index().node("dir:src") == entt::null);
+
+    // Every line now runs between the modules that actually import each other.
+    CHECK_EQ(edges_between(h, "file:src/app/systems/movement.py",
+                           "file:src/app/components/motion.py"), 1);
+    CHECK_EQ(edges_between(h, "file:src/app/assembly.py",
+                           "file:src/app/systems/movement.py"), 1);
+    CHECK_EQ(edges_between(h, "pkg:app", "pkg:app"), 0);
+}
+
+// The repository is the centre the radial layout grows from, not a module. Folding a
+// dependency onto it makes it a hub with an edge to everything -- which is what the
+// test suite does to it the moment the package node stops swallowing `tests/`: on
+// `elevators` that was 188 test imports arriving as 17 lines out of 66, drawn from the
+// one node that is supposed to mean "here is the middle".
+TEST(a_dependency_never_folds_onto_the_repository) {
+    Snapshot s = nested();
+    s.nodes.push_back(mk_node("dir:tests", NodeKind::Directory, "repo"));
+    s.nodes.push_back(mk_node("file:tests/test_world.py", NodeKind::File, "dir:tests"));
+    s.edges.push_back(mk_edge("e:t1", EdgeKind::Imports, "file:tests/test_world.py",
+                              "file:src/app/world.py"));
+    auto h = make(s);
+
+    CHECK(h.index().node("file:tests/test_world.py") == entt::null);   // outside any package
+    CHECK_EQ(edges_between(h, "repo", "file:src/app/world.py"), 0);
+    // And the line is gone rather than redrawn from somewhere else.
+    CHECK(h.index().edge("e:t1") == entt::null);
+    // What the package's own modules say is untouched.
+    CHECK_EQ(edges_between(h, "file:src/app/systems/movement.py",
+                           "file:src/app/world.py"), 1);
+}
+
+// -- findings: cycles ---------------------------------------------------------
+//
+// The layout spans a tree breadth first, so a back edge becomes a cross-link it
+// ignores. That is fine as a layout and fatal as a reading: an entanglement is the
+// thing a reviewer most needs told and the thing the arrangement is least able to show.
+
+TEST(a_layered_graph_reports_no_cycles) {
+    auto h = make(nested());
+    CHECK_EQ(h.world.resource<ecs::CycleReport>().groups.size(), 0u);
+    CHECK_EQ(h.world.resource<ecs::CycleReport>().lines, 0);
+    for (auto [e, ref] : h.registry().view<const ecs::NodeRef>().each()) {
+        CHECK(!h.registry().all_of<ecs::InCycle>(e));
+    }
+}
+
+TEST(the_architecture_view_names_the_modules_that_are_entangled) {
+    Snapshot s = nested();
+    // A component reaches back into the system that owns it: the two can no longer be
+    // read, tested or replaced apart.
+    s.edges.push_back(mk_edge("e:back", EdgeKind::Imports,
+                              "file:src/app/components/motion.py",
+                              "file:src/app/systems/movement.py"));
+    auto h = make(s);
+
+    const auto& report = h.world.resource<ecs::CycleReport>();
+    CHECK_EQ(report.groups.size(), 1u);
+    CHECK_EQ(report.groups[0].nodes.size(), 2u);
+    CHECK_EQ(report.groups[0].nodes[0], std::string("file:src/app/components/motion.py"));
+    CHECK_EQ(report.groups[0].nodes[1], std::string("file:src/app/systems/movement.py"));
+    CHECK_EQ(report.lines, 2);   // both directions run inside the group
+
+    CHECK(h.registry().all_of<ecs::InCycle>(h.node("file:src/app/systems/movement.py")));
+    CHECK(h.registry().all_of<ecs::InCycle>(h.node("file:src/app/components/motion.py")));
+    // What merely sits above the entanglement is not part of it.
+    CHECK(!h.registry().all_of<ecs::InCycle>(h.node("file:src/app/assembly.py")));
+    CHECK(!h.registry().all_of<ecs::InCycle>(h.node("file:src/app/world.py")));
+
+    // The lines running inside the group are marked, so the picture can say which
+    // dependencies constitute the finding rather than only which boxes.
+    CHECK(h.registry().all_of<ecs::InCycle>(h.edge("e:i1")));
+    CHECK(h.registry().all_of<ecs::InCycle>(h.edge("e:back")));
+    // A line from outside into the group is not itself part of the ring.
+    CHECK(!h.registry().all_of<ecs::InCycle>(h.edge("e:i2")));
+}
+
+// Now that a module is drawn wherever it lives, a ring between two of them is a finding
+// wherever it lives too. The altitude still decides the question -- what changed is the
+// altitude -- and at module level the entanglement inside one package is exactly the
+// kind a reviewer wants told, because those two files are the ones somebody has to
+// untangle.
+TEST(a_ring_between_two_modules_is_a_finding_wherever_they_live) {
+    Snapshot s = nested();
+    s.nodes.push_back(mk_node("file:src/app/systems/rider.py", NodeKind::File,
+                              "pypkg:src/app/systems"));
+    s.edges.push_back(mk_edge("e:r1", EdgeKind::Imports, "file:src/app/systems/rider.py",
+                              "file:src/app/systems/movement.py"));
+    s.edges.push_back(mk_edge("e:r2", EdgeKind::Imports, "file:src/app/systems/movement.py",
+                              "file:src/app/systems/rider.py"));
+    auto h = make(s);
+    const auto& report = h.world.resource<ecs::CycleReport>();
+    CHECK_EQ(report.groups.size(), 1u);
+    CHECK_EQ(report.groups[0].nodes.size(), 2u);
+    CHECK(h.registry().all_of<ecs::InCycle>(h.node("file:src/app/systems/rider.py")));
+    CHECK(h.registry().all_of<ecs::InCycle>(h.node("file:src/app/systems/movement.py")));
+    // The package that holds them is not itself entangled with anything.
+    CHECK(!h.registry().all_of<ecs::InCycle>(h.node("pypkg:src/app/systems")));
+}
+
+// A cycle that goes away must take its marks with it, or the view keeps accusing code
+// that has since been untangled -- the same failure as rendering stale evidence.
+TEST(untangling_a_cycle_clears_the_finding) {
+    Snapshot s = nested();
+    s.edges.push_back(mk_edge("e:back", EdgeKind::Imports,
+                              "file:src/app/components/motion.py",
+                              "file:src/app/systems/movement.py"));
+    auto h = make(s);
+    CHECK_EQ(h.world.resource<ecs::CycleReport>().groups.size(), 1u);
+
+    Snapshot fixed = nested();
+    h.store().reset(fixed);
+    h.request_rebuild();
+    h.tick();
+    CHECK_EQ(h.world.resource<ecs::CycleReport>().groups.size(), 0u);
+    CHECK(!h.registry().all_of<ecs::InCycle>(h.node("pypkg:src/app/systems")));
+}
+
+// -- focus brightness ---------------------------------------------------------
+
+// Distance from what you are looking at, as brightness. Undirected on purpose: a module
+// that imports me is exactly as near as one I import, because the question is "what is
+// around this", not "what breaks if I change it".
+TEST(brightness_falls_off_with_distance_from_the_focus) {
+    auto h = make(nested());
+    h.world.resource<ecs::Selection>().node = "file:src/app/components/motion.py";
+    h.tick();
+
+    auto hops = [&](const std::string& id) {
+        return h.registry().get<ecs::FocusDistance>(h.node(id)).hops;
+    };
+    CHECK_EQ(hops("file:src/app/components/motion.py"), 0);
+    CHECK_EQ(hops("file:src/app/systems/movement.py"), 1);   // imports motion
+    CHECK_EQ(hops("file:src/app/assembly.py"), 2);           // imports movement
+    CHECK_EQ(hops("file:src/app/world.py"), 2);              // imported BY movement
+
+    // A line is as far as its farther end, so it stops where the neighbourhood stops.
+    CHECK_EQ(h.registry().get<ecs::FocusDistance>(h.edge("e:i1")).hops, 1);
+    CHECK_EQ(h.registry().get<ecs::FocusDistance>(h.edge("e:i2")).hops, 2);
+
+    // Each step out is dimmer than the one inside it, and none of it reaches zero:
+    // this says "further away", never "not here".
+    const auto& near = h.registry().get<ecs::Style>(h.node("file:src/app/systems/movement.py"));
+    const auto& far  = h.registry().get<ecs::Style>(h.node("file:src/app/assembly.py"));
+    CHECK(near.fill.r > far.fill.r);
+    CHECK(far.fill.r > 0.0f);
+    CHECK(far.stroke.r > 0.0f);
+}
+
+// What the agent touched is never dimmed, however far from the selection it sits. A
+// change is the thing the view exists to report, and muting it because the user happens
+// to be looking elsewhere is exactly the failure the relevance filter is forbidden.
+TEST(a_change_is_never_dimmed_by_the_focus) {
+    auto h = make(nested());
+    push_change(h.store(), "src/app/assembly.py", "file:src/app/assembly.py");
+    h.world.resource<ecs::Selection>().node = "file:src/app/components/motion.py";
+    h.tick();
+
+    CHECK(h.registry().get<ecs::FocusDistance>(h.node("file:src/app/assembly.py")).hops > 1);
+    const auto& t       = ui::theme();
+    const auto& changed = h.registry().get<ecs::Style>(h.node("file:src/app/assembly.py"));
+    CHECK_EQ(changed.stroke.r, ui::impact_color(0).r);
+    CHECK_EQ(changed.stroke.g, ui::impact_color(0).g);
+    (void)t;
+}
+
+// Nothing focused is not "everything is far away" -- it is "the question has not been
+// asked", and the graph is at full strength.
+TEST(with_nothing_focused_nothing_is_dimmed) {
+    auto h = make(nested());
+    h.tick();
+    for (auto [e, ref] : h.registry().view<const ecs::NodeRef>().each()) {
+        CHECK(!h.registry().all_of<ecs::FocusDistance>(e));
+    }
+}
+
+// A finding has to look like one. Colour plus weight, and the weight is the channel
+// that survives evidence quality overruling the colour -- a stale relationship inside a
+// cycle must still read as stale (NFR-04) without the entanglement going quiet.
+TEST(an_entangled_module_is_styled_as_a_finding) {
+    Snapshot s = nested();
+    s.edges.push_back(mk_edge("e:back", EdgeKind::Imports,
+                              "file:src/app/components/motion.py",
+                              "file:src/app/systems/movement.py"));
+    auto h = make(s);
+    const auto& t = ui::theme();
+
+    const auto& node = h.registry().get<ecs::Style>(h.node("file:src/app/systems/movement.py"));
+    CHECK(node.stroke.r == t.cycle.r && node.stroke.g == t.cycle.g);
+    CHECK(node.stroke_w >= 2.8f);
+
+    const auto& line = h.registry().get<ecs::Style>(h.edge("e:back"));
+    CHECK(line.stroke.r == t.cycle.r && line.stroke.g == t.cycle.g);
+    CHECK(line.stroke_w >= 2.6f);
+
+    // An untangled neighbour keeps its ordinary styling.
+    const auto& clean = h.registry().get<ecs::Style>(h.node("file:src/app/world.py"));
+    CHECK(!(clean.stroke.r == t.cycle.r && clean.stroke.g == t.cycle.g));
+}
+
+// A module is a file whose owner builds or packages it. Python says that with a
+// package; C++ has no such thing and says it with a build target instead. The rule has
+// to be about the RELATION, not about one language's way of expressing it -- otherwise
+// adding a language gives you its top-level boxes and none of the modules that do the
+// work, which is the same complaint that made modules visible in the first place.
+TEST(a_build_target_owns_modules_the_way_a_package_does) {
+    Snapshot s;
+    s.generation                  = 100;
+    s.session.baseline_generation = 100;
+
+    Node tgt = mk_node("tgt:core", NodeKind::BuildTarget, "dir:src", "core");
+    tgt.path = "src";
+
+    s.nodes = {mk_node("repo", NodeKind::Repository),
+               mk_node("dir:src", NodeKind::Directory, "repo"),
+               tgt,
+               mk_node("file:src/graph.cpp", NodeKind::File, "tgt:core"),
+               mk_node("file:src/graph.h", NodeKind::File, "tgt:core"),
+               mk_node("dir:docs", NodeKind::Directory, "repo"),
+               mk_node("file:docs/notes.md", NodeKind::File, "dir:docs")};
+    s.edges = {mk_edge("e:c1", EdgeKind::Imports, "file:src/graph.cpp", "file:src/graph.h")};
+
+    rgvtest::Harness h;
+    h.store().reset(s);
+    h.view().mode  = ecs::ViewMode::Architecture;
+    h.view().level = Level::Package;
+    h.request_rebuild();
+    h.tick();
+
+    CHECK(h.index().node("tgt:core") != entt::null);
+    CHECK(h.index().node("file:src/graph.cpp") != entt::null);
+    CHECK(h.index().node("file:src/graph.h") != entt::null);
+    // A file under a plain directory is repository structure, not a module -- the same
+    // answer a test or a README gets, whatever language the repository is in.
+    CHECK(h.index().node("file:docs/notes.md") == entt::null);
+    CHECK(h.index().node("dir:src") == entt::null);
+    // And the line runs between the two modules, not folded onto the target.
+    CHECK_EQ(edges_between(h, "file:src/graph.cpp", "file:src/graph.h"), 1);
 }
 
 // Structural edges are drawn as hierarchy there, and dependency arrows must not leak in.
@@ -179,14 +496,20 @@ TEST(hiding_unaffected_nodes_keeps_changed_and_impacted_only) {
 // A changed file must make its owning package read as changed, or the architecture
 // view shows nothing at all while the agent is working.
 TEST(a_changed_file_marks_its_owning_package_as_changed) {
-    auto h = make();
-    push_change(h.store(), "a/x.ts", "file:a/x.ts");
+    auto h = make(nested());
+    push_change(h.store(), "src/app/systems/movement.py", "file:src/app/systems/movement.py");
     h.tick();
 
-    CHECK(h.registry().all_of<ecs::Changed>(h.node("pkg:a")));
-    CHECK(!h.registry().all_of<ecs::Changed>(h.node("pkg:b")));
-    CHECK(h.registry().all_of<ecs::Changed>(h.node("file:a/x.ts")));
-    CHECK_EQ(h.stats().changed, 2);   // the module, and the package that owns it
+    // The file itself is inside a leaf package and is not drawn, so the package is the
+    // only thing that can carry the change -- which is exactly why it must.
+    CHECK(h.registry().all_of<ecs::Changed>(h.node("pypkg:src/app/systems")));
+    CHECK(!h.registry().all_of<ecs::Changed>(h.node("pypkg:src/app/components")));
+
+    // A module that is drawn carries it itself, and its package with it.
+    push_change(h.store(), "src/app/world.py", "file:src/app/world.py");
+    h.tick();
+    CHECK(h.registry().all_of<ecs::Changed>(h.node("file:src/app/world.py")));
+    CHECK(h.registry().all_of<ecs::Changed>(h.node("pkg:app")));
 }
 
 // THE rule. The impact result reports how trustworthy the PATH is, which can be worse
@@ -550,24 +873,35 @@ TEST(picking_agrees_with_the_camera_transform) {
 // Clicks have to land on what is drawn. A dot only a few pixels across still needs to
 // be hittable, or overview zoom becomes a test of mouse precision.
 TEST(a_collapsed_dot_is_still_clickable) {
-    auto h = make();
+    auto h = make(nested());
     h.settle();
     view::fit_camera(h.world, {});
     h.camera().zoom = 0.06f;
     CHECK_EQ(view::node_detail(h.camera().zoom, h.view().graph_text_scale).t, 0.0f);
 
-    // c holds no modules, so it is a dot; a package with something inside is a box
-    // whose contents win the click.
-    const entt::entity target = h.node("pkg:c");
+    // `components` holds only files, so nothing of it is drawn inside it and it is a
+    // dot; a package with modules in it is a box whose contents win the click.
+    const entt::entity target = h.node("pypkg:src/app/components");
     const Vec2         centre = h.registry().get<ecs::Position>(target).p;
 
-    h.point_at(h.camera().world_to_screen(centre));
+    const Vec2 at = h.camera().world_to_screen(centre);
+    h.point_at(at);
     CHECK(h.pointer().entity == target);
 
     // A couple of pixels off-centre still hits, because the hit area has a screen
-    // floor. Not much more than that: the nested layout packs packages close enough
-    // that at this zoom the floors of neighbours overlap, and the nearer centre wins.
-    h.point_at(h.camera().world_to_screen(centre) + Vec2{2.0f, 2.0f});
+    // floor. Away from the nearest neighbour, because that floor is all a dot has at
+    // this zoom: the nested layout packs packages within a pixel or two of each other
+    // there, and between two overlapping floors the nearer centre wins. Which way is
+    // "away" is a property of the layout, so it is measured rather than assumed.
+    Vec2  from_nearest{1.0f, 0.0f};
+    float nearest = std::numeric_limits<float>::max();
+    for (auto [e, ref, pos] : h.registry().view<const ecs::NodeRef, const ecs::Position>().each()) {
+        if (e == target) continue;
+        const Vec2  d    = at - h.camera().world_to_screen(pos.p);
+        const float dist = std::sqrt(d.x * d.x + d.y * d.y);
+        if (dist < nearest && dist > 0.0f) { nearest = dist; from_nearest = d / dist; }
+    }
+    h.point_at(at + from_nearest * 2.0f);
     CHECK(h.pointer().entity == target);
 }
 
@@ -699,30 +1033,33 @@ TEST(containment_points_from_the_container_to_what_it_holds) {
 // The other direction, and it is the opposite one: a module points at what it imports,
 // which is the contract's rule for every dependency edge (dependent -> dependency).
 TEST(an_import_points_from_the_module_to_the_one_it_imports) {
-    auto       h = make(chain());
-    const auto e = h.edge("e:y->x");
+    auto       h = make(nested());
+    const auto e = h.edge("e:i2");
     CHECK(e != entt::null);
     const auto& ends = h.registry().get<ecs::Endpoints>(e);
-    CHECK(ends.from == h.node("file:b/y.ts"));   // the importer
-    CHECK(ends.to == h.node("file:a/x.ts"));     // what it imports
+    // `assembly.py` is drawn as itself; what it imports lives inside `systems`, so the
+    // line lands on the package that stands for it.
+    CHECK(ends.from == h.node("file:src/app/assembly.py"));               // the importer
+    CHECK(ends.to == h.node("file:src/app/systems/movement.py"));         // what it imports
 }
 
 // Discs are how the view says "this is laid out radially". They must not leak into the
 // box-based views, or picking and rendering would use the wrong shape there.
-TEST(discs_exist_in_the_tree_views_and_not_in_the_file_graph) {
+TEST(discs_exist_in_the_containment_view_and_not_in_the_dependency_views) {
     auto h = make_filesystem();
     int  discs = 0;
     for ([[maybe_unused]] auto&& row : h.registry().view<const ecs::Disc>().each()) ++discs;
     CHECK(discs > 0);
 
-    // The architecture view is the same radial algorithm over the import tree, so it
-    // has discs too: a node's size is how much is built on it.
+    // The architecture view is laid out concentrically now, not as a packed tree, so
+    // its nodes are boxes like the file graph's. A disc is the containment reading --
+    // "this is how much I hold" -- and containment is not what this view is about.
     h.view().mode = ecs::ViewMode::Architecture;
     h.request_rebuild();
     h.settle();
     discs = 0;
     for ([[maybe_unused]] auto&& row : h.registry().view<const ecs::Disc>().each()) ++discs;
-    CHECK(discs > 0);
+    CHECK_EQ(discs, 0);
 
     h.view().mode  = ecs::ViewMode::FileGraph;
     h.view().level = Level::File;
@@ -978,15 +1315,14 @@ TEST(a_small_directory_sits_closer_than_a_large_sibling) {
     CHECK(length(small - repo) < length(big - repo) * 0.6f);
 }
 
-// Mass is carried by the glow, not by the disc.
+// A directory's disc is sized by what it holds DIRECTLY, never by its whole subtree.
 //
-// A directory's disc has to stay clear of its own files, so it cannot grow with what
-// its subtree holds without shoving that subtree outwards -- which is why it is sized
-// by the files it holds directly and saturates. Gource's answer is to size a directory
-// by the mass beneath it and then draw only a bloom. We keep the disc and add the
-// bloom, so a package with six hundred files under it reads as big without any of it
-// touching the packing.
-TEST(a_directorys_glow_grows_with_everything_beneath_it) {
+// The disc has to stay clear of its own file ring, so growing it with everything
+// underneath would shove that subtree outward and cost a factor of two per level of
+// nesting. This is the invariant that keeps deep trees compact, and it is worth a test
+// of its own because the obvious "bigger subtree, bigger circle" is exactly the change
+// that would break it.
+TEST(a_directorys_disc_is_sized_by_what_it_holds_directly) {
     Snapshot s;
     s.generation                  = 100;
     s.session.baseline_generation = 100;
@@ -1012,14 +1348,12 @@ TEST(a_directorys_glow_grows_with_everything_beneath_it) {
 
     const auto& heavy = h.registry().get<ecs::Disc>(h.node("dir:heavy"));
     const auto& light = h.registry().get<ecs::Disc>(h.node("dir:light"));
-    const auto& file  = h.registry().get<ecs::Disc>(h.node("file:light/one.ts"));
 
-    // The discs are the same size -- neither holds a file directly.
+    // Eighty files further down against none, and the discs are identical: both hold
+    // exactly one file directly, and that is all the disc is allowed to know.
+    // The subtree shows in where its contents are placed, not in the size of the node
+    // that owns them.
     CHECK(std::abs(heavy.radius - light.radius) < 0.01f);
-    // The glows are not.
-    CHECK(heavy.glow > light.glow * 4.0f);
-    // A file has no glow at all; a glow means "this holds things".
-    CHECK_EQ(file.glow, 0.0f);
 }
 
 // Node sizes step by the golden ratio: file, directory, largest directory are r, r*phi,
@@ -1288,8 +1622,13 @@ TEST(a_dependency_node_returns_to_its_ring_after_a_drop) {
     h.settle();
     view::fit_camera(h.world, {});
 
-    const entt::entity b    = h.node("pkg:b");
-    const float        ring = length(h.registry().get<ecs::Position>(b).p);
+    const entt::entity b = h.node("pkg:b");
+    // Selected first, and measured after. Picking a node re-keys the layers onto it,
+    // so the ring it belongs to is only well defined once that has settled -- measuring
+    // before the click would compare against a ring the drag itself moved.
+    h.world.resource<ecs::Selection>().node = "pkg:b";
+    h.settle();
+    const float ring = length(h.registry().get<ecs::Position>(b).p);
 
     h.begin_drag(h.camera().world_to_screen(h.registry().get<ecs::Position>(b).p));
     for (int i = 0; i < 12; ++i) h.drag_by(Vec2{11.0f, 11.0f});
@@ -1611,11 +1950,28 @@ TEST(a_node_that_appears_is_seated_next_to_what_it_connects_to) {
 
 namespace {
 
+// The flat shape, with a symbol under a file. Still what the filesystem view's tests
+// want: that view draws containment, so a directory and the file inside it are the
+// point, and no package needs to nest for it to have something to lay out.
 Snapshot with_symbols() {
     Snapshot s = chain();
     s.nodes.push_back(mk_node("sym:a/x.ts#Foo", NodeKind::Symbol, "file:a/x.ts", "Foo"));
     s.nodes.push_back(mk_node("file:c/z.ts", NodeKind::File, "pkg:c"));   // imports nothing
     s.edges.push_back(mk_edge("e:y-reads-Foo", EdgeKind::References, "file:b/y.ts", "sym:a/x.ts#Foo"));
+    return s;
+}
+
+// The nested shape plus the things the architecture view must NOT draw: a symbol, a
+// declared package dependency, and a module that takes part in nothing.
+Snapshot nested_with_symbols() {
+    Snapshot s = nested();
+    s.nodes.push_back(mk_node("sym:motion#Pos", NodeKind::Symbol,
+                              "file:src/app/components/motion.py", "Pos"));
+    s.nodes.push_back(mk_node("file:src/app/version.py", NodeKind::File, "pkg:app"));
+    s.edges.push_back(mk_edge("e:reads", EdgeKind::References,
+                              "file:src/app/systems/movement.py", "sym:motion#Pos"));
+    s.edges.push_back(mk_edge("e:dep", EdgeKind::DependsOn, "pypkg:src/app/systems",
+                              "pypkg:src/app/components"));
     return s;
 }
 
@@ -1627,31 +1983,32 @@ float gap(rgvtest::Harness& h, const std::string& a, const std::string& b) {
 // The layout tree, read back from where things ended up: a node's parent is whichever
 // node it orbits. Asserting on the arrangement rather than on an internal map.
 int ring_of(rgvtest::Harness& h, const std::string& id) {
-    return h.registry().get<ecs::Depth>(h.index().node(id)).value;
+    return h.registry().get<ecs::Ring>(h.index().node(id)).index;
 }
 
 } // namespace
 
-TEST(the_architecture_view_shows_every_node_from_the_start) {
-    auto h = make(with_symbols());
-    // Files, packages, and the repository the radial layout grows from. Nothing folded,
-    // and no test of whether a module takes part in anything: one that imports nothing
-    // is still part of the architecture.
+TEST(the_architecture_view_shows_every_module_from_the_start) {
+    auto h = make(nested_with_symbols());
+    // Every module and every package, at once. Nothing waits to be expanded, and there
+    // is no test of whether a module takes part in anything: one that imports nothing
+    // and is imported by nothing is still part of the architecture.
     CHECK(h.node("repo") != entt::null);
-    CHECK(h.node("pkg:a") != entt::null);
-    CHECK(h.node("file:a/x.ts") != entt::null);
-    CHECK(h.node("file:b/y.ts") != entt::null);
-    CHECK(h.node("file:c/z.ts") != entt::null);   // imports nothing, still drawn
+    CHECK(h.node("pkg:app") != entt::null);
+    CHECK(h.node("pypkg:src/app/systems") != entt::null);
+    CHECK(h.node("file:src/app/world.py") != entt::null);
+    CHECK(h.node("file:src/app/version.py") != entt::null);   // imports nothing, still drawn
+    CHECK(h.node("file:src/app/components/motion.py") != entt::null);
     // Directories are filesystem structure; this view's structure is what imports what.
-    CHECK(h.node("dir:a") == entt::null);
-    CHECK(h.node("sym:a/x.ts#Foo") == entt::null);
+    CHECK(h.node("dir:src") == entt::null);
+    CHECK(h.node("sym:motion#Pos") == entt::null);
 }
 
 TEST(the_architecture_view_draws_imports_and_nothing_else) {
-    auto h = make(with_symbols());
-    CHECK(h.edge("e:y->x") != entt::null);          // an import
-    CHECK(h.edge("e:y-reads-Foo") == entt::null);   // a symbol read
-    CHECK(h.edge("e:b->a") == entt::null);          // a declared package dependency
+    auto h = make(nested_with_symbols());
+    CHECK(h.edge("e:i1") != entt::null);    // an import
+    CHECK(h.edge("e:reads") == entt::null);   // a symbol read
+    CHECK(h.edge("e:dep") == entt::null);     // a declared package dependency
     for (auto [e, ref] : h.registry().view<const ecs::EdgeRef>().each()) {
         CHECK(ref.kind == EdgeKind::Imports);
     }
@@ -1659,38 +2016,40 @@ TEST(the_architecture_view_draws_imports_and_nothing_else) {
 
 // The reading: the foundation is at the centre and each ring outward is built on the
 // ring inside it. y.ts imports x.ts, so x.ts is nearer the middle.
-TEST(the_import_tree_puts_the_foundation_at_the_centre) {
-    auto h = make(chain());
+
+// The focus reading: selecting a node re-keys the layers on graph distance from it, so
+// it becomes the centre layer and everything else is seated by how far it is from the
+// question being asked. Nothing enters or leaves -- the node set is identical either
+// way, which is what makes this a move rather than a filter.
+TEST(selecting_a_node_makes_it_the_centre_layer) {
+    auto h = make(nested());
     h.settle();
-    CHECK_EQ(ring_of(h, "repo"), 0);
-    CHECK_EQ(ring_of(h, "file:a/x.ts"), 1);   // imports nothing
-    CHECK_EQ(ring_of(h, "file:b/y.ts"), 2);   // imports x.ts
-    CHECK(length(h.registry().get<ecs::Position>(h.node("file:a/x.ts")).p) <
-          length(h.registry().get<ecs::Position>(h.node("file:b/y.ts")).p));
-    // A module orbits the one it imports, and is nearer to it than to anything else.
-    CHECK(gap(h, "file:b/y.ts", "file:a/x.ts") < gap(h, "file:b/y.ts", "repo"));
+    const std::size_t before = count_nodes(h);
+
+    h.world.resource<ecs::Selection>().node = "file:src/app/components/motion.py";
+    h.settle();
+
+    CHECK_EQ(ring_of(h, "file:src/app/components/motion.py"), 0);
+    // movement imports motion directly; assembly reaches it only through movement.
+    CHECK_EQ(ring_of(h, "file:src/app/systems/movement.py"), 1);
+    CHECK(ring_of(h, "file:src/app/assembly.py") >
+          ring_of(h, "file:src/app/systems/movement.py"));
+    // Every node that was on screen is still on screen.
+    CHECK_EQ(count_nodes(h), static_cast<int>(before));
+
+    // And letting the selection go leaves the same nodes on screen: releasing a focus
+    // is a re-seat like taking one, never an arrival or a departure.
+    h.world.resource<ecs::Selection>().node.clear();
+    h.settle();
+    CHECK_EQ(count_nodes(h), static_cast<int>(before));
 }
 
 // A package has no imports, so it sits on the first ring with the rest of the
 // foundation rather than anywhere special.
-TEST(a_node_that_imports_nothing_sits_on_the_first_ring) {
-    auto h = make(with_symbols());
-    h.settle();
-    CHECK_EQ(ring_of(h, "pkg:a"), 1);
-    CHECK_EQ(ring_of(h, "file:c/z.ts"), 1);
-}
 
-TEST(the_architecture_view_uses_the_same_discs_the_filesystem_view_does) {
-    auto h = make(chain());
-    h.settle();
-    CHECK(h.registry().all_of<ecs::Disc>(h.node("file:a/x.ts")));
-    // x.ts is imported by y.ts, so it holds an orbit; y.ts holds nothing and is a dot.
-    CHECK(h.registry().get<ecs::Disc>(h.node("file:a/x.ts")).radius >
-          h.registry().get<ecs::Disc>(h.node("file:b/y.ts")).radius);
-}
 
 TEST(nothing_overlaps_once_the_architecture_layout_settles) {
-    auto h = make(with_symbols());
+    auto h = make(nested_with_symbols());
     h.settle();
     std::vector<entt::entity> all;
     for (auto [e, ref] : h.registry().view<const ecs::NodeRef>().each()) all.push_back(e);
@@ -1698,16 +2057,17 @@ TEST(nothing_overlaps_once_the_architecture_layout_settles) {
         for (std::size_t j = i + 1; j < all.size(); ++j) {
             const auto& pa = h.registry().get<ecs::Position>(all[i]).p;
             const auto& pb = h.registry().get<ecs::Position>(all[j]).p;
-            const float want = h.registry().get<ecs::Disc>(all[i]).radius +
-                               h.registry().get<ecs::Disc>(all[j]).radius;
+            const auto& ea   = h.registry().get<ecs::Extent>(all[i]);
+            const auto& eb   = h.registry().get<ecs::Extent>(all[j]);
+            const float want = std::min(ea.half.y, eb.half.y);
             CHECK(length(pa - pb) > want * 0.9f);
         }
     }
 }
 
 TEST(the_architecture_layout_is_deterministic) {
-    auto a = make(with_symbols());
-    auto b = make(with_symbols());
+    auto a = make(nested_with_symbols());
+    auto b = make(nested_with_symbols());
     a.settle();
     b.settle();
     for (auto [e, ref] : a.registry().view<const ecs::NodeRef>().each()) {
@@ -1718,27 +2078,33 @@ TEST(the_architecture_layout_is_deterministic) {
 }
 
 TEST(parallel_imports_collapse_into_one_line_carrying_a_count) {
-    Snapshot s = chain();
-    // Two contract edges between the same pair: one line, and the line says so.
-    s.edges.push_back(mk_edge("e:y->x2", EdgeKind::Imports, "file:b/y.ts", "file:a/x.ts"));
+    Snapshot s = nested();
+    // A second file-level import across the same package boundary: one line between
+    // the two packages, and the line says how much it stands for. This is where the
+    // count earns its keep -- at module altitude a boundary carries many imports,
+    // where between two files it is almost always exactly one.
+    s.edges.push_back(mk_edge("e:i1b", EdgeKind::Imports,
+                              "file:src/app/systems/movement.py",
+                              "file:src/app/components/motion.py"));
     auto h = make(s);
-    CHECK_EQ(edges_between(h, "file:b/y.ts", "file:a/x.ts"), 1);
-    const auto e = h.edge("e:y->x");
+    CHECK_EQ(edges_between(h, "file:src/app/systems/movement.py",
+                           "file:src/app/components/motion.py"), 1);
+    const auto e = h.edge("e:i1");
     CHECK(e != entt::null);
     CHECK_EQ(h.registry().get<ecs::EdgeWeight>(e).count, 2);
 }
 
 TEST(architecture_view_colours_modules_from_the_file_level_result) {
-    auto h = make();
-    push_change(h.store(), "a/x.ts", "file:a/x.ts");
-    ImpactedNode y;
-    y.node_id = "file:b/y.ts"; y.min_distance = 1; y.direct = true;
-    y.paths.push_back(ImpactPath{{"e:y->x"}});
-    push_impact(h.store(), Level::File, {y}, {"file:a/x.ts"});
+    auto h = make(nested());
+    push_change(h.store(), "src/app/world.py", "file:src/app/world.py");
+    ImpactedNode up;
+    up.node_id = "file:src/app/assembly.py"; up.min_distance = 1; up.direct = true;
+    up.paths.push_back(ImpactPath{{"e:i2"}});
+    push_impact(h.store(), Level::File, {up}, {"file:src/app/world.py"});
     h.tick();
-    CHECK(h.registry().all_of<ecs::Changed>(h.node("file:a/x.ts")));
-    CHECK(h.registry().all_of<ecs::Impacted>(h.node("file:b/y.ts")));
-    CHECK(h.registry().all_of<ecs::Changed>(h.node("pkg:a")));   // owns the change
+    CHECK(h.registry().all_of<ecs::Changed>(h.node("file:src/app/world.py")));
+    CHECK(h.registry().all_of<ecs::Impacted>(h.node("file:src/app/assembly.py")));
+    CHECK(h.registry().all_of<ecs::Changed>(h.node("pkg:app")));   // owns the change
 }
 
 // The symbol level is two-sided: a symbol's dependents are files, so files take part
@@ -1759,30 +2125,32 @@ TEST(at_symbol_level_files_count_as_dependents_of_symbols) {
 // is that a hidden node is gone: its edges are not re-routed to whatever contains it.
 
 TEST(a_hide_pattern_removes_matching_nodes_and_their_edges) {
-    auto h = make(with_symbols());
-    CHECK(ecs::add_hide_pattern(h.filters(), "b/"));
+    auto h = make(nested());
+    CHECK(ecs::add_hide_pattern(h.filters(), "assembly"));
     h.world.resource<ecs::SceneRequests>().revisit = true;
     h.tick();
-    CHECK(h.index().node("file:b/y.ts") == entt::null);
-    CHECK(h.index().node("pkg:b") != entt::null);
-    CHECK(h.index().node("file:a/x.ts") != entt::null);
-    // The read of Foo came from the hidden module. It is gone, not moved up to pkg:b.
-    CHECK(h.index().edge("e:y-reads-Foo") == entt::null);
+    CHECK(h.index().node("file:src/app/assembly.py") == entt::null);
+    CHECK(h.index().node("pkg:app") != entt::null);
+    CHECK(h.index().node("file:src/app/world.py") != entt::null);
+    // The import came from the hidden module. It is gone, not moved up to pkg:app.
+    CHECK(h.index().edge("e:i2") == entt::null);
     for (auto [e, ref, ends] : h.registry().view<const ecs::EdgeRef, const ecs::Endpoints>().each()) {
         if (ref.kind == EdgeKind::Contains) continue;
-        CHECK(!(ends.from == h.index().node("pkg:b") && ends.to == h.index().node("file:a/x.ts")));
+        CHECK(!(ends.from == h.index().node("pkg:app") &&
+                ends.to == h.index().node("pypkg:src/app/systems")));
     }
 }
 
 TEST(hiding_a_package_hides_what_it_holds) {
-    auto h = make();
-    CHECK(ecs::add_hide_pattern(h.filters(), "^pkg:a$"));
+    auto h = make(nested());
+    CHECK(ecs::add_hide_pattern(h.filters(), "^app$"));
     h.world.resource<ecs::SceneRequests>().revisit = true;
     h.tick();
-    CHECK(h.index().node("pkg:a") == entt::null);
-    CHECK(h.index().node("file:a/x.ts") == entt::null);
-    CHECK(h.index().node("pkg:b") != entt::null);
-    CHECK(h.index().node("file:b/y.ts") != entt::null);
+    CHECK(h.index().node("pkg:app") == entt::null);
+    // Everything it holds goes with it: the sub-packages and the modules beside them.
+    CHECK(h.index().node("pypkg:src/app/systems") == entt::null);
+    CHECK(h.index().node("file:src/app/world.py") == entt::null);
+    CHECK(h.index().node("repo") != entt::null);
 }
 
 TEST(an_invalid_pattern_is_kept_but_hides_nothing) {
@@ -1792,30 +2160,30 @@ TEST(an_invalid_pattern_is_kept_but_hides_nothing) {
     CHECK(!h.filters().hidden[0].valid);
     h.world.resource<ecs::SceneRequests>().revisit = true;
     h.tick();
-    CHECK_EQ(count_nodes(h), 6);
+    CHECK_EQ(count_nodes(h), 5);
 }
 
 // Explicit beats everything: the relevance filter spares what the agent changed, but a
 // pattern the user typed is a decision, and a changed test module is still a test.
 TEST(a_hidden_node_stays_hidden_when_it_changes) {
-    auto h = make();
-    CHECK(ecs::add_hide_pattern(h.filters(), "x\\.ts$"));
-    push_change(h.store(), "a/x.ts", "file:a/x.ts");
+    auto h = make(nested());
+    CHECK(ecs::add_hide_pattern(h.filters(), "world\\.py$"));
+    push_change(h.store(), "src/app/world.py", "file:src/app/world.py");
     h.world.resource<ecs::SceneRequests>().revisit = true;
     h.tick();
-    CHECK(h.index().node("file:a/x.ts") == entt::null);
+    CHECK(h.index().node("file:src/app/world.py") == entt::null);
 }
 
 TEST(matching_is_case_insensitive_and_removing_a_pattern_restores_the_nodes) {
-    auto h = make();
-    CHECK(ecs::add_hide_pattern(h.filters(), "Y\\.TS"));
+    auto h = make(nested());
+    CHECK(ecs::add_hide_pattern(h.filters(), "WORLD\\.PY"));
     h.world.resource<ecs::SceneRequests>().revisit = true;
     h.tick();
-    CHECK(h.index().node("file:b/y.ts") == entt::null);
+    CHECK(h.index().node("file:src/app/world.py") == entt::null);
     h.filters().hidden.clear();
     h.world.resource<ecs::SceneRequests>().revisit = true;
     h.tick();
-    CHECK(h.index().node("file:b/y.ts") != entt::null);
+    CHECK(h.index().node("file:src/app/world.py") != entt::null);
 }
 
 // -- dependency curves on hover, over the filesystem tree ------------------------

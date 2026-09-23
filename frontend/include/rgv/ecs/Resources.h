@@ -5,6 +5,7 @@
 // its body -- it asks for Filters, or for Camera, not for "the scene".
 #pragma once
 
+#include "rgv/analysis/Cycles.h"
 #include "rgv/analysis/Reach.h"
 #include "rgv/analysis/Specificity.h"
 #include "rgv/contract/IGraphSource.h"
@@ -191,6 +192,16 @@ struct DerivedState {
     analysis::SpecificityIndex      specificity;
     analysis::ReachIndex            reach;
     std::vector<analysis::HubAlert> hub_alerts;
+};
+
+// What the architecture view found wrong, rather than merely drew. Recomputed from
+// what is on screen, so it answers the question at the altitude being read: two
+// packages can be entangled while none of their files is, and a ring between two
+// modules inside one package is that package's own business, not the architecture's.
+// Owner: CycleSystem.
+struct CycleReport {
+    std::vector<analysis::CycleGroup> groups;
+    int lines = 0;   // drawn lines running inside a group, for the one-line summary
 };
 
 // id -> entity, maintained by SceneSyncSystem. A resource rather than a private map
