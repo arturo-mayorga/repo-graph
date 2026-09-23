@@ -1208,8 +1208,7 @@ void draw_graph_overlay(ecs::World& world, ImDrawList* dl) {
     // in step with the space between nodes, so crowding never eases however far you
     // zoom; screen-space text stays put while the nodes spread apart beneath it.
     if (vs.show_labels) {
-        ImFont*     font    = ImGui::GetFont();
-        const float outside_px = rgv::view::kBaseFontPx * vs.graph_text_scale;
+        ImFont* font = ImGui::GetFont();
 
         for (auto [ent, pos, ext, ref, label] :
              reg.view<const ecs::Position, const ecs::Extent, const ecs::NodeRef,
