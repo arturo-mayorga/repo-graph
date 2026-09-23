@@ -43,6 +43,8 @@ const char* to_label(ViewMode m);
 // but a view opens on the level whose result it can actually draw.
 Level default_level(ViewMode m);
 
+// Owner: CommandSystem, and the startup wiring in main.cpp. Panels hold this const
+// and push commands; that is enforced by the type, not by a convention.
 struct ViewSettings {
     ViewMode mode  = ViewMode::Architecture;
     Level    level = Level::Package;
@@ -63,6 +65,7 @@ struct ViewSettings {
     float graph_text_scale = 1.0f;
 };
 
+// Owner: CommandSystem, and the startup wiring in main.cpp.
 struct Filters {
     bool show_unaffected = true;   // FR-35: "only what the agent touched"
     bool show_stale      = true;
@@ -101,6 +104,11 @@ bool hidden_by_pattern(const Filters& f, const std::string& name, const std::str
 // components were kept in step by hand, and they had already drifted: selecting a node
 // from the inspector updated the ids but never the components, so the canvas showed no
 // outline.
+// Partitioned by field, on purpose, because the three answer to different inputs:
+// `node`/`edge` are owned by CommandSystem, `hovered` by PickingSystem, `path_index`
+// by SelectionSystem (which resets it when the explanation changes) and CommandSystem
+// (which cycles it). No field has two owners; the resource has three because it is one
+// noun the user thinks in and splitting it would put "what is selected" in three places.
 struct Selection {
     NodeId node;
     EdgeId edge;
@@ -122,6 +130,10 @@ struct Selection {
 
 // Where things are on screen. Written by the window and by the panels; read by the
 // camera, picking, and rendering.
+// Partitioned by field: WindowSystem owns the framebuffer size, the panels own the
+// space they leave for the graph. The second is MEASURED during draw rather than
+// chosen -- it is the one thing a panel legitimately writes, and it writes it through
+// a single narrow accessor rather than by holding the resource non-const.
 struct Viewport {
     float framebuffer_w = 1.0f;
     float framebuffer_h = 1.0f;
@@ -141,6 +153,7 @@ struct Viewport {
 
 // Devices, as data. The only thing permitted to read the platform is WindowSystem;
 // everything downstream reads this.
+// Owner: WindowSystem.
 struct FrameInput {
     Vec2  mouse{0.0f, 0.0f};      // framebuffer pixels
     Vec2  mouse_delta{0.0f, 0.0f};
@@ -167,6 +180,7 @@ struct FrameInput {
 // What the pointer is over. Written by PickingSystem, read by NavigationSystem and the
 // panels, so "what is under the cursor" is resolved once per frame rather than three
 // times with three chances to disagree.
+// Owner: PickingSystem.
 struct PointerTarget {
     entt::entity entity     = entt::null;
     bool         over_graph = false;   // inside the free rect and not captured by a panel
@@ -175,6 +189,7 @@ struct PointerTarget {
 // A drag in progress. Navigation records it; layout applies it, because moving a node
 // is a layout question: a directory has to take its files with it, and its neighbours
 // have to get out of the way.
+// Owner: NavigationSystem.
 struct DragState {
     entt::entity node   = entt::null;
     Vec2         delta{0.0f, 0.0f};
@@ -183,12 +198,14 @@ struct DragState {
 
 // While true the camera keeps framing the graph. Any manual pan, zoom, or drag clears
 // it: once the user has placed the view, layout stops moving it.
+// Owner: NavigationSystem for gestures, CommandSystem for commanded framing.
 struct CameraControl {
     bool auto_fit = true;
 };
 
 // Derived once per change and read by several systems: the IDF index over the current
 // graph, and any change to a node most of the repository depends on.
+// Owner: SpecificitySystem.
 struct DerivedState {
     analysis::SpecificityIndex      specificity;
     analysis::ReachIndex            reach;
@@ -245,6 +262,10 @@ struct EntityIndex {
     }
 };
 
+// Partitioned by field, and this one is only a grouping for the readout: counts from
+// ImpactStateSystem, `hidden` from SceneSyncSystem, the layout settle from LayoutSystem,
+// draw counts from GraphRenderSystem. Each field has exactly one writer; they share a
+// struct because they share a panel, not because they share a meaning.
 struct SceneStats {
     int nodes = 0, edges = 0;
     int changed = 0, impacted = 0, stale = 0;
@@ -256,12 +277,14 @@ struct SceneStats {
     bool  layout_settled  = false;
 };
 
+// Owner: UiSystem.
 struct FrameTiming {
     float fps      = 60.0f;   // smoothed
     float frame_ms = 0.0f;
 };
 
 // The platform window. Owned by WindowSystem; the only handle to the OS in the world.
+// Owner: the startup wiring in main.cpp; read-only afterwards.
 struct WindowHandle {
     void* window       = nullptr;   // GLFWwindow*, opaque so core need not know GLFW
     bool  should_close = false;
@@ -269,6 +292,8 @@ struct WindowHandle {
 
 // The attached data source. Swapping what lives here -- a fixture player today, a
 // filesystem watcher later -- is the whole extension point.
+// Owner: the bootstrap that attaches a source. Panels hold it const, so a panel
+// cannot drive the source directly -- transport goes through TransportSystem.
 struct SourceHandle {
     IGraphSource* source = nullptr;
     // Non-null exactly when the source is replayable. The only capability check in the
@@ -280,6 +305,7 @@ struct SourceHandle {
 //
 // `load` is installed by whoever constructed the source, because only it knows how to
 // build one. CommandSystem calls it; it does not need to know what a fixture is.
+// Owner: the startup wiring in main.cpp; read-only afterwards.
 struct FixtureLibrary {
     std::vector<std::string> dirs;
     std::vector<std::string> names;
@@ -289,12 +315,18 @@ struct FixtureLibrary {
 };
 
 // User preferences and where they came from.
+// Owner: the startup wiring in main.cpp; read-only afterwards.
 struct SettingsResource {
     config::Settings      values;
     std::filesystem::path path;
 };
 
-// Set by any system that needs the scene rebuilt or refitted before the next frame.
+// Owner: none, deliberately -- this is a request board, not state, and several systems
+// post to it. The rule is that a poster only ever sets a flag TRUE and the one consumer
+// clears it, so two posters in a frame cannot lose each other's request. Framing is not
+// here: it goes through `FitView` on the command queue, because the camera already has
+// one owner and a second flag-shaped route to it is the duplicated state this design
+// exists to refuse.
 // Distinct from CommandQueue: these are idempotent flags, not an ordered log.
 struct SceneRequests {
     // Teardown. The visible node set is a function of the view MODE, so switching mode
@@ -319,7 +351,6 @@ struct SceneRequests {
     // apart -- which is a nudge, not a rearrangement.
     bool resettle = false;
 
-    bool refit = false;
 };
 
 } // namespace rgv::ecs

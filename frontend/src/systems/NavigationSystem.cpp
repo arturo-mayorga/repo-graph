@@ -87,9 +87,12 @@ void NavigationSystem::run(ecs::World& world, const ecs::FrameContext&) {
         }
     }
 
+    // A command like the two below it, rather than a write. Tab used to reach into
+    // ViewSettings here while F and Escape went through the queue, so two of the three
+    // keys on this keyboard were applied in one order and the third in another.
     if (input.panels_pressed) {
-        auto& settings       = world.resource<ecs::ViewSettings>();
-        settings.show_panels = !settings.show_panels;
+        queue.push(ecs::SetViewToggle{ecs::ViewToggle::ShowPanels,
+                                      !world.resource<ecs::ViewSettings>().show_panels});
     }
     if (input.fit_pressed) queue.push(ecs::FitView{});
     if (input.escape_pressed) queue.push(ecs::ClearSelection{});

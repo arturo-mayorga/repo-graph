@@ -203,8 +203,11 @@ bool SceneSyncSystem::node_visible(const ecs::World& world, const Node& n) const
                                owner->kind != NodeKind::BuildTarget)) {
                     return false;
                 }
-                auto it = package_module_file_.find(n.parent);
-                if (it != package_module_file_.end() && it->second == n.id) return false;
+                auto it = package_modules_.find(n.parent);
+                if (it != package_modules_.end() &&
+                    std::find(it->second.begin(), it->second.end(), n.id) != it->second.end()) {
+                    return false;
+                }
             }
             break;
         case ecs::ViewMode::Filesystem:
@@ -322,14 +325,21 @@ NodeId SceneSyncSystem::representative(const ecs::World& world, NodeId id) const
 // is not drawn a second time beside it.
 void SceneSyncSystem::choose_module_altitude(ecs::World& world) {
     const auto& store = world.resource<GraphStore>();
-    package_module_file_.clear();
+    package_modules_.clear();
     for (const auto& [id, n] : store.nodes()) {
         if (n.kind != NodeKind::Package) continue;
         // A package's own `__init__.py` is the package. Drawing it beside its package
         // is a second box with the same meaning, which is exactly what the provider
         // drops the distribution twin to avoid.
-        if (auto it = n.attrs.find("module_file"); it != n.attrs.end()) {
-            package_module_file_[id] = "file:" + it->second;
+        auto it = n.attrs.find("module_nodes");
+        if (it == n.attrs.end()) continue;
+        auto& ids = package_modules_[id];
+        for (std::size_t at = 0; at <= it->second.size();) {
+            const std::size_t comma = it->second.find(',', at);
+            const std::size_t end   = comma == std::string::npos ? it->second.size() : comma;
+            if (end > at) ids.emplace_back(it->second, at, end - at);
+            if (comma == std::string::npos) break;
+            at = comma + 1;
         }
     }
 }

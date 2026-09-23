@@ -1,4 +1,9 @@
-// Keyboard control of a replayable source: play/pause, step, restart.
+// Control of a replayable source: play/pause, step, restart, seek, rate.
+//
+// The sole owner of the timeline. Keys reach it as FrameInput and the transport panel
+// reaches it as commands, which this system drains itself rather than leaving to
+// CommandSystem -- the panel used to call play() and seek_ms() directly, and a second
+// caller is how "who moved the timeline" stops having an answer.
 //
 // Does nothing when the attached source has no timeline, which is how a live backend
 // will behave. The keys simply stop responding rather than the app needing to know

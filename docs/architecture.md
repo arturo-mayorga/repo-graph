@@ -69,6 +69,23 @@ That bug is now unrepresentable, and `test_scene.cpp` holds the line.
 **Panels never mutate.** They read resources and push commands. `CommandSystem` is the
 single place anything is applied, so there is one order in which things happen.
 
+This is a type rather than a rule. `ui::Ui` gathers the resources a panel touches and
+holds every one of them by const reference except the command queue, so a panel that
+writes state does not compile. It had to become one: as a comment it was broken at
+roughly thirty sites — checkboxes bound straight to `ViewSettings` fields, `Filters`
+written mid-drag, the timeline played and seeked from the transport panel — and five
+commands had been implemented and were pushed by nothing at all, because the panel was
+doing the work inline instead. The cost is that every control needs a verb in
+`Commands.h` and a control's value lags the resource by one frame; sliders are
+positioned from the pointer while held, so the lag does not show.
+
+Two owners are named rather than assumed. `TransportSystem` drains the transport
+commands itself, in `Input`, before `CommandSystem` runs — the timeline is its to move,
+and the panel's buttons take the same road the keys already did. `Viewport` is the one
+resource a panel writes, through a separate accessor with its own comment: the free
+rectangle and the toolbar height are *measured* while drawing, not chosen, so no command
+could have carried them.
+
 **Nothing derived is cached without a reason.** Most Simulate systems run every frame
 as linear passes with no allocation after warm-up. Only `SpecificitySystem`, the one
 that is genuinely superlinear in the graph, is gated on its inputs changing.

@@ -103,8 +103,21 @@ watch what it produces without a UI at all:
 ```
 
 The provider has five adapters. The **filesystem** adapter reports containment: which
-files and directories exist and when they change. The **manifest** adapter finds packages
-and their declared dependencies, which is what populates the Architecture view:
+files and directories exist and when they change.
+
+What it walks is the repository minus what the repository says is derived: the root
+`.gitignore`, plus a built-in list of directories that cost more to watch than they can
+be worth (`node_modules`, `.venv`, `__pycache__`, `build`, …) for repositories that say
+nothing. This matters more than it sounds — a derived tree is not noise in the graph, it
+is a second graph, and this repository's own `build-headless/` was contributing 24
+packages that were temp checkouts written by the test suite. It is patterns and names,
+never a prefix: `builder/` and `buildings/` are source directories with an unlucky
+spelling, and hiding source is a worse failure than showing a build tree. The supported
+subset of gitignore syntax, and the cases deliberately left out, are documented at the
+top of `provider/watch/Ignore.h`.
+
+The **manifest** adapter finds packages and their declared dependencies, which is what
+populates the Architecture view:
 
 | Ecosystem | Manifest | Reads |
 |---|---|---|

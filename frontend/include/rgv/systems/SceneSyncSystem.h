@@ -49,8 +49,12 @@ private:
     std::unordered_map<EdgeId, std::pair<NodeId, NodeId>> drawn_;
     // How many contract edges each drawn line stands for.
     std::unordered_map<EdgeId, int> weights_;
-    // The file that *is* each package, by package id -- `__init__.py` and its kind.
-    std::unordered_map<NodeId, NodeId> package_module_file_;
+    // The node(s) that ARE each package or build target, by that unit's id. Ids, taken
+    // verbatim from `attrs.module_nodes` -- never reconstructed from a path, because
+    // contract 2 says an id is opaque and the frontend that parses one works by luck
+    // until a provider spells its ids differently. Plural because a C++ module is a
+    // header and a source; Python's single `__init__.py` is the special case.
+    std::unordered_map<NodeId, std::vector<NodeId>> package_modules_;
     bool          primed_     = false;
 };
 

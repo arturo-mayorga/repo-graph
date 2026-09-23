@@ -153,7 +153,7 @@ Snapshot nested() {
 
     Node app = mk_node("pkg:app", NodeKind::Package, "dir:src", "app");
     app.path = "src/app";
-    app.attrs["module_file"] = "src/app/__init__.py";
+    app.attrs["module_nodes"] = "file:src/app/__init__.py";
 
     s.nodes = {mk_node("repo", NodeKind::Repository),
                mk_node("dir:src", NodeKind::Directory, "repo"),
@@ -164,7 +164,7 @@ Snapshot nested() {
                [] { Node n = mk_node("pypkg:src/app/systems", NodeKind::Package, "pkg:app",
                                      "app.systems");
                     n.path = "src/app/systems";
-                    n.attrs["module_file"] = "src/app/systems/__init__.py";
+                    n.attrs["module_nodes"] = "file:src/app/systems/__init__.py";
                     return n; }(),
                mk_node("file:src/app/systems/__init__.py", NodeKind::File, "pypkg:src/app/systems"),
                mk_node("file:src/app/systems/movement.py", NodeKind::File, "pypkg:src/app/systems"),
@@ -488,6 +488,44 @@ TEST(a_cycle_appearing_or_going_is_seen_despite_the_gate) {
     h.settle();
     CHECK_EQ(report.groups.size(), 0u);
     CHECK(!h.registry().all_of<ecs::InCycle>(h.node("file:src/app/systems/movement.py")));
+}
+
+// Node ids are opaque (contract 2). The frontend reads `module_nodes` verbatim and
+// never rebuilds an id from a path -- a provider that spells its ids any other way used
+// to fail this comparison silently and draw a duplicate box beside every package. No
+// error, no failing test, just a wrong picture. So the fixture here deliberately does
+// NOT use the `file:<path>` convention.
+TEST(a_packages_own_module_is_folded_whatever_its_id_looks_like) {
+    Snapshot s;
+    s.generation                  = 100;
+    s.session.baseline_generation = 100;
+
+    Node pkg = mk_node("unit/7", NodeKind::Package, "repo", "core");
+    pkg.path = "core";
+    pkg.attrs["module_nodes"] = "blob@aa11,blob@bb22";
+
+    Node header = mk_node("blob@aa11", NodeKind::File, "unit/7", "core.h");
+    Node source = mk_node("blob@bb22", NodeKind::File, "unit/7", "core.cpp");
+    Node other  = mk_node("blob@cc33", NodeKind::File, "unit/7", "helper.cpp");
+    header.path = "core/core.h";
+    source.path = "core/core.cpp";
+    other.path  = "core/helper.cpp";
+
+    s.nodes = {mk_node("repo", NodeKind::Repository), pkg, header, source, other};
+
+    rgvtest::Harness h;
+    h.store().reset(s);
+    h.view().mode  = ecs::ViewMode::Architecture;
+    h.view().level = Level::Package;
+    h.request_rebuild();
+    h.tick();
+
+    // Both files that ARE the unit fold into it; the one that merely lives inside does
+    // not. Plural matters: a C++ module is a header and a translation unit.
+    CHECK(h.index().node("unit/7") != entt::null);
+    CHECK(h.index().node("blob@aa11") == entt::null);
+    CHECK(h.index().node("blob@bb22") == entt::null);
+    CHECK(h.index().node("blob@cc33") != entt::null);
 }
 
 // A finding has to look like one. Colour plus weight, and the weight is the channel

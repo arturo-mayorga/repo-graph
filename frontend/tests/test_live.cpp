@@ -540,9 +540,13 @@ TEST(a_single_distribution_shows_its_python_packages_as_architecture) {
     CHECK(store.node("dir:src/demo/api") == nullptr);   // the package replaces the directory
 
     // The file that IS each package, so a real `from demo import x` can be told apart
-    // from a reach into some module that merely lives inside it.
-    CHECK_EQ(demo->attrs.at("module_file"), std::string("src/demo/__init__.py"));
-    CHECK_EQ(api->attrs.at("module_file"), std::string("src/demo/api/__init__.py"));
+    // from a reach into some module that merely lives inside it. Node ids, not paths:
+    // the frontend must never build an id out of an attribute, because the next
+    // provider to id a file by anything but its path would then have every package
+    // shadowed by a duplicate box with nothing to signal it (contract 2, 6.4).
+    CHECK_EQ(demo->attrs.at("module_nodes"), std::string("file:src/demo/__init__.py"));
+    CHECK_EQ(api->attrs.at("module_nodes"), std::string("file:src/demo/api/__init__.py"));
+    CHECK(store.node(demo->attrs.at("module_nodes")) != nullptr);   // and they resolve
 
     // The distribution stands where its code stands. `pyproject.toml` is at the repo
     // root, but the package it declares is `src/demo`, and seating the node on the
@@ -601,6 +605,42 @@ TEST(a_single_distribution_shows_its_python_packages_as_architecture) {
     for (const auto& n : pkg->impacted_nodes) theirs.insert(n.node_id);
     for (const auto& n : mine.impacted_nodes) ours.insert(n.node_id);
     CHECK(theirs == ours);
+}
+
+// -- what the walk descends into ---------------------------------------------
+//
+// The graph is only as true as the file list under it. Pointing the viewer at this
+// repository reported 24 packages and every one of them came out of `build-headless/`,
+// a directory the hardcoded skip list did not name and the repository's own
+// `.gitignore` did. A derived tree is not noise in the graph; it is a second graph.
+
+TEST(a_build_tree_the_repository_ignores_never_reaches_the_graph) {
+    PyRepo r("provider-gitignore");
+    r.write(".gitignore", "build-*/\nout.json\n");
+    r.write("src/app.py", "x = 1\n");
+    // What git ignores: a whole generated tree, and one generated file.
+    r.write("build-headless/tmp/pyproject.toml", "[project]\nname = \"phantom\"\n");
+    r.write("build-headless/tmp/phantom/__init__.py", "");
+    r.write("out.json", "{}\n");
+    // ... and what it does not. A prefix match on `build` would swallow both of these,
+    // which is why the skip rule is patterns and names, never a prefix.
+    r.write("builder/rules.py", "y = 2\n");
+    r.write("buildings/plan.py", "z = 3\n");
+
+    live::LiveSource src({RGV_WATCH_BIN, "--root", r.root}, 5000.0);
+    GraphStore       store;
+    store.reset(src.baseline());
+    settle(src, store);
+
+    for (const auto& [id, n] : store.nodes()) {
+        CHECK(n.path.rfind("build-headless", 0) != 0);
+        CHECK(n.kind != NodeKind::Package);   // the phantom distribution came with it
+    }
+    CHECK(store.node("file:out.json") == nullptr);
+
+    CHECK(store.node("file:builder/rules.py") != nullptr);
+    CHECK(store.node("file:buildings/plan.py") != nullptr);
+    CHECK(store.node("file:src/app.py") != nullptr);
 }
 
 // Dropping an `__init__.py` into a directory makes it a package. The directory node
@@ -839,6 +879,14 @@ TEST(the_cpp_provider_resolves_includes_and_makes_targets_the_architecture) {
     CHECK_EQ(core->attrs.at("type"), std::string("library"));
     CHECK_EQ(core->attrs.at("manifest"), std::string("CMakeLists.txt"));
     CHECK_EQ(core->path, std::string("lib"));   // where its code is: src/ and include/
+
+    // The files that ARE the target, and why the attribute is plural: a C++ module is
+    // a header and a translation unit, and `core.h` is the one other code includes.
+    CHECK_EQ(core->attrs.at("module_nodes"),
+             std::string("file:lib/include/lib/core.h,file:lib/src/core.cpp"));
+    // `app` is built from `main.cpp`. Nothing in a C++ repository says that file is the
+    // target, and naming it anyway would fold away a real edge, so nothing is emitted.
+    CHECK_EQ(app->attrs.count("module_nodes"), 0u);
 
     // The containment the architecture view needs. The headers are in no build file at
     // all, and the target owns them because its sources reach them -- without that the
