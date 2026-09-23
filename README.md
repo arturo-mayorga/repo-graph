@@ -463,10 +463,34 @@ structure is not shaken apart.
 
 ### The architecture view
 
-The same radial algorithm the filesystem view uses, driven by imports instead of
-containment. Every module and every package is on screen from the start, along with the
-repository the layout grows from. Nothing waits to be expanded, and nothing has to take
-part in a dependency to be drawn.
+Concentric, not a packed tree. Every module and every package is on screen from the
+start, and nothing has to take part in a dependency to be drawn. A ring says how far out
+a node sits; ordering within a ring is solved by barycentre sweeps so dependency lines
+run roughly radially instead of chording across the middle.
+
+**Clicking a node turns the graph to face it.** The selection becomes the centre ring,
+and every other node is re-seated by how many hops it is from the question being asked.
+Nothing enters or leaves — the node set is identical before and after — and positions
+ease, so the graph is seen to turn rather than to be replaced. Let the selection go and
+it settles back to the resting reading, where the ring is *reach*: what the most of the
+repository is ultimately built on sits in the middle and the consumers end up on the rim.
+
+That is one scalar changing. Same data, same topology, same renderer — only the key that
+decides the ring. It is why this is a re-seat and never a filter, which matters because
+the view's job is to be watched while an agent edits: anything hidden is a change that
+could land unseen.
+
+**Distance is also brightness.** From the selection outward, each hop is a fixed fraction
+dimmer than the one inside it — geometric, so the first two or three rings separate
+sharply, which is where the question is, and the far field compresses rather than
+marching evenly into the background. It is floored, and the floor is the design: the
+dimmest thing on screen is still findable, readable and clickable. This says *further
+away*, never *not here*.
+
+Two exemptions, and they are the same rule twice: what the agent changed is never dimmed,
+and neither is a line on the explained path. A change is what the view exists to report,
+and muting it because the reader happens to be looking elsewhere is exactly what the
+relevance filter is forbidden to do.
 
 **The unit is the module: a file something builds or packages.** Everything else a
 repository holds — tests, fixtures, shaders, documentation — sits under a plain
