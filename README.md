@@ -458,6 +458,18 @@ and the graph became a static picture that stopped reacting to itself. Pinning i
 available, explicitly, on double click -- or from the inspector, which is where a file
 pins now that its double click belongs to the desktop.
 
+**If a file does not open, set `open_command`.** `~/.config/rgv/settings.json` takes an
+`open_command` — `"kitty -e nvim {}"`, `"code -g {}"` — and a `{}` in it is replaced by
+the absolute path; without one the path is appended. It is split on whitespace and run
+directly, never through a shell, so a space in a filename is part of the name.
+
+You need it when your desktop's handler for a source file is a **`Terminal=true`**
+entry, which is the common case for `nvim`, `helix` and `emacs -nw`. The launcher is
+reparented so it outlives the session, which means it has no terminal to run in, and a
+terminal editor started that way dies without drawing anything. Nothing we can detect
+from here — so the escape hatch is explicit rather than guessed. When the launcher
+cannot start at all, that is now reported on stderr rather than silently swallowed.
+
 **Double-clicking a file opens it** with whatever this desktop already opens that kind
 of file with: `xdg-open` on Linux, `open` on macOS. Not a viewer of our own. The user
 has already chosen their editor, the desktop already knows the association, and a

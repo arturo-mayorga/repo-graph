@@ -11,6 +11,7 @@
 
 #include <filesystem>
 #include <string>
+#include <string>
 
 namespace rgv::config {
 
@@ -26,6 +27,20 @@ struct Settings {
     // a large monorepo may well want big panel text and small graph text at once.
     float ui_text_scale    = 1.0f;
     float graph_text_scale = 1.0f;
+
+    // What to run when a node is opened. Empty means the desktop's own launcher, which
+    // is right until it isn't: a desktop whose handler for C++ source is a
+    // `Terminal=true` entry -- nvim, helix, emacs -nw -- hands an editor to a process
+    // with no terminal to run it in, and the file silently never opens. There is no way
+    // for us to detect that from here, so this is how a user says what to run instead.
+    //
+    // A `{}` token is replaced by the absolute path; without one the path is appended.
+    // Split on whitespace and exec'd directly -- there is no shell in this path, so a
+    // space or a quote in a filename is part of the name and nothing more.
+    //
+    //     "open_command": "kitty -e nvim {}"
+    //     "open_command": "code -g {}"
+    std::string open_command;
 
     static constexpr float kMinTextScale = 0.70f;
     static constexpr float kMaxTextScale = 2.50f;

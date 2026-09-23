@@ -170,7 +170,10 @@ void CommandSystem::run(ecs::World& world, const ecs::FrameContext&) {
                             std::fprintf(stderr,
                                          "rgv: not opening '%s': no such file inside %s\n",
                                          n->path.c_str(), store.baseline().repo.root.c_str());
-                        } else if (!platform::open_in_default_app(abs, &err)) {
+                        } else if (!platform::open_with(
+                                       abs,
+                                       world.resource<ecs::SettingsResource>().values.open_command,
+                                       &err)) {
                             std::fprintf(stderr, "rgv: could not open '%s': %s\n", abs.c_str(),
                                          err.c_str());
                         }

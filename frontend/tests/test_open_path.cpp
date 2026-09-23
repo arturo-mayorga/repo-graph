@@ -12,11 +12,14 @@
 #include <filesystem>
 #include <fstream>
 
+#include <cstdio>
 #include <cstdlib>
 #include <unistd.h>
 
 namespace fs = std::filesystem;
 using rgv::platform::openable_path;
+using rgv::platform::opener_argv;
+using rgv::platform::open_with;
 
 namespace {
 
@@ -113,3 +116,69 @@ TEST(the_launcher_is_started_with_the_path_as_a_single_argument) {
     CHECK_EQ(got, target);
 }
 
+
+// -- which program gets handed the path ---------------------------------------
+//
+// `xdg-open` is the right default and the wrong answer often enough to need an escape
+// hatch: on a desktop whose handler for `text/x-c++src` is a `Terminal=true` entry --
+// nvim, helix, emacs -nw -- the launcher tries to run an editor with no terminal to run
+// it in, and the file silently never opens. `open_command` is how a user says what to
+// run instead.
+//
+// Split on spaces and exec'd directly. No shell anywhere, same as the launcher path, so
+// nothing in a filename can be read as one.
+
+TEST(no_open_command_means_the_desktop_decides) {
+    const auto argv = opener_argv("", "/repo/src/a.cpp");
+    CHECK_EQ(argv.size(), 2u);
+    CHECK(argv[0] == "xdg-open" || argv[0] == "open");
+    CHECK_EQ(argv[1], std::string("/repo/src/a.cpp"));
+}
+
+TEST(a_placeholder_says_where_the_path_goes) {
+    const auto argv = opener_argv("kitty -e nvim {} +1", "/repo/a b.cpp");
+    CHECK_EQ(argv.size(), 5u);
+    CHECK_EQ(argv[0], std::string("kitty"));
+    CHECK_EQ(argv[1], std::string("-e"));
+    CHECK_EQ(argv[2], std::string("nvim"));
+    CHECK_EQ(argv[3], std::string("/repo/a b.cpp"));   // one argv slot, spaces and all
+    CHECK_EQ(argv[4], std::string("+1"));
+}
+
+TEST(without_a_placeholder_the_path_is_appended) {
+    const auto argv = opener_argv("gedit", "/repo/a.cpp");
+    CHECK_EQ(argv.size(), 2u);
+    CHECK_EQ(argv[0], std::string("gedit"));
+    CHECK_EQ(argv[1], std::string("/repo/a.cpp"));
+}
+
+TEST(extra_spacing_in_the_command_is_not_an_empty_argument) {
+    const auto argv = opener_argv("  code   -g   {}  ", "/repo/a.cpp");
+    CHECK_EQ(argv.size(), 3u);
+    CHECK_EQ(argv[0], std::string("code"));
+    CHECK_EQ(argv[1], std::string("-g"));
+    CHECK_EQ(argv[2], std::string("/repo/a.cpp"));
+}
+
+// Launch failure has to be reportable, or "nothing happened" is indistinguishable from
+// "it worked". This used to return true unconditionally: the launcher is reparented so
+// its exit status is gone by design, and the error branch in CommandSystem could never
+// fire. What IS knowable is whether the program started at all.
+TEST(a_launcher_that_does_not_exist_is_reported) {
+    Tree        t("open-launch-missing");
+    std::string err;
+    const bool  ok =
+        open_with((t.root / "README.md").string(), "rgv-no-such-program-hopefully", &err);
+    CHECK(!ok);
+    CHECK(!err.empty());
+}
+
+TEST(a_launcher_that_starts_is_not_reported_as_a_failure) {
+    Tree        t("open-launch-ok");
+    std::string err;
+    // `/usr/bin/true` ignores its argument and exits 0 -- enough to prove the path runs
+    // without opening a window or an editor in a test. Absolute, because a test should
+    // not depend on what PATH happens to hold.
+    CHECK(open_with((t.root / "README.md").string(), "/usr/bin/true {}", &err));
+    CHECK(err.empty());
+}

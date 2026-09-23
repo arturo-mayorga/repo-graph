@@ -528,6 +528,51 @@ TEST(a_packages_own_module_is_folded_whatever_its_id_looks_like) {
     CHECK(h.index().node("blob@cc33") != entt::null);
 }
 
+// Double-clicking a module hands it to the desktop; double-clicking anything else pins
+// it, because there is no program for "a build target". A C++ source sits under a build
+// target rather than a package and the gesture must not care -- it is a file either way.
+//
+// Asserted through the pin, which is the branch's only observable effect: the open
+// itself leaves the process, and the command is drained in the same frame it is pushed.
+TEST(double_clicking_a_module_opens_it_and_a_target_pins) {
+    Snapshot s;
+    s.generation                  = 100;
+    s.session.baseline_generation = 100;
+
+    Node tgt = mk_node("tgt:core", NodeKind::BuildTarget, "repo", "core");
+    tgt.path = "src";
+    Node src = mk_node("file:src/graph.cpp", NodeKind::File, "tgt:core", "graph.cpp");
+    src.path = "src/graph.cpp";
+
+    s.nodes = {mk_node("repo", NodeKind::Repository), tgt, src};
+
+    rgvtest::Harness h;
+    h.store().reset(s);
+    h.view().mode  = ecs::ViewMode::Architecture;
+    h.view().level = Level::Package;
+    h.request_rebuild();
+    h.settle();
+    view::fit_camera(h.world, {});
+    h.settle();
+
+    auto double_click = [&](const char* id) {
+        const entt::entity e = h.node(id);
+        CHECK(e != entt::null);
+        const Vec2 at = h.camera().world_to_screen(h.registry().get<ecs::Position>(e).p);
+        h.point_at(at);
+        CHECK(h.pointer().entity == e);   // pickable at all
+        h.input().double_click = true;
+        h.point_at(at, /*press=*/true);
+        h.input().double_click = false;
+        return e;
+    };
+
+    // A module is handed out, never pinned.
+    CHECK(!h.registry().all_of<ecs::Pinned>(double_click("file:src/graph.cpp")));
+    // The target has no program, so the gesture still means something.
+    CHECK(h.registry().all_of<ecs::Pinned>(double_click("tgt:core")));
+}
+
 // A finding has to look like one. Colour plus weight, and the weight is the channel
 // that survives evidence quality overruling the colour -- a stale relationship inside a
 // cycle must still read as stale (NFR-04) without the entanglement going quiet.
