@@ -45,6 +45,11 @@ Render/OverlaySystem        labels, legend, hover card
 Present/PresentSystem       swap
 ```
 
+The order and membership above are not maintained by hand. `docs/schedule.txt` is the
+golden copy, and the `schedule` test runs `rgv --schedule` and fails if the two differ
+-- which is what stops this table quietly describing a schedule the application no
+longer has. The table adds what each system is *for*; the golden file is what runs.
+
 `main.cpp` is the world, the schedule, and the loop. Adding a capability is adding a
 system; attaching live data is constructing a different `IGraphSource`. Neither touches
 that file.

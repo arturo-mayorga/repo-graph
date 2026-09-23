@@ -155,6 +155,12 @@ if(RGV_BUILD_TESTS)
     target_compile_definitions(rgv-ui-tests PRIVATE RGV_FIXTURE_DIR="${RGV_FIXTURE_DIR}")
     target_link_libraries(rgv-ui-tests PRIVATE rgv_core rgv_imgui_core)
     add_test(NAME ui_layout COMMAND rgv-ui-tests)
+
+    # The wiring itself, asserted rather than trusted. See cmake/CheckSchedule.cmake.
+    add_test(NAME schedule COMMAND ${CMAKE_COMMAND}
+             -DRGV_BIN=$<TARGET_FILE:rgv>
+             -DGOLDEN=${CMAKE_CURRENT_SOURCE_DIR}/../docs/schedule.txt
+             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckSchedule.cmake)
   endif()
   # Fixture validation is a test too: a scenario whose authored impact disagrees with
   # traversal is a broken fixture, and it should fail CI rather than mislead a reviewer.
