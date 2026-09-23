@@ -26,9 +26,9 @@ void StyleSystem::run(ecs::World& world, const ecs::FrameContext&) {
          registry.view<const ecs::NodeRef, const ecs::FreshnessState, ecs::Style>().each()) {
         const auto* impacted = registry.try_get<ecs::Impacted>(ent);
         const bool  changed  = registry.all_of<ecs::Changed>(ent);
-        // A Disc means the view draws circles rather than boxes -- the filesystem
-        // view. Nothing else needs to know which mode is active.
-        const bool  disc     = registry.all_of<ecs::Disc>(ent);
+        // The view decided this, once, in ShapeSystem. Nothing here knows the mode.
+        const auto* ns   = registry.try_get<ecs::NodeShape>(ent);
+        const bool  disc = ns && ns->form == ecs::NodeShape::Form::Disc;
 
         // A muted result falls back to context: still on screen, still true, no longer
         // competing for attention.

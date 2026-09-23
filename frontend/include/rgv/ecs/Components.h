@@ -119,7 +119,27 @@ struct Disc {
     Vec2 outward{0.0f, 1.0f};
 };
 
-// The user dragged this node. Layout leaves it alone. Owner: DragSystem.
+// What shape this node is DRAWN as, and the geometry drawing needs.
+//
+// The view decides this, not the layout. It used to be inferred from the presence of
+// `Disc` by five separate consumers, which made a layout change the silent channel for
+// restyling an entire view. Now one system reads the mode once and writes this, and
+// everything downstream switches on `form` -- so "why is this node a circle" has one
+// answer and `NodeShape` greps to every consumer. `Disc` goes back to being the
+// packing geometry it is, read by layout and by this system and nobody else.
+//
+// `radius` is the world-space radius of the shape itself; `halo` is the reach of what
+// orbits it, which a label has to clear; `outward` is the direction it orbits away
+// from, so names around a ring fan out instead of stacking. All zero for a box.
+// Owner: ShapeSystem.
+struct NodeShape {
+    enum class Form { Box, Disc };
+    Form  form   = Form::Box;
+    float radius = 0.0f;
+    float halo   = 0.0f;
+    Vec2  outward{0.0f, 1.0f};
+};
+
 // A node that has appeared but has not been given a place yet. Layout claims these,
 // seats them next to whatever they are connected to, and clears the tag -- which is how
 // a filter change costs one node's placement instead of the whole graph's.

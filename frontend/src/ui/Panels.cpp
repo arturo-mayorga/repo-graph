@@ -1190,12 +1190,12 @@ void draw_graph_overlay(ecs::World& world, ImDrawList* dl) {
 
             const bool  changed = reg.all_of<ecs::Changed>(ent);
             const auto* imp     = reg.try_get<ecs::Impacted>(ent);
-            const auto* disc    = reg.try_get<ecs::Disc>(ent);
+            const auto* ns      = reg.try_get<ecs::NodeShape>(ent);
             const auto* space   = reg.try_get<ecs::Spacing>(ent);
             const auto* prom    = reg.try_get<ecs::Prominence>(ent);
             const float pscale  = prom ? prom->scale : 1.0f;
 
-            const rgv::view::DiscShape shape{disc ? disc->radius : 0.0f,
+            const rgv::view::DiscShape shape{ns ? ns->radius : 0.0f,
                                              space ? space->room : 1e9f};
             const Vec2  half = rgv::view::node_half(
                 cam.zoom, detail, ext.half, shape,

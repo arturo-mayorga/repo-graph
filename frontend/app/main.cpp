@@ -31,6 +31,7 @@
 #include "rgv/systems/SpecificitySystem.h"
 #include "rgv/systems/CycleSystem.h"
 #include "rgv/systems/FocusSystem.h"
+#include "rgv/systems/ShapeSystem.h"
 #include "rgv/systems/StyleSystem.h"
 #include "rgv/systems/TransportSystem.h"
 #include "rgv/systems/UiSystem.h"
@@ -161,6 +162,8 @@ void install_systems(ecs::Schedule& schedule, const app::Options& options) {
         // Before layout: both the seating and the dimming read the same walk.
         .add(Phase::Simulate, std::make_unique<FocusSystem>())
         .add(Phase::Simulate, std::make_unique<LayoutSystem>())
+        // After layout, before anything that draws: turns the mode into a shape once.
+        .add(Phase::Simulate, std::make_unique<ShapeSystem>())
         .add(Phase::Simulate, std::make_unique<CycleSystem>())
         .add(Phase::Simulate, std::make_unique<StyleSystem>())
         .add(Phase::Simulate, std::make_unique<LabelSystem>())

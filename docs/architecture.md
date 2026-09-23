@@ -33,9 +33,12 @@ Sync/SpecificitySystem      IDF over in-degree, plus hub alerts
 Sync/SceneSyncSystem        store deltas -> entities. The only creator/destroyer.
 Simulate/ImpactStateSystem  Changed / Impacted / HubSeed
 Simulate/SelectionSystem    Selected / Hovered / OnExplainedPath
-Simulate/LayoutSystem       depth, row ordering, easing
+Simulate/FocusSystem        FocusDistance: one BFS from the selection, read by layout and style
+Simulate/LayoutSystem       ring or tree placement, ordering, easing
+Simulate/ShapeSystem        NodeShape: the only place the view mode becomes a drawn shape
 Simulate/CycleSystem        InCycle / CycleReport, over what is drawn rather than the store
 Simulate/StyleSystem        derives Style. The renderer reads it verbatim.
+Simulate/LabelSystem        decides which names are drawn, and where
 Render/UiSystem             panels first: they decide how much room the graph gets
 Render/GraphRenderSystem    three instanced draw calls
 Render/OverlaySystem        labels, legend, hover card

@@ -673,7 +673,7 @@ Editing a scenario and pressing **Reload** in the app re-reads it from disk.
 ```
 IGraphSource ──poll──▶ GraphStore ──dirty set──▶ World (EnTT) ──▶ GL renderer
   fixture │ live         single writer            components          3 draw calls
-                         of graph state           + 17 systems        + ImGui panels
+                         of graph state           + 19 systems        + ImGui panels
 ```
 
 An entity-component-system: resources are the state there is exactly one of, components

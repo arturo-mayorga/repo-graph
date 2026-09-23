@@ -97,11 +97,12 @@ void LabelSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
             continue;
         }
 
-        const auto* disc  = reg.try_get<ecs::Disc>(ent);
+        const auto* ns    = reg.try_get<ecs::NodeShape>(ent);
         const auto* space = reg.try_get<ecs::Spacing>(ent);
         const auto* prom  = reg.try_get<ecs::Prominence>(ent);
+        const bool  disc  = ns && ns->form == ecs::NodeShape::Form::Disc;
 
-        const view::DiscShape shape{disc ? disc->radius : 0.0f, space ? space->room : 1e9f};
+        const view::DiscShape shape{ns ? ns->radius : 0.0f, space ? space->room : 1e9f};
         const Vec2            half = view::node_half(
             cam.zoom, detail, ext.half, shape,
             view::dot_px_for(reg.all_of<ecs::Changed>(ent), reg.all_of<ecs::Impacted>(ent),
@@ -115,7 +116,7 @@ void LabelSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
         }
 
         Vec2 anchor{s.x, s.y + half.y * cam.zoom + px * 0.25f};
-        if (disc != nullptr) {
+        if (disc) {
             // Along the direction it orbits away from, so names around a ring fan
             // outward instead of stacking, staggered so neighbours miss each other.
             std::uint32_t hash = 2166136261u;
@@ -126,9 +127,9 @@ void LabelSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
             const float stagger = (hash & 1u) ? px * 1.05f : 0.0f;
             // Clear the whole cluster: a directory's files orbit it, so its own name has
             // to sit outside the outermost orbit.
-            const float reach = std::max(half.y, disc->halo);
+            const float reach = std::max(half.y, ns->halo);
             const float away  = reach * cam.zoom + px * 0.55f + stagger;
-            anchor            = Vec2{s.x + disc->outward.x * away, s.y + disc->outward.y * away};
+            anchor            = Vec2{s.x + ns->outward.x * away, s.y + ns->outward.y * away};
             anchor.y -= px * 0.5f;
         }
 

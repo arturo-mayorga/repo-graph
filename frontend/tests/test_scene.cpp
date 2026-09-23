@@ -427,6 +427,36 @@ TEST(a_node_arriving_while_focused_is_seated_by_distance_not_reach) {
     CHECK_EQ(h.registry().get<ecs::Ring>(h.node("file:src/app/near.py")).index, 1);
 }
 
+// Which shape a node is drawn as is a VIEW decision, and it is made in one place.
+//
+// It used to be inferred from the presence of `ecs::Disc` -- a layout output -- by
+// style, labels, picking, the renderer and the overlay independently. That made the
+// layout the secret channel for restyling: flipping the architecture view from a packed
+// tree to a concentric one silently changed its palette, its zoom curve, its label
+// anchoring and its hit-testing, with no edit to any of those files and no way to grep
+// from them. One owner, one component, one grep.
+TEST(the_view_decides_the_shape_and_says_so_in_one_place) {
+    rgvtest::Harness h;
+    h.store().reset(chain());
+    h.view().mode  = ecs::ViewMode::Filesystem;
+    h.view().level = Level::File;
+    h.request_rebuild();
+    h.settle();
+
+    const auto& file = h.registry().get<ecs::NodeShape>(h.node("file:a/x.ts"));
+    CHECK(file.form == ecs::NodeShape::Form::Disc);
+    CHECK(file.radius > 0.0f);
+
+    // The dependency views draw boxes. Nothing asks the layout what it packed.
+    h.view().mode  = ecs::ViewMode::Architecture;
+    h.view().level = Level::Package;
+    h.request_rebuild();
+    h.settle();
+    for (auto [e, ref, shape] : h.registry().view<const ecs::NodeRef, const ecs::NodeShape>().each()) {
+        CHECK(shape.form == ecs::NodeShape::Form::Box);
+    }
+}
+
 // A finding has to look like one. Colour plus weight, and the weight is the channel
 // that survives evidence quality overruling the colour -- a stale relationship inside a
 // cycle must still read as stale (NFR-04) without the entanglement going quiet.

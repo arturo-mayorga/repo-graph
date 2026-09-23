@@ -20,6 +20,7 @@
 #include "rgv/systems/SpecificitySystem.h"
 #include "rgv/systems/CycleSystem.h"
 #include "rgv/systems/FocusSystem.h"
+#include "rgv/systems/ShapeSystem.h"
 #include "rgv/systems/StyleSystem.h"
 
 #include <memory>
@@ -72,6 +73,7 @@ struct Harness {
             .add(Phase::Simulate, std::make_unique<systems::SelectionSystem>())
             .add(Phase::Simulate, std::make_unique<systems::FocusSystem>())
             .add(Phase::Simulate, std::make_unique<systems::LayoutSystem>())
+            .add(Phase::Simulate, std::make_unique<systems::ShapeSystem>())
             .add(Phase::Simulate, std::make_unique<systems::CycleSystem>())
             .add(Phase::Simulate, std::make_unique<systems::StyleSystem>())
             .add(Phase::Simulate, std::make_unique<systems::LabelSystem>());
