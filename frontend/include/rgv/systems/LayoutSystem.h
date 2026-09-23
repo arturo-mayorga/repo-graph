@@ -100,6 +100,12 @@ private:
     void reset(ecs::World& world);
     void assign_depths(ecs::World& world);
     void concentric_place(ecs::World& world);
+    // Which ring a node belongs on, under whichever key the current arrangement uses.
+    // One function because two callers need the same answer: the placer chooses the
+    // radii, and `seat_newcomers` drops arrivals into them. A newcomer seated by a
+    // different rule lands in an annulus meant for a different question, and
+    // `relax_rings` then springs it home to that wrong radius and holds it there.
+    int  ring_index_for(ecs::World& world, entt::entity e, int rings) const;
     std::unordered_map<std::uint32_t, entt::entity> tree_parents(ecs::World& world) const;
     void radial_tree(ecs::World& world);
     void measure_spacing(ecs::World& world);
@@ -122,6 +128,9 @@ private:
     // rather than freely: the ring is the reach reading, so a node that drifts off its
     // own stops telling the truth about how much of the repository is behind it.
     std::unordered_map<int, float> ring_radius_;
+    // What `ring_radius_` was keyed on. Read back by `seat_newcomers`, which runs long
+    // after the placer and cannot otherwise know which question the rings answer.
+    bool rings_keyed_on_focus_ = false;
 
     // Live-relaxation state. `rest_` is captured when a drag starts, so the springs
     // pull toward what the structural layout produced rather than toward a guess.

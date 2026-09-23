@@ -73,6 +73,35 @@ void LayoutSystem::assign_depths(ecs::World& world) {
     }
 }
 
+// Which ring a node belongs on. See the declaration for why this is one function.
+//
+// Focused, the key is hops from the selection, straight through. No sqrt: distance is
+// already the reading, and squashing it would put "two away" and "five away" on the
+// same layer, which is the exact distinction the focus exists to draw. Anything the
+// selection cannot reach goes to the rim rather than the core, because "unrelated to
+// what I am looking at" belongs with the far field.
+//
+// At rest the key is reach, and sqrt earns its place: reach is heavily skewed -- a core
+// everything imports, a wide middle, a rim of leaves -- so a linear map leaves every
+// ring but the outermost nearly empty.
+int LayoutSystem::ring_index_for(ecs::World& world, entt::entity e, int rings) const {
+    auto&     reg  = world.registry;
+    const int last = std::max(0, rings - 1);
+
+    if (rings_keyed_on_focus_) {
+        const auto* fd = reg.try_get<ecs::FocusDistance>(e);
+        const int   d  = (!fd || fd->hops == ecs::kUnreached) ? last : fd->hops;
+        return std::clamp(d, 0, last);
+    }
+
+    const auto& reach  = world.resource<ecs::DerivedState>().reach;
+    const auto* ref    = reg.try_get<ecs::NodeRef>(e);
+    const int   widest = std::max(1, reach.widest());
+    const int   r      = ref ? reach.dependents(ref->id) : 0;
+    const float t = 1.0f - std::sqrt(static_cast<float>(r) / static_cast<float>(widest));
+    return std::clamp(static_cast<int>(std::lround(t * static_cast<float>(last))), 0, last);
+}
+
 // Concentric placement for the dependency views.
 //
 // The ring is reach: how much of the repository transitively depends on this node. The
@@ -133,27 +162,11 @@ void LayoutSystem::concentric_place(ecs::World& world) {
             : std::clamp(std::min({params_.max_rings, widest + 1, by_population}), 2,
                          params_.max_rings);
 
+    rings_keyed_on_focus_ = focus != entt::null;
+
     std::vector<std::vector<entt::entity>> layer(static_cast<std::size_t>(rings));
     for (auto e : all) {
-        int idx;
-        if (focus != entt::null) {
-            // Hops from the selection, straight through. No sqrt: distance is already
-            // the reading, and squashing it would put "two away" and "five away" on the
-            // same layer -- the exact distinction the focus exists to draw. Anything the
-            // selection cannot reach at all goes to the rim rather than the core, which
-            // is where "unrelated to what I am looking at" belongs.
-            const auto* fd = reg.try_get<ecs::FocusDistance>(e);
-            idx = (!fd || fd->hops == ecs::kUnreached) ? rings - 1 : fd->hops;
-        } else {
-            const auto* ref = reg.try_get<ecs::NodeRef>(e);
-            const int   r   = ref ? reach.dependents(ref->id) : 0;
-            // 0 at the core, rings-1 on the rim. sqrt pulls the middle of the
-            // distribution inward: reach is heavily skewed, and a linear map leaves
-            // every ring but the outermost nearly empty.
-            const float t = 1.0f - std::sqrt(static_cast<float>(r) / static_cast<float>(widest));
-            idx           = static_cast<int>(std::lround(t * static_cast<float>(rings - 1)));
-        }
-        layer[static_cast<std::size_t>(std::clamp(idx, 0, rings - 1))].push_back(e);
+        layer[static_cast<std::size_t>(ring_index_for(world, e, rings))].push_back(e);
     }
 
     // Reach is heavily skewed -- a core everything imports, a wide middle, a rim of
@@ -873,10 +886,11 @@ void LayoutSystem::apply_drag(ecs::World& world) {
 // Live relaxation for the dependency views, constrained to the rings.
 //
 // The radial tree relaxation is free in both axes because a containment tree has no
-// privileged direction. The concentric layout does: the ring IS the reach reading, and
-// a node pulled off its own stops telling the truth about how much of the repository
-// sits behind it. So radius is sprung home and only the angle is free -- the polar form
-// of springing y home and leaving x alone.
+// privileged direction. The concentric layout does: the ring IS the reading -- how much
+// of the repository sits behind this, or how far it is from what you selected -- and a
+// node pulled off its own stops telling the truth about whichever one is live. So
+// radius is sprung home and only the angle is free: the polar form of springing y home
+// and leaving x alone.
 //
 // There are no containment springs here to pull a dropped node back, and pulling it
 // back to its packed angle would simply undo the drag. So the angle the user chose is
@@ -1082,8 +1096,6 @@ bool LayoutSystem::seat_newcomers(ecs::World& world) {
         reset(world);
         return false;
     }
-    const auto& reach = world.resource<ecs::DerivedState>().reach;
-
     // Neighbours first: an arriving node almost always has an edge to something that is
     // already on screen, and that is the only cue worth having.
     std::unordered_map<std::uint32_t, std::vector<entt::entity>> nbrs;
@@ -1104,14 +1116,12 @@ bool LayoutSystem::seat_newcomers(ecs::World& world) {
         const auto* ref = reg.try_get<ecs::NodeRef>(e);
         if (!ref) { reg.remove<ecs::Unplaced>(e); continue; }
 
-        // Which ring: the same reach bucket the layout would have given it, expressed
-        // against the rings that are actually on screen.
-        const int   widest = std::max(1, reach.widest());
-        const float t = 1.0f - std::sqrt(static_cast<float>(reach.dependents(ref->id)) /
-                                         static_cast<float>(widest));
-        const int   span = std::max(0, outer - inner);
-        const int   idx  = std::clamp(inner + static_cast<int>(std::lround(
-                                          t * static_cast<float>(span))), inner, outer);
+        // Which ring: whatever the placer would have said, expressed against the rings
+        // that are actually on screen. Asked of the one function that knows the key, so
+        // an arrival cannot be seated by a rule the radii were not chosen for.
+        const int span = std::max(0, outer - inner);
+        const int idx =
+            std::clamp(inner + ring_index_for(world, e, span + 1), inner, outer);
 
         auto rit = ring_radius_.find(idx);
         const float radius = rit == ring_radius_.end() ? 0.0f : rit->second;

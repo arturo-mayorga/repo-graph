@@ -387,6 +387,46 @@ TEST(with_nothing_focused_nothing_is_dimmed) {
     }
 }
 
+// A node that arrives while something is focused has to be seated by the same rule the
+// rest of the graph is. Two rules for "which ring" is one rule too many: the placer
+// keys on hops from the selection, and if the incremental path still keys on reach the
+// arrival lands in an annulus chosen for a different question -- and the relaxation
+// then springs it home to that wrong radius and holds it there.
+//
+// This is the live path specifically. A fixture with nothing selected never sees it,
+// and something IS selected for most of the time anyone spends reading the graph.
+TEST(a_node_arriving_while_focused_is_seated_by_distance_not_reach) {
+    // The file graph, because that is the view whose arrivals take the incremental
+    // path. The architecture view relayouts in full on any dirty node, which happens
+    // to hide this -- so the cheap view is the one that gets it wrong.
+    auto h = make(nested());
+    h.view().mode  = ecs::ViewMode::FileGraph;
+    h.view().level = Level::File;
+    h.world.resource<ecs::Selection>().node = "file:src/app/components/motion.py";
+    h.request_rebuild();
+    h.settle();
+
+    // `near.py` imports the focused module directly, so it is one hop away. Nothing
+    // imports IT, so its reach is zero and the reach key would exile it to the rim --
+    // which is exactly the disagreement between the two keys, at a distance the rings
+    // on screen can express. (A newcomer never invents a ring; it joins one.)
+    GraphUpdatedPayload p;
+    p.added_nodes = {mk_node("file:src/app/near.py", NodeKind::File, "pkg:app")};
+    p.added_edges = {mk_edge("e:near", EdgeKind::Imports, "file:src/app/near.py",
+                             "file:src/app/components/motion.py")};
+    Event ev;
+    ev.type       = EventType::GraphUpdated;
+    ev.generation = 102;
+    ev.payload    = p;
+    h.store().on_event(ev);
+    h.settle();
+
+    CHECK(h.node("file:src/app/near.py") != entt::null);
+    CHECK_EQ(h.registry().get<ecs::FocusDistance>(h.node("file:src/app/near.py")).hops, 1);
+    // Seated on the ring its distance says, not the one its reach would have said.
+    CHECK_EQ(h.registry().get<ecs::Ring>(h.node("file:src/app/near.py")).index, 1);
+}
+
 // A finding has to look like one. Colour plus weight, and the weight is the channel
 // that survives evidence quality overruling the colour -- a stale relationship inside a
 // cycle must still read as stale (NFR-04) without the entanglement going quiet.

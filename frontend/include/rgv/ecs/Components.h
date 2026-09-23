@@ -78,9 +78,16 @@ struct Prominence { float scale = 1.0f; };
 // Dependency depth: 0 = depends on nothing else in view. Owner: LayoutSystem.
 struct Depth { int value = 0; };
 
-// Where a node sits in the concentric dependency layout. Ring 0 is the core -- the
-// nodes the most of the repository transitively depends on -- and the index rises
-// outward as reach falls, so consumers end up on the rim.
+// Where a node sits in the concentric dependency layout, under whichever key the
+// arrangement is currently using. Nothing focused: ring 0 is the core -- what the most
+// of the repository transitively depends on -- and the index rises outward as reach
+// falls, so consumers end up on the rim. Something focused: ring 0 is the selection
+// and the index IS the hop count, so the rings read as distance from the question.
+//
+// Two meanings in one field is a hazard and it has already bitten once, so the key is
+// not inferable from here: `LayoutSystem::ring_index_for` is the single place that
+// knows which is live, and both the placer and the incremental seat ask it rather
+// than computing their own. Do not add a third caller that computes its own.
 //
 // Polar coordinates are kept alongside the position because a drag has to relax in
 // them: the ring is the reading, so radius springs home while the angle is free, the
