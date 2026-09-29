@@ -47,6 +47,10 @@ struct Theme {
     Vec4 dep_out{0.98f, 0.72f, 0.38f, 1.0f};       // the hovered node depends on it
     Vec4 dep_in{0.40f, 0.80f, 0.88f, 1.0f};        // it depends on the hovered node
 
+    // A finding, not a state. Nothing else on screen means "this is wrong rather than
+    // merely uncertain", so it gets a colour no evidence value uses.
+    Vec4 cycle{0.88f, 0.36f, 0.92f, 1.0f};         // these modules are entangled
+
     Vec4 path{1.00f, 0.85f, 0.35f, 1.0f};          // the explained dependency path
     Vec4 removed{0.55f, 0.28f, 0.32f, 1.0f};       // temporal compare: gone since baseline
     Vec4 added{0.30f, 0.65f, 0.45f, 1.0f};

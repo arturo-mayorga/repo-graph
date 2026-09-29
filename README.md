@@ -102,9 +102,22 @@ watch what it produces without a UI at all:
 ./build/bin/rgv-watch --root . | head -3
 ```
 
-The provider has four adapters. The **filesystem** adapter reports containment: which
-files and directories exist and when they change. The **manifest** adapter finds packages
-and their declared dependencies, which is what populates the Architecture view:
+The provider has five adapters. The **filesystem** adapter reports containment: which
+files and directories exist and when they change.
+
+What it walks is the repository minus what the repository says is derived: the root
+`.gitignore`, plus a built-in list of directories that cost more to watch than they can
+be worth (`node_modules`, `.venv`, `__pycache__`, `build`, …) for repositories that say
+nothing. This matters more than it sounds — a derived tree is not noise in the graph, it
+is a second graph, and this repository's own `build-headless/` was contributing 24
+packages that were temp checkouts written by the test suite. It is patterns and names,
+never a prefix: `builder/` and `buildings/` are source directories with an unlucky
+spelling, and hiding source is a worse failure than showing a build tree. The supported
+subset of gitignore syntax, and the cases deliberately left out, are documented at the
+top of `provider/watch/Ignore.h`.
+
+The **manifest** adapter finds packages and their declared dependencies, which is what
+populates the Architecture view:
 
 | Ecosystem | Manifest | Reads |
 |---|---|---|
@@ -121,7 +134,7 @@ which is what the provenance inspector shows.
 Declared dependencies, not used ones. A manifest states what a package is *allowed* to
 depend on — that is `confidence: "exact"` about the declaration and says nothing about
 whether any code imports it. Import-level truth needs a reader per language, and the
-third adapter is the first of those.
+other three adapters are those.
 
 The **python-imports** adapter reads every `.py` file and turns its `import` and
 `from … import` statements into `imports` edges between files, which is what populates
@@ -132,7 +145,16 @@ evidence. That is what makes the Architecture view of a single-distribution repo
 one `pyproject.toml`, a dozen packages — an architecture rather than one box. A Python
 package replaces the directory node at its path exactly as a manifest package does, so
 "which package owns this file" is still a walk up the containment tree, and it lands on
-the innermost one. Package-level impact is seeded there and runs over the aggregated
+the innermost one.
+
+A distribution and its top-level package usually share a name — `elevators` the
+`pyproject.toml`, `elevators` the directory under `src/` — so they are drawn as one
+node, and **that node stands where the code stands, not where the manifest does.** A
+`src` layout declares `src/elevators` from a file at the repository root; seating the
+package on the manifest's directory would make it the repository wearing a package's
+name, with `tests/`, `docs/` and `tools/` all inside it. On this repository that
+attributed 132 of 158 architecture imports to the test suite and invented three cycles
+in a graph that has none. Package-level impact is seeded there and runs over the aggregated
 edges together with the declared ones. An import resolves against the source roots — the repository root,
 each package directory, and any `src/` under either, so both the flat and the src
 layout work — to `module.py` or `module/__init__.py`. `from pkg import name` tries
@@ -168,11 +190,47 @@ subpath resolves inside the package directory. Everything else — `react`, `nod
 path from a `tsconfig.json` alias — resolves to nothing, for the same reason as in
 Python: an edge to a node that does not exist is worse than a missing one.
 
-No symbols for TypeScript yet, so `reads` and `writes` edges are Python-only. Its export
-forms are varied enough that a line scanner would start guessing, and a wrong symbol
-edge is worse than a missing one.
+The **cpp-imports** adapter reads `.cpp`, `.cc`, `.cxx`, `.c` and every header beside
+them, and turns `#include` into the same file-level edges. A quoted include is looked up
+beside the including file first, which is what the standard says and what makes
+`Impact.cpp` → `Impact.h` unambiguous; after that, and for an angled include from the
+start, it goes to the source roots — the repository root, every directory named
+`include`, every directory named `src`. C++ has no packaging to read an include path
+out of; the real answer lives in a build system's include path, and these are the
+conventions a repository is laid out by. `<vector>` and `<entt/entt.hpp>` resolve to
+nothing and produce nothing, and an include two roots could satisfy resolves to the
+first and is marked `heuristic`. A header and its implementation are two nodes and
+`foo.cpp → foo.h` is a real edge, not a pair to be folded away. What it will not read is
+the include directories the build declares, so an include that only
+`target_include_directories` makes findable produces no edge rather than a guessed one.
 
-Both readers are line scanners, not parsers, and they are meant to stay that way: an
+And because C++ has no packages, the unit above the file is the **build target**:
+`add_library(...)` and `add_executable(...)` out of `CMakeLists.txt`, which is the only
+place a C++ repository says what it is made of. A target owns the sources it lists and,
+transitively, the headers those sources include — a .cpp never includes another .cpp, so
+without the second half the architecture view would be boxes with no lines between them,
+every line ending in an `include/` tree no build file mentions. That ownership is the
+containment parent, because containment is the only thing the architecture view folds an
+import along. A target is not a directory, though: its sources come from several and one
+file can be listed in two targets, so a file has one parent and every further claim is an
+`owns` edge (contract §3.1), never a second parent. Where a whole directory belongs to
+one target the directory moves rather than each file in it, which keeps the filesystem
+view's tree recognisable. Ties are broken the way a C++ programmer would: a target that
+*lists* a file beats one that merely reaches it, a library beats an executable (a header
+several targets compile belongs to the library among them), then the target whose sources
+are least scattered, then the name. Impact is emitted at the `build target` level too —
+change a header, and the targets that have to be rebuilt light up.
+
+On this repository that is 307 `imports` edges and 6 targets: `rgv`, `rgv-tests`,
+`rgv-replay` and `rgv-ui-tests` all depending on `rgv_core`, and `rgv-watch` depending on
+nothing, which is what a provider that shares only the wire format should look like.
+
+No symbols for TypeScript or C++ yet, so `reads` and `writes` edges are Python-only.
+TypeScript's export forms are varied enough that a line scanner would start guessing, and
+a C++ definition is spread over a header and a translation unit, which is a question for
+a parser. A wrong symbol edge is worse than a missing one.
+
+All three readers are line scanners, not parsers, and they are meant to stay that way: an
 import is a statement at the start of a logical line, and the cases a scanner cannot see are the ones a
 dependency graph should not claim to.
 
@@ -198,7 +256,8 @@ The blast radius is the provider's too. The frontend renders `impact.updated`; i
 not derive one from a live stream (contract §6.4). So after any save, or any edge that
 moves, `rgv-watch` walks the `imports` edges in reverse from every file changed since
 the baseline and emits the file-level result, with one shortest path per hit, and the
-package-level result seeded by the packages that own those files. The end-to-end test
+package-level result seeded by the packages that own those files, and the
+build-target-level result seeded by the targets that build them. The end-to-end test
 checks the provider's answer against the frontend's own traversal over the same store,
 which is the same agreement `rgv-replay --check` demands of a fixture.
 
@@ -214,10 +273,9 @@ the package.
 
 Adding an ecosystem is adding a reader in `provider/watch/Packages.cpp`; adding a
 language is another `PythonImports`-shaped pair of functions — parse one file, resolve
-against the tree — and the loop in `main.cpp` does not change. Cargo, Go and CMake are
-not read yet, and neither are C++ includes, so this repo's own Architecture and File
-graph views stay empty — point `--watch` at a Python project to see all three views
-populated, or a JS one for the Architecture view.
+against the tree — and the loop in `main.cpp` does not change. Cargo and Go are not read
+yet. CMake is, but only for what it builds: a `target_link_libraries` is a declared
+dependency this does not report, the same distinction as a manifest against an import.
 
 `--scenario N --at MS --select NODE --hover NODE --text-settings` reproduce an exact
 on-screen state,
@@ -306,14 +364,13 @@ on the near side with everything it holds blooming outward — the reason the tr
 outward from the repository, and the reason a parent is nearer the centre than its
 children.
 
-**Mass goes into the glow, not the disc.** A directory's disc has to stay clear of the
-files orbiting it, so growing it with everything underneath would shove that subtree
-outward; Gource sidesteps the trade by drawing a directory as a bloom and no disc at
-all. We keep the disc — it is what you click — and add the bloom behind it, sized by
-Gource's rule: the square root of the file count beneath, so area tracks mass. It is
-never larger than the subtree it stands for, and its alpha comes down as it grows,
-because Gource can hold intensity constant by blending additively into black and we are
-compositing.
+**A directory's disc is sized by what it holds directly**, and saturates. It has to stay
+clear of its own file ring, so growing it with everything underneath would shove that
+subtree outward — a factor of two per level of nesting. Subtree mass is therefore not
+encoded in node size at all: it shows in how much room a subtree takes up, which is
+where it belongs. Gource's answer is the opposite — size the directory by the mass
+beneath it and draw only a bloom, never a disc — and we tried the hybrid, disc plus
+bloom. It read as haze rather than structure, so the bloom is gone.
 
 Impact colouring still wins over the extension palette. The repository looks like
 Gource; the blast radius lights up on top of it.
@@ -344,9 +401,7 @@ screenshot of one is reproducible.
 
 **Zooming in morphs circles into labelled boxes**, with the name rendered inside the
 box — shrunk to fit it, so a half-morphed node never draws a rectangle with its name
-floating outside. The directory bloom fades out as the node becomes a box, where a halo
-reads as a second misaligned rectangle rather than a glow. Boxes appear only where there
-is room for one. That caveat is not a shortcut — dense radial packing and full text boxes are in
+floating outside. Boxes appear only where there is room for one. That caveat is not a shortcut — dense radial packing and full text boxes are in
 direct conflict. Files on an orbit sit ~18 world units apart while a filename box is
 ~120 wide, so letting every node grow to its label produces an unreadable stack. The
 morph is gated on room × zoom: the repository and its packages become proper boxes with
@@ -403,6 +458,18 @@ and the graph became a static picture that stopped reacting to itself. Pinning i
 available, explicitly, on double click -- or from the inspector, which is where a file
 pins now that its double click belongs to the desktop.
 
+**If a file does not open, set `open_command`.** `~/.config/rgv/settings.json` takes an
+`open_command` — `"kitty -e nvim {}"`, `"code -g {}"` — and a `{}` in it is replaced by
+the absolute path; without one the path is appended. It is split on whitespace and run
+directly, never through a shell, so a space in a filename is part of the name.
+
+You need it when your desktop's handler for a source file is a **`Terminal=true`**
+entry, which is the common case for `nvim`, `helix` and `emacs -nw`. The launcher is
+reparented so it outlives the session, which means it has no terminal to run in, and a
+terminal editor started that way dies without drawing anything. Nothing we can detect
+from here — so the escape hatch is explicit rather than guessed. When the launcher
+cannot start at all, that is now reported on stderr rather than silently swallowed.
+
 **Double-clicking a file opens it** with whatever this desktop already opens that kind
 of file with: `xdg-open` on Linux, `open` on macOS. Not a viewer of our own. The user
 has already chosen their editor, the desktop already knows the association, and a
@@ -421,10 +488,46 @@ structure is not shaken apart.
 
 ### The architecture view
 
-The same radial algorithm the filesystem view uses, driven by imports instead of
-containment. Everything is on screen from the start: every file, every package, and the
-repository the layout grows from. Nothing is folded and nothing has to take part in a
-dependency to be drawn.
+Concentric, not a packed tree. Every module and every package is on screen from the
+start, and nothing has to take part in a dependency to be drawn. A ring says how far out
+a node sits; ordering within a ring is solved by barycentre sweeps so dependency lines
+run roughly radially instead of chording across the middle.
+
+**Clicking a node turns the graph to face it.** The selection becomes the centre ring,
+and every other node is re-seated by how many hops it is from the question being asked.
+Nothing enters or leaves — the node set is identical before and after — and positions
+ease, so the graph is seen to turn rather than to be replaced. Let the selection go and
+it settles back to the resting reading, where the ring is *reach*: what the most of the
+repository is ultimately built on sits in the middle and the consumers end up on the rim.
+
+That is one scalar changing. Same data, same topology, same renderer — only the key that
+decides the ring. It is why this is a re-seat and never a filter, which matters because
+the view's job is to be watched while an agent edits: anything hidden is a change that
+could land unseen.
+
+**Distance is also brightness.** From the selection outward, each hop is a fixed fraction
+dimmer than the one inside it — geometric, so the first two or three rings separate
+sharply, which is where the question is, and the far field compresses rather than
+marching evenly into the background. It is floored, and the floor is the design: the
+dimmest thing on screen is still findable, readable and clickable. This says *further
+away*, never *not here*.
+
+Two exemptions, and they are the same rule twice: what the agent changed is never dimmed,
+and neither is a line on the explained path. A change is what the view exists to report,
+and muting it because the reader happens to be looking elsewhere is exactly what the
+relevance filter is forbidden to do.
+
+**The unit is the module: a file something builds or packages.** Everything else a
+repository holds — tests, fixtures, shaders, documentation — sits under a plain
+directory, and the containment tree already says which is which. A package's own
+`__init__.py` is never drawn beside it: that file *is* the package.
+
+The owner may be a package or a build target, because the relation is the point and
+each language expresses it differently — Python with `__init__.py`, C++ with an
+`add_library`. Keying on packages alone would give a C++ checkout its target boxes and
+none of the modules that do the work, which is the same thing folding a Python
+package's modules away does: on `elevators` the eleven systems that are the
+application's functionality collapsed into a single box called `systems`.
 
 **The tree is the import graph.** A module that imports nothing is on the first ring;
 each ring outward is code built on the ring inside it; and a node's orbiting children
@@ -439,6 +542,24 @@ is a line the arrangement cannot account for. An arrow runs from a module to the
 imports, which is the contract's rule for every dependency edge and means the arrowheads
 converge on whatever the most code is built on. Parallel edges between the same pair still
 collapse into one line carrying a count.
+
+**The repository is not a module.** It is the centre the layout grows from, and a
+dependency never folds onto it. Anything outside every package -- a test suite, a tools
+directory -- has it as the nearest drawn ancestor, so without that rule every such
+import arrives as a line from the one node that means "here is the middle": on
+`elevators` 188 test imports arriving as 17 lines out of 66.
+
+**Cycles are named, not swallowed.** The layout spans its tree breadth first, which
+turns a back edge into a cross-link it ignores -- fine as an arrangement, fatal as a
+reading, because an entanglement is the thing a reviewer most needs told and the thing
+the picture is least able to show. So it is computed instead: every group of modules
+that all reach each other is drawn in its own colour, a legend row appears that a
+healthy repository never sees, and selecting a member lists the others it is tangled
+with. The finding is the whole group, never "the edge that closes the ring" -- which
+edge closes it depends on where the walk started, and naming one of three would be an
+arbitrary accusation. The altitude decides the question: two packages can be entangled
+while none of their files is, and a ring between two modules inside one package is that
+package's own business.
 
 One consequence worth knowing: a declared dependency from a manifest is not an import,
 so it is not drawn. A repository with `package.json` files and no language provider gets
@@ -601,7 +722,7 @@ Editing a scenario and pressing **Reload** in the app re-reads it from disk.
 ```
 IGraphSource ──poll──▶ GraphStore ──dirty set──▶ World (EnTT) ──▶ GL renderer
   fixture │ live         single writer            components          3 draw calls
-                         of graph state           + 16 systems        + ImGui panels
+                         of graph state           + 19 systems        + ImGui panels
 ```
 
 An entity-component-system: resources are the state there is exactly one of, components

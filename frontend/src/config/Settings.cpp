@@ -51,6 +51,9 @@ Settings load(const fs::path& path) {
         if (auto it = j.find("text_scale"); it != j.end() && it->is_number()) {
             s.ui_text_scale = s.graph_text_scale = it->get<float>();
         }
+        if (auto it = j.find("open_command"); it != j.end() && it->is_string()) {
+            s.open_command = it->get<std::string>();
+        }
         if (auto it = j.find("ui_text_scale"); it != j.end() && it->is_number()) {
             s.ui_text_scale = it->get<float>();
         }
@@ -74,6 +77,8 @@ bool save(const Settings& s, const fs::path& path) {
     }
 
     nlohmann::json j;
+    // Written even when empty, so the file shows what the knob is called.
+    j["open_command"]     = s.open_command;
     j["ui_text_scale"]    = s.ui_text_scale;
     j["graph_text_scale"] = s.graph_text_scale;
 

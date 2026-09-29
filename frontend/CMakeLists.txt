@@ -56,6 +56,7 @@ add_library(rgv_core STATIC
   src/fixture/FixtureSource.cpp
   src/live/LiveSource.cpp
   src/sim/ImpactSim.cpp
+  src/analysis/Cycles.cpp
   src/analysis/Reach.cpp
   src/analysis/Specificity.cpp
   src/config/Settings.cpp
@@ -80,6 +81,10 @@ add_library(rgv_core STATIC
   src/systems/ImpactStateSystem.cpp
   src/systems/SelectionSystem.cpp
   src/systems/LayoutSystem.cpp
+  src/systems/CycleSystem.cpp
+  src/systems/FocusSystem.cpp
+  src/systems/HoverLinkSystem.cpp
+  src/systems/ShapeSystem.cpp
   src/systems/StyleSystem.cpp
   src/systems/LabelSystem.cpp
   src/systems/PickingSystem.cpp
@@ -110,20 +115,25 @@ if(RGV_BUILD_TESTS)
     tests/test_live.cpp
     tests/test_settings.cpp
     tests/test_specificity.cpp
+    tests/test_cycles.cpp
     tests/test_schedule.cpp
     tests/test_packages.cpp
     tests/test_open_path.cpp
     tests/test_ts_imports.cpp
+    tests/test_cpp_imports.cpp
     tests/test_label_layout.cpp
     tests/test_python_imports.cpp
     tests/test_provider_impact.cpp
+    tests/test_ignore.cpp
     # The manifest readers are the provider's, not the frontend's. Compiled into the
     # tests directly rather than linked, because a provider shares no library with the
     # frontend -- only the wire format.
     ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/Packages.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/PythonImports.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/TsImports.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/CppImports.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/Impact.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/Ignore.cpp
   )
   target_include_directories(rgv-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests
                                                ${CMAKE_CURRENT_SOURCE_DIR}/third_party/json
@@ -146,6 +156,12 @@ if(RGV_BUILD_TESTS)
     target_compile_definitions(rgv-ui-tests PRIVATE RGV_FIXTURE_DIR="${RGV_FIXTURE_DIR}")
     target_link_libraries(rgv-ui-tests PRIVATE rgv_core rgv_imgui_core)
     add_test(NAME ui_layout COMMAND rgv-ui-tests)
+
+    # The wiring itself, asserted rather than trusted. See cmake/CheckSchedule.cmake.
+    add_test(NAME schedule COMMAND ${CMAKE_COMMAND}
+             -DRGV_BIN=$<TARGET_FILE:rgv>
+             -DGOLDEN=${CMAKE_CURRENT_SOURCE_DIR}/../docs/schedule.txt
+             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckSchedule.cmake)
   endif()
   # Fixture validation is a test too: a scenario whose authored impact disagrees with
   # traversal is a broken fixture, and it should fail CI rather than mislead a reviewer.
@@ -200,7 +216,9 @@ add_executable(rgv-watch
   ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/Packages.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/PythonImports.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/TsImports.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/Impact.cpp)
+  ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/CppImports.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/Impact.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../provider/watch/Ignore.cpp)
 target_include_directories(rgv-watch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/json)
 target_compile_features(rgv-watch PRIVATE cxx_std_20)
 target_link_libraries(rgv-watch PRIVATE rgv_warnings)

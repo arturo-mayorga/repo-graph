@@ -5,16 +5,18 @@
 // first a `snapshot` and the rest events. Diagnostics go to stderr and are never
 // protocol.
 //
-// Three adapters share the one stream (contract §6.2): the walk, which reports
+// Several adapters share the one stream (contract §6.2): the walk, which reports
 // containment; the manifest readers, which report declared package dependencies; and
-// the Python import extractor, which reports file-level `imports` edges and the blast
-// radius they imply. The walk knows nothing about any language and is reused by every
-// extractor; each extractor is its own module and the loop below only asks it two
-// things -- parse this file, resolve everything -- so the next language is another
-// pair of functions, not a change to the loop.
+// one import extractor per language -- Python, TypeScript, C++ -- which report
+// file-level `imports` edges and the blast radius they imply. The walk knows nothing
+// about any language and is reused by every extractor; each extractor is its own module
+// and the loop below only asks it two things -- parse this file, resolve everything --
+// so the next language is another pair of functions, not a change to the loop.
 //
 // Linux-only (inotify). The transport and the walk are portable; only `Watcher` is not.
 
+#include "CppImports.h"
+#include "Ignore.h"
 #include "Impact.h"
 #include "Packages.h"
 #include "PythonImports.h"
@@ -28,6 +30,7 @@
 #include <algorithm>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <iostream>
 #include <fstream>
 #include <map>
@@ -35,7 +38,6 @@
 #include <sstream>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 #include <poll.h>
@@ -49,20 +51,6 @@ namespace {
 
 volatile std::sig_atomic_t g_stop = 0;
 void                       on_signal(int) { g_stop = 1; }
-
-// Directories that are never interesting and are expensive to watch. A build tree can
-// out-produce the graph by orders of magnitude and drown the real signal.
-const std::unordered_set<std::string>& skipped() {
-    static const std::unordered_set<std::string> s{
-        ".git",   ".hg",     ".svn",         "node_modules", "build",  "dist",
-        "target", ".venv",   "venv",         "__pycache__",  ".cache", ".mypy_cache",
-        ".idea",  ".vscode", ".pytest_cache", ".ruff_cache", ".tox",   ".next"};
-    return s;
-}
-
-bool ignored(const std::string& name) {
-    return name.empty() || skipped().count(name) > 0;
-}
 
 std::string language_of(const fs::path& p) {
     static const std::map<std::string, std::string> by_ext{
@@ -82,6 +70,7 @@ std::string language_of(const fs::path& p) {
 // and makes a raw stream something a human can debug.
 std::string file_id(const std::string& rel) { return "file:" + rel; }
 std::string dir_id(const std::string& rel) { return rel.empty() ? "repo:root" : "dir:" + rel; }
+std::string target_id(const std::string& name) { return "tgt:" + name; }
 
 json node_json(const std::string& id, const std::string& kind, const std::string& name,
                const std::string& path, const std::string& parent,
@@ -109,17 +98,19 @@ std::string rel_of(const fs::path& root, const fs::path& p) {
     return fs::relative(p, root).generic_string();
 }
 
-void walk(const fs::path& root, const fs::path& dir, Tree& tree) {
+// A derived directory is not noise in the graph, it is a second graph: everything
+// inside it becomes nodes, packages, imports and an architecture of its own. What is
+// skipped and why lives in `Ignore.h`; the walk just asks.
+void walk(const fs::path& root, const fs::path& dir, Tree& tree,
+          const rgv::watch::Ignores& ig) {
     std::error_code ec;
     for (const auto& e : fs::directory_iterator(dir, ec)) {
-        const std::string name = e.path().filename().string();
-        if (ignored(name)) continue;
-        if (name.size() > 1 && name[0] == '.') continue;   // dotfiles stay out of the way
-
-        const std::string rel = rel_of(root, e.path());
+        const std::string rel    = rel_of(root, e.path());
         const bool        is_dir = e.is_directory(ec);
-        tree.entries[rel]        = is_dir;
-        if (is_dir) walk(root, e.path(), tree);
+        if (ig.skips(rel, is_dir)) continue;
+
+        tree.entries[rel] = is_dir;
+        if (is_dir) walk(root, e.path(), tree, ig);
     }
 }
 
@@ -136,9 +127,12 @@ std::string parent_id_for(const std::string& rel, const PackageDirs& pkg_dirs) {
 }
 
 json node_for(const fs::path& root, const std::string& rel, bool is_dir,
-              const PackageDirs& pkg_dirs) {
-    const fs::path    p         = root / rel;
-    const std::string parent_id = parent_id_for(rel, pkg_dirs);
+              const PackageDirs& pkg_dirs, const rgv::watch::CppOwnership& cpp) {
+    const fs::path p = root / rel;
+    // A build target claims what it builds, and that claim is the containment parent:
+    // it is the only thing the architecture view can fold an import along.
+    std::string parent_id = parent_id_for(rel, pkg_dirs);
+    if (auto it = cpp.parent.find(rel); it != cpp.parent.end()) parent_id = target_id(it->second);
 
     if (is_dir) {
         // The package node for this directory is emitted separately, with its own kind
@@ -156,23 +150,26 @@ json node_for(const fs::path& root, const std::string& rel, bool is_dir,
 // reverse, which is what makes "I changed auth, what breaks" the natural query.
 void emit_packages(const std::vector<rgv::watch::Package>& pkgs, json& nodes, json& edges,
                    std::vector<rgv::watch::GraphEdge>& pkg_edges,
-                   const std::map<std::string, std::string>& module_file, long generation) {
+                   const std::map<std::string, std::string>& module_nodes, long generation) {
     std::map<std::string, const rgv::watch::Package*> by_name;
     for (const auto& p : pkgs) by_name[rgv::watch::normalize(p.name)] = &p;
 
     for (const auto& p : pkgs) {
-        json n = node_json(p.id, "package", p.name, p.rel,
-                           p.rel.empty() ? "repo:root" : dir_id(fs::path(p.rel).parent_path()
-                                                                   .generic_string()),
+        json n = node_json(p.id, "package", p.name, p.home,
+                           p.home.empty() ? "repo:root" : dir_id(fs::path(p.home).parent_path()
+                                                                    .generic_string()),
                            p.provider == "python" ? "python" : "");
         json attrs{{"manifest", p.manifest}};
         if (!p.version.empty()) attrs["version"] = p.version;
         // The file that IS this package, when it has one: a distribution that absorbed
         // its same-named python package answers `from pkg import x` with that file.
         // A dependency on it is a dependency on the package as a unit, which is the one
-        // kind of ancestor edge the frontend keeps (contract 6.4).
-        if (auto it = module_file.find(p.id); it != module_file.end()) {
-            attrs["module_file"] = it->second;
+        // kind of ancestor edge the frontend keeps (contract 6.4). The node's id, not
+        // its path: the frontend is forbidden to parse an id (contract 2), and an
+        // attribute carrying a path makes it build one instead, which holds only for as
+        // long as every provider spells ids the way this one does.
+        if (auto it = module_nodes.find(p.id); it != module_nodes.end()) {
+            attrs["module_nodes"] = it->second;
         }
         n["attrs"] = attrs;
         nodes.push_back(std::move(n));
@@ -251,12 +248,29 @@ bool is_ts(const std::string& rel) {
     return false;
 }
 
-bool is_source(const std::string& rel) { return is_python(rel) || is_ts(rel); }
+bool is_cpp(const std::string& rel) {
+    for (const char* ext : {".cpp", ".cc", ".cxx", ".c", ".h", ".hpp", ".hh", ".hxx",
+                            ".inl", ".ipp"}) {
+        const std::size_t n = std::strlen(ext);
+        if (rel.size() > n && rel.compare(rel.size() - n, n, ext) == 0) return true;
+    }
+    return false;
+}
+
+// The build file, which is where a C++ repository says what its units are.
+bool is_cmake(const std::string& rel) {
+    const std::string name = fs::path(rel).filename().string();
+    return name == "CMakeLists.txt";
+}
+
+bool is_source(const std::string& rel) { return is_python(rel) || is_ts(rel) || is_cpp(rel); }
 
 // Which reader produced an edge, so the inspector can say and the contract's rule that
 // a `provider` names an announced adapter holds (section 6.2).
 const char* imports_provider(const std::string& rel) {
-    return is_ts(rel) ? "ts-imports" : "python-imports";
+    if (is_ts(rel)) return "ts-imports";
+    if (is_cpp(rel)) return "cpp-imports";
+    return "python-imports";
 }
 
 std::string read_text(const fs::path& p) {
@@ -265,6 +279,15 @@ std::string read_text(const fs::path& p) {
     std::ostringstream os;
     os << in.rdbuf();
     return os.str();
+}
+
+// The repository's own statement about which of its directories are derived. Re-read
+// on every re-walk rather than cached: editing `.gitignore` is exactly the moment the
+// answer should change, and the file is one read next to a full tree walk.
+rgv::watch::Ignores ignores_under(const fs::path& root) {
+    rgv::watch::Ignores ig;
+    ig.add_gitignore(read_text(root / ".gitignore"));
+    return ig;
 }
 
 struct ImportEdge {
@@ -292,11 +315,13 @@ json import_edge_json(const std::string& id, const ImportEdge& e) {
 }
 
 struct ImportIndex {
-    std::map<std::string, std::vector<rgv::watch::ImportStmt>> parsed;      // python
-    std::map<std::string, std::vector<rgv::watch::TsImport>>   ts_parsed;   // typescript
-    std::map<std::string, ImportEdge>                          edges;       // id -> file edge
-    std::vector<std::string>                                   roots;       // python source roots
-    std::vector<rgv::watch::TsPackage>                         ts_packages;
+    std::map<std::string, std::vector<rgv::watch::ImportStmt>>  parsed;      // python
+    std::map<std::string, std::vector<rgv::watch::TsImport>>    ts_parsed;   // typescript
+    std::map<std::string, std::vector<rgv::watch::CppInclude>>  cpp_parsed;  // c++
+    std::map<std::string, ImportEdge>                           edges;       // id -> file edge
+    std::vector<std::string>                                    roots;       // python source roots
+    std::vector<std::string>                                    cpp_roots;
+    std::vector<rgv::watch::TsPackage>                          ts_packages;
 
     struct DepEdge {
         rgv::watch::PackageDep dep;
@@ -310,17 +335,45 @@ struct ImportIndex {
     void parse_ts(const std::string& rel, const std::string& text) {
         ts_parsed[rel] = rgv::watch::parse_ts_imports(text);
     }
-    void forget(const std::string& rel) { parsed.erase(rel); ts_parsed.erase(rel); }
+    void parse_cpp(const std::string& rel, const std::string& text) {
+        cpp_parsed[rel] = rgv::watch::parse_cpp_includes(text);
+    }
+    void forget(const std::string& rel) {
+        parsed.erase(rel);
+        ts_parsed.erase(rel);
+        cpp_parsed.erase(rel);
+    }
 
-    // Re-resolves everything and reports what moved: new edges carry `generation`,
-    // surviving ones keep the generation they first appeared in, and a surviving edge
-    // whose evidence or confidence changed is a replacement, not a new edge.
-    void resolve(const Tree& tree, long generation, const PackageDirs& pkg_dirs, json& added,
-                 json& removed, json& updated) {
+    static std::set<std::string> files_in(const Tree& tree) {
         std::set<std::string> files;
         for (const auto& [rel, is_dir] : tree.entries) {
             if (!is_dir) files.insert(rel);
         }
+        return files;
+    }
+
+    // Who includes what, which is what decides which build target owns a header. It
+    // costs one resolution pass more than `resolve` does its own -- the alternative is
+    // to resolve the includes before anything can be said about ownership and then to
+    // remember them, and a repository's includes are a few thousand set lookups.
+    std::map<std::string, std::vector<std::string>> cpp_graph(const Tree& tree) const {
+        const auto                                      files = files_in(tree);
+        std::map<std::string, std::vector<std::string>> out;
+        for (const auto& [rel, incs] : cpp_parsed) {
+            for (const auto& fi : rgv::watch::resolve_cpp_includes(rel, incs, files, cpp_roots)) {
+                out[rel].push_back(fi.to);
+            }
+        }
+        return out;
+    }
+
+    // Re-resolves everything and reports what moved: new edges carry `generation`,
+    // surviving ones keep the generation they first appeared in, and a surviving edge
+    // whose evidence or confidence changed is a replacement, not a new edge.
+    void resolve(const Tree& tree, long generation,
+                 const std::function<std::string(const std::string&)>& owner, json& added,
+                 json& removed, json& updated) {
+        const std::set<std::string> files = files_in(tree);
         std::map<std::string, ImportEdge>                        next;
         std::vector<std::pair<std::string, rgv::watch::FileImport>> flat;
         auto take = [&](const std::string& rel, const std::vector<rgv::watch::FileImport>& found) {
@@ -338,6 +391,9 @@ struct ImportIndex {
         for (const auto& [rel, imports] : ts_parsed) {
             take(rel, rgv::watch::resolve_ts_imports(rel, imports, files, ts_packages));
         }
+        for (const auto& [rel, includes] : cpp_parsed) {
+            take(rel, rgv::watch::resolve_cpp_includes(rel, includes, files, cpp_roots));
+        }
         for (const auto& [id, e] : edges) {
             if (!next.count(id)) removed.push_back(id);
         }
@@ -351,12 +407,12 @@ struct ImportIndex {
         }
         edges = std::move(next);
 
-        // The package level: one edge per ordered pair of packages that an import
-        // crosses between. Ownership is the innermost package above the file (FR-11).
+        // The level above the files: one edge per ordered pair of owners that an import
+        // crosses between. An owner is the innermost package above the file (FR-11), or
+        // the build target that builds it where a language has no packages of its own.
         std::map<std::string, DepEdge> next_deps;
-        for (auto& d : rgv::watch::aggregate_imports(
-                 flat, [&](const std::string& f) { return owning_package(f, pkg_dirs); })) {
-            const std::string id = "e:pydep:" + d.from + "->" + d.to;
+        for (auto& d : rgv::watch::aggregate_imports(flat, owner)) {
+            const std::string id = "e:impdep:" + d.from + "->" + d.to;
             DepEdge           de{std::move(d), generation};
             if (auto old = deps.find(id); old != deps.end()) de.valid_from = old->second.valid_from;
             next_deps[id] = std::move(de);
@@ -401,6 +457,164 @@ struct ImportIndex {
             out.push_back({id, d.dep.from, d.dep.to, d.valid_from, d.dep.heuristic});
         }
         return out;
+    }
+};
+
+// -- build targets ------------------------------------------------------------
+//
+// What plays the part of a package.
+//
+// Python has `__init__.py` and npm has a manifest; C++ has nothing of the kind, and a
+// repository of it is still made of units -- the things the build produces. So the unit
+// is the build target: `add_library(rgv_core ...)`, `add_executable(rgv ...)`, read out
+// of CMakeLists.txt, which is the only place a C++ repository says what it is made of.
+//
+// The decision that costs something is containment. The architecture view draws
+// `imports` edges folded onto whatever CONTAINS their endpoints, so a file with no
+// package and no target above it contributes nothing to that view but a line from the
+// repository node, which the view drops on purpose. Boxes with no lines between them
+// are not an architecture, so the target has to be the containment parent of what it
+// builds -- and, because a .cpp never includes another .cpp, of the headers its sources
+// reach as well, or every line would end in an `include/` tree that no build file
+// mentions and no target owns.
+//
+// A target is not a directory, and that is the price. Its sources come from several
+// directories and one file can be listed in two targets, so this is ownership rather
+// than a path, and the contract's answer is one parent and an `owns` edge for every
+// further claim (§3.1) -- never two parents. Where a whole directory belongs to one
+// target the directory moves rather than each file in it, which keeps the filesystem
+// view -- which does not draw build targets -- showing that directory within a level of
+// where it sits instead of spilling every file in it onto the target's own directory.
+
+struct TargetIndex {
+    std::map<std::string, std::vector<rgv::watch::CppTarget>> parsed;   // CMakeLists -> targets
+    rgv::watch::CppOwnership                                  own;
+
+    struct OwnsEdge {
+        std::string target, file;
+        long        valid_from = 0;
+    };
+    std::map<std::string, OwnsEdge> owns;   // id -> edge
+
+    void parse(const std::string& rel, const std::string& text) {
+        auto ts = rgv::watch::parse_cmake_targets(text, fs::path(rel).parent_path().generic_string());
+        for (auto& t : ts) t.manifest = rel;
+        parsed[rel] = std::move(ts);
+    }
+    void forget(const std::string& rel) { parsed.erase(rel); }
+
+    std::vector<rgv::watch::CppTarget> declared() const {
+        std::vector<rgv::watch::CppTarget> out;
+        for (const auto& [rel, ts] : parsed) out.insert(out.end(), ts.begin(), ts.end());
+        return out;
+    }
+    const rgv::watch::CppTarget* find(const std::string& name) const {
+        for (const auto& [rel, ts] : parsed) {
+            for (const auto& t : ts) {
+                if (t.name == name) return &t;
+            }
+        }
+        return nullptr;
+    }
+    rgv::watch::CppOwnership ownership(
+        const Tree& tree, const std::map<std::string, std::vector<std::string>>& graph) const {
+        return rgv::watch::cpp_ownership(declared(), tree.entries, graph);
+    }
+    static bool has(const rgv::watch::CppOwnership& o, const std::string& name) {
+        return std::find(o.names.begin(), o.names.end(), name) != o.names.end();
+    }
+    std::string owner_id(const std::string& rel) const {
+        const std::string* t = own.owner_of(rel);
+        return t == nullptr ? std::string{} : target_id(*t);
+    }
+
+    // The files that ARE the target (contract 6.4): what another translation unit
+    // includes when it depends on this target as a unit, rather than reaching into
+    // something that merely lives inside it.
+    //
+    // C++ declares no such thing, so the only signal that is not a guess is the one
+    // convention where the build itself says the name: a file whose stem is the
+    // target's own -- `core.h` and `core.cpp` for `core`. Both halves are emitted,
+    // because in C++ both halves are the module; that is the case the attribute is
+    // plural for, and the one a single path could not have expressed.
+    //
+    // Nothing weaker counts. No case folding, no `lib`/`_lib` stripping, and in
+    // particular not "the target's only source": `add_executable(app app/main.cpp)`
+    // builds `app` out of a file that is not `app`, and claiming otherwise would fold
+    // away a real edge, since the frontend drops an edge into a unit's own module as
+    // containment restated. A target with no such file emits nothing, which the
+    // contract asks for and which is the failure this attribute is allowed to have.
+    static std::string module_nodes_of(const rgv::watch::CppOwnership& o,
+                                       const std::string&             name) {
+        std::string out;
+        // `owners` is a std::map, so this is path order: the stream stays byte-stable
+        // across runs, and the header sorts ahead of the source in the usual layout.
+        for (const auto& [file, claimants] : o.owners) {
+            if (fs::path(file).stem().string() != name) continue;
+            if (std::find(claimants.begin(), claimants.end(), name) == claimants.end()) continue;
+            if (!out.empty()) out += ',';
+            out += file_id(file);
+        }
+        return out;
+    }
+
+    json node_json_for(const rgv::watch::CppOwnership& o, const std::string& name,
+                       const PackageDirs& pkg_dirs) const {
+        // The node stands where its code does -- the deepest directory holding
+        // everything it owns -- so a target whose sources are one directory sits on it.
+        const std::string home = o.home.count(name) ? o.home.at(name) : std::string{};
+        auto              it   = pkg_dirs.find(home);
+        json              n    = node_json(target_id(name), "build_target", name, home,
+                                           it != pkg_dirs.end() ? it->second : dir_id(home), "cpp");
+        json attrs;
+        if (const auto* t = find(name)) {
+            attrs["type"]     = t->kind;
+            attrs["manifest"] = t->manifest;
+        }
+        if (const std::string mods = module_nodes_of(o, name); !mods.empty()) {
+            attrs["module_nodes"] = mods;
+        }
+        n["attrs"] = attrs;
+        return n;
+    }
+
+    json owns_edge_json(const std::string& id, const OwnsEdge& e) const {
+        json j{{"id", id},
+               {"kind", "owns"},
+               {"from", target_id(e.target)},
+               {"to", file_id(e.file)},
+               {"provider", "cpp-imports"},
+               {"confidence", "exact"},
+               {"freshness", "current"},
+               {"valid_from", e.valid_from}};
+        if (const auto* t = find(e.target)) {
+            j["evidence"] = json{{"artifact", t->manifest}, {"line", t->line}, {"snippet", t->snippet}};
+        }
+        return j;
+    }
+
+    // The claims past the first. A file two build files both name is genuinely owned
+    // twice, and that is what `owns` is for (contract §3.1); a header being reached by
+    // everything that uses it is just what a header is, and is not reported.
+    void resolve_owns(const rgv::watch::CppOwnership& o, long generation, json& added,
+                      json& removed) {
+        std::map<std::string, OwnsEdge> next;
+        for (const auto& [file, listers] : o.listed) {
+            for (std::size_t i = 1; i < listers.size(); ++i) {
+                if (!has(o, listers[i])) continue;
+                const std::string id = "e:owns:" + target_id(listers[i]) + "->" + file_id(file);
+                OwnsEdge          e{listers[i], file, generation};
+                if (auto old = owns.find(id); old != owns.end()) e.valid_from = old->second.valid_from;
+                next[id] = std::move(e);
+            }
+        }
+        for (const auto& [id, e] : owns) {
+            if (!next.count(id)) removed.push_back(id);
+        }
+        for (const auto& [id, e] : next) {
+            if (!owns.count(id)) added.push_back(owns_edge_json(id, e));
+        }
+        owns = std::move(next);
     }
 };
 
@@ -549,12 +763,23 @@ std::vector<rgv::watch::PyPackage> detect_python_packages(const Tree&           
 // accounted for 8 of 27 package-level edges and more than doubled the crossings. So the
 // python package is dropped and its contents reparent onto the distribution, which is
 // what actually owns them.
+//
+// And the surviving node moves to where the twin stood. A manifest says where a build
+// starts, not where the code is: `pyproject.toml` sits at the repository root and
+// declares `src/elevators`. Leaving the node on the manifest's directory makes it the
+// repository wearing a package's name -- `tests/`, `docs/` and `tools/` all fall inside
+// it, and on this repo 132 of the 158 imports credited to the architecture came from
+// the test suite, three of the cycles with them. Seating it over its code is what makes
+// the containment tree's answer to "which package owns this file" (FR-11) true.
 std::vector<rgv::watch::PyPackage> drop_distribution_twins(
-    std::vector<rgv::watch::PyPackage> py, const std::vector<rgv::watch::Package>& packages,
-    const PackageDirs& manifest_dirs, std::map<std::string, std::string>& module_file) {
+    std::vector<rgv::watch::PyPackage> py, std::vector<rgv::watch::Package>& packages,
+    const PackageDirs& manifest_dirs, std::map<std::string, std::string>& module_nodes) {
     std::map<std::string, std::string> name_of;
     for (const auto& p : packages) name_of[p.id] = p.name;
 
+    // Collected rather than applied in the loop: the twin is found through the manifest
+    // directories, so moving a package while still reading them would move the ground.
+    std::map<std::string, std::string> home_of;
     py.erase(std::remove_if(py.begin(), py.end(),
                             [&](const rgv::watch::PyPackage& p) {
                                 const std::string owner = owning_package(p.rel, manifest_dirs);
@@ -564,19 +789,27 @@ std::vector<rgv::watch::PyPackage> drop_distribution_twins(
                                                                rgv::watch::normalize(p.module);
                                 // The distribution inherits the twin's own module, so
                                 // `from elevators import x` still resolves to a node.
-                                if (twin) module_file[owner] = p.rel + "/__init__.py";
+                                if (twin) {
+                                    module_nodes[owner] = file_id(p.rel + "/__init__.py");
+                                    home_of[owner]     = p.rel;
+                                }
                                 return twin;
                             }),
              py.end());
+    for (auto& p : packages) {
+        if (auto it = home_of.find(p.id); it != home_of.end()) p.home = it->second;
+    }
     return py;
 }
 
 json pypkg_node(const rgv::watch::PyPackage& p, const PackageDirs& pkg_dirs) {
     json n = node_json(pypkg_id(p.rel), "package", p.module, p.rel, parent_id_for(p.rel, pkg_dirs),
                        "python");
+    // Plural in the contract, singular here: Python's unit is one `__init__.py`, which
+    // is the special case the attribute is named for rather than the general one.
     n["attrs"] = json{{"module", p.module},
                       {"package", "python"},
-                      {"module_file", p.rel + "/__init__.py"}};
+                      {"module_nodes", file_id(p.rel + "/__init__.py")}};
     return n;
 }
 
@@ -613,7 +846,9 @@ json impact_json(const char* level, std::vector<std::string> edge_kinds, long ge
 // watch and new directories are added as they appear.
 class Watcher {
 public:
-    explicit Watcher(const fs::path& root) : root_(root) {
+    // The same rules as the walk, and the same object: a watch on a tree the walk does
+    // not report is a wakeup per build artifact and nothing on screen to show for it.
+    Watcher(const fs::path& root, const rgv::watch::Ignores& ig) : root_(root), ig_(ig) {
         fd_ = ::inotify_init1(IN_NONBLOCK);
         if (fd_ < 0) throw std::runtime_error(std::string("inotify_init1: ") + std::strerror(errno));
     }
@@ -626,8 +861,7 @@ public:
         std::error_code ec;
         for (const auto& e : fs::recursive_directory_iterator(dir, ec)) {
             if (!e.is_directory(ec)) continue;
-            const std::string name = e.path().filename().string();
-            if (ignored(name) || (name.size() > 1 && name[0] == '.')) continue;
+            if (ig_.skips(rel_of(root_, e.path()), true)) continue;
             add(e.path());
         }
     }
@@ -663,6 +897,7 @@ private:
     }
 
     fs::path                          root_;
+    const rgv::watch::Ignores&        ig_;
     int                               fd_ = -1;
     std::unordered_map<int, fs::path> paths_;
 };
@@ -696,8 +931,9 @@ int main(int argc, char** argv) {
     // signal instead of a clean exit.
     std::signal(SIGPIPE, SIG_IGN);
 
-    Tree tree;
-    walk(root, root, tree);
+    rgv::watch::Ignores ignores = ignores_under(root);
+    Tree                tree;
+    walk(root, root, tree, ignores);
 
     // Content changes do not show up in the tree listing, so mtimes are tracked
     // alongside it. Seeded from the baseline, or every file would report as modified
@@ -718,9 +954,10 @@ int main(int argc, char** argv) {
     PackageDirs                        manifest_dirs;   // manifest packages only
     PackageDirs                        pkg_dirs;        // ... plus python packages
     std::vector<rgv::watch::PyPackage> pypkgs;
-    std::map<std::string, std::string> dist_module_file;   // manifest package id -> its own module
+    std::map<std::string, std::string> dist_module_nodes;   // manifest package id -> its module's node id
     std::vector<rgv::watch::GraphEdge> pkg_edges;
     ImportIndex                        imports;
+    TargetIndex                        targets;
     SymbolIndex                        symbols;
     std::set<std::string>              changed;   // files touched since the baseline
     const long                         baseline = generation;
@@ -735,6 +972,10 @@ int main(int argc, char** argv) {
             // enough that a line scanner would start guessing, and a wrong symbol edge
             // is worse than a missing one.
             imports.parse_ts(rel, text);
+        } else if (is_cpp(rel)) {
+            // Nor for C++: a definition is spread over a header and a translation unit,
+            // and which one a use names is a question for a parser.
+            imports.parse_cpp(rel, text);
         }
     };
     auto reroot = [&](const Tree& t) {
@@ -748,9 +989,23 @@ int main(int argc, char** argv) {
         for (const auto& p : packages) {
             if (p.provider == "npm") imports.ts_packages.push_back({p.name, p.rel, p.entry});
         }
+
+        // C++ has no packaging to read an include path out of, so the conventions a
+        // repository is laid out by stand in for it.
+        imports.cpp_roots = rgv::watch::cpp_source_roots(t.entries);
     };
+    // What an import is attributed to one level up: the package that owns the file
+    // (FR-11), or the build target that builds it where the language has no packages.
+    auto owner_of = [&](const std::string& f) {
+        const std::string t = targets.owner_id(f);
+        return t.empty() ? owning_package(f, pkg_dirs) : t;
+    };
+    // Containment, so a manifest package is keyed by where its code is. `manifest_dirs`
+    // stays keyed by the manifest's own directory: that is what a module path resolves
+    // against, and what the twin above is recognised through.
     auto merge_dirs = [&](const std::vector<rgv::watch::PyPackage>& py) {
-        PackageDirs all = manifest_dirs;
+        PackageDirs all;
+        for (const auto& p : packages) all[p.home] = p.id;
         for (const auto& p : py) all[p.rel] = pypkg_id(p.rel);
         return all;
     };
@@ -765,22 +1020,32 @@ int main(int argc, char** argv) {
         for (const auto& p : packages) manifest_dirs[p.rel] = p.id;
         reroot(tree);
         pypkgs   = drop_distribution_twins(detect_python_packages(tree, imports.roots), packages,
-                                           manifest_dirs, dist_module_file);
+                                           manifest_dirs, dist_module_nodes);
         pkg_dirs = merge_dirs(pypkgs);
 
+        // Before the nodes, because a C++ file's containment parent is the target that
+        // builds it and that is only known once the includes are resolved.
         for (const auto& [rel, is_dir] : tree.entries) {
-            json n = node_for(root, rel, is_dir, pkg_dirs);
-            if (!n.is_null()) nodes.push_back(std::move(n));
+            if (is_dir) continue;
+            if (is_source(rel)) parse_source(rel);
+            if (is_cmake(rel)) targets.parse(rel, read_text(root / rel));
         }
-        emit_packages(packages, nodes, edges, pkg_edges, dist_module_file, generation);
-        for (const auto& p : pypkgs) nodes.push_back(pypkg_node(p, pkg_dirs));
+        targets.own = targets.ownership(tree, imports.cpp_graph(tree));
 
         for (const auto& [rel, is_dir] : tree.entries) {
-            if (!is_dir && is_source(rel)) parse_source(rel);
+            json n = node_for(root, rel, is_dir, pkg_dirs, targets.own);
+            if (!n.is_null()) nodes.push_back(std::move(n));
         }
+        emit_packages(packages, nodes, edges, pkg_edges, dist_module_nodes, generation);
+        for (const auto& p : pypkgs) nodes.push_back(pypkg_node(p, pkg_dirs));
+        for (const auto& name : targets.own.names) {
+            nodes.push_back(targets.node_json_for(targets.own, name, pkg_dirs));
+        }
+
         json removed = json::array();
         json updated = json::array();
-        imports.resolve(tree, generation, pkg_dirs, edges, removed, updated);
+        imports.resolve(tree, generation, owner_of, edges, removed, updated);
+        targets.resolve_owns(targets.own, generation, edges, removed);
         symbols.resolve(imports, tree, generation, nodes, removed, updated, edges, removed, updated);
 
         json snap{{"schema", "rgv.snapshot/1"},
@@ -805,19 +1070,20 @@ int main(int argc, char** argv) {
     // `idle` with the baseline as last success: the walk is done and nothing is queued.
     // (`ready` is not a contract state; the parser drops the line and the inspector
     // never learns the adapter exists.)
-    for (const char* adapter : {"filesystem", "npm", "python", "python-imports", "ts-imports"}) {
+    for (const char* adapter :
+         {"filesystem", "npm", "python", "python-imports", "ts-imports", "cpp-imports"}) {
         emit(json{{"t_ms", 0}, {"type", "adapter.status"}, {"generation", generation},
                   {"adapter", adapter}, {"state", "idle"}, {"queue_depth", 0},
                   {"last_success_generation", generation}, {"message", ""}});
     }
 
     std::fprintf(stderr,
-                 "rgv-watch: %zu entries, %zu packages, %zu python packages, %zu imports, "
-                 "%zu shared symbols under %s\n",
-                 tree.entries.size(), packages.size(), pypkgs.size(), imports.edges.size(),
-                 symbols.nodes.size(), root.c_str());
+                 "rgv-watch: %zu entries, %zu packages, %zu python packages, %zu build "
+                 "targets, %zu imports, %zu shared symbols under %s\n",
+                 tree.entries.size(), packages.size(), pypkgs.size(), targets.own.names.size(),
+                 imports.edges.size(), symbols.nodes.size(), root.c_str());
 
-    Watcher watcher(root);
+    Watcher watcher(root, ignores);
     watcher.add_recursive(root);
 
     while (!g_stop) {
@@ -834,8 +1100,11 @@ int main(int argc, char** argv) {
             else ++quiet;
         }
 
+        // Reassigned in place, so the watcher's reference stays good: a `.gitignore`
+        // edit is a change like any other and takes effect on the walk it caused.
+        ignores = ignores_under(root);
         Tree now;
-        walk(root, root, now);
+        walk(root, root, now, ignores);
 
         json added   = json::array();
         json removed = json::array();
@@ -847,7 +1116,13 @@ int main(int argc, char** argv) {
         for (const auto& [rel, is_dir] : tree.entries) {
             if (!now.entries.count(rel)) {
                 removed.push_back(is_dir ? dir_id(rel) : file_id(rel));
-                if (!is_dir) { imports.forget(rel); symbols.forget(rel); changed.erase(rel); mtimes.erase(rel); }
+                if (!is_dir) {
+                    imports.forget(rel);
+                    symbols.forget(rel);
+                    targets.forget(rel);
+                    changed.erase(rel);
+                    mtimes.erase(rel);
+                }
             }
         }
         // A directory became a package, or stopped being one. The package node replaces
@@ -857,7 +1132,7 @@ int main(int argc, char** argv) {
         if (!fresh.empty() || !removed.empty()) {
             reroot(now);
             const auto next_py = drop_distribution_twins(detect_python_packages(now, imports.roots),
-                                                         packages, manifest_dirs, dist_module_file);
+                                                         packages, manifest_dirs, dist_module_nodes);
             if (next_py != pypkgs) {
                 const PackageDirs next_dirs = merge_dirs(next_py);
                 for (const auto& p : next_py) {
@@ -868,12 +1143,12 @@ int main(int argc, char** argv) {
                 for (const auto& p : pypkgs) {
                     if (next_dirs.count(p.rel)) continue;
                     removed.push_back(pypkg_id(p.rel));
-                    if (now.entries.count(p.rel)) added.push_back(node_for(root, p.rel, true, next_dirs));
+                    if (now.entries.count(p.rel)) added.push_back(node_for(root, p.rel, true, next_dirs, targets.own));
                 }
                 for (const auto& [rel, is_dir] : now.entries) {
                     if (!tree.entries.count(rel) || pkg_dirs.count(rel) || next_dirs.count(rel)) continue;
                     if (parent_id_for(rel, pkg_dirs) != parent_id_for(rel, next_dirs)) {
-                        updated.push_back(node_for(root, rel, is_dir, next_dirs));
+                        updated.push_back(node_for(root, rel, is_dir, next_dirs, targets.own));
                     }
                 }
                 for (const auto& p : next_py) {
@@ -889,9 +1164,9 @@ int main(int argc, char** argv) {
 
         bool reparsed = false;
         for (const auto& [rel, is_dir] : fresh) {
-            json n = node_for(root, rel, is_dir, pkg_dirs);
-            if (!n.is_null()) added.push_back(std::move(n));
-            if (!is_dir && is_source(rel)) { parse_source(rel); reparsed = true; }
+            if (is_dir) continue;
+            if (is_source(rel)) { parse_source(rel); reparsed = true; }
+            if (is_cmake(rel)) { targets.parse(rel, read_text(root / rel)); reparsed = true; }
         }
 
         // Content changes do not show up in the tree listing, so mtimes decide. A file
@@ -907,6 +1182,49 @@ int main(int argc, char** argv) {
             if (!moved) continue;
             modified.push_back(rel);
             if (is_source(rel)) { parse_source(rel); reparsed = true; }
+            if (is_cmake(rel)) { targets.parse(rel, read_text(root / rel)); reparsed = true; }
+        }
+
+        // What a build target owns moves when a build file changes and when an include
+        // does -- a header a second target starts including changes hands -- so
+        // ownership is re-derived from the whole tree and reported as the difference,
+        // the same discipline as the package nodes above.
+        if (!fresh.empty() || !removed.empty() || reparsed) {
+            auto next_own = targets.ownership(now, imports.cpp_graph(now));
+            if (next_own.names != targets.own.names || next_own.parent != targets.own.parent ||
+                next_own.home != targets.own.home) {
+                for (const auto& name : targets.own.names) {
+                    if (!TargetIndex::has(next_own, name)) removed.push_back(target_id(name));
+                }
+                for (const auto& name : next_own.names) {
+                    const bool fresh_target = !TargetIndex::has(targets.own, name);
+                    if (!fresh_target && next_own.home.at(name) == targets.own.home.at(name)) continue;
+                    json n = targets.node_json_for(next_own, name, pkg_dirs);
+                    (fresh_target ? added : updated).push_back(std::move(n));
+                }
+                // Everything whose containment parent moved with it. A node that has
+                // only just arrived is already an `added_nodes` entry, and saying it
+                // also changed would be the same node twice in one event.
+                std::set<std::string> touched;
+                for (const auto& [rel, name] : targets.own.parent) touched.insert(rel);
+                for (const auto& [rel, name] : next_own.parent) touched.insert(rel);
+                for (const auto& rel : touched) {
+                    auto before = targets.own.parent.find(rel);
+                    auto after  = next_own.parent.find(rel);
+                    const bool same =
+                        (before == targets.own.parent.end()) == (after == next_own.parent.end()) &&
+                        (before == targets.own.parent.end() || before->second == after->second);
+                    auto entry = now.entries.find(rel);
+                    if (same || entry == now.entries.end() || !tree.entries.count(rel)) continue;
+                    updated.push_back(node_for(root, rel, entry->second, pkg_dirs, next_own));
+                }
+                targets.own = std::move(next_own);
+            }
+        }
+
+        for (const auto& [rel, is_dir] : fresh) {
+            json n = node_for(root, rel, is_dir, pkg_dirs, targets.own);
+            if (!n.is_null()) added.push_back(std::move(n));
         }
 
         const bool structural = !added.empty() || !removed.empty() || !updated.empty();
@@ -914,7 +1232,8 @@ int main(int argc, char** argv) {
         json       removed_edges = json::array();
         json       updated_edges = json::array();
         if (structural || reparsed) {
-            imports.resolve(now, generation + 1, pkg_dirs, added_edges, removed_edges, updated_edges);
+            imports.resolve(now, generation + 1, owner_of, added_edges, removed_edges, updated_edges);
+            targets.resolve_owns(targets.own, generation + 1, added_edges, removed_edges);
             symbols.resolve(imports, now, generation + 1, added, removed, updated, added_edges,
                             removed_edges, updated_edges);
         }
@@ -949,13 +1268,16 @@ int main(int argc, char** argv) {
         if ((!modified.empty() || rewired) && !changed.empty()) {
             std::vector<std::string> file_seeds;
             std::vector<std::string> pkg_seeds;
+            std::vector<std::string> tgt_seeds;
+            auto seed = [](std::vector<std::string>& seeds, const std::string& id) {
+                if (!id.empty() && std::find(seeds.begin(), seeds.end(), id) == seeds.end()) {
+                    seeds.push_back(id);
+                }
+            };
             for (const auto& rel : changed) {
                 file_seeds.push_back(file_id(rel));
-                const std::string owner = owning_package(rel, pkg_dirs);
-                if (!owner.empty() &&
-                    std::find(pkg_seeds.begin(), pkg_seeds.end(), owner) == pkg_seeds.end()) {
-                    pkg_seeds.push_back(owner);
-                }
+                seed(pkg_seeds, owning_package(rel, pkg_dirs));
+                seed(tgt_seeds, targets.owner_id(rel));
             }
             emit(impact_json("file", {"imports"}, generation, baseline, file_seeds,
                              rgv::watch::reverse_reach(imports.graph_edges(), file_seeds,
@@ -970,6 +1292,13 @@ int main(int argc, char** argv) {
                 for (auto& e : imports.dep_graph_edges()) all.push_back(std::move(e));
                 emit(impact_json("package", {"depends_on"}, generation, baseline, pkg_seeds,
                                  rgv::watch::reverse_reach(all, pkg_seeds, baseline, 8)));
+            }
+            // The same question one level up for a language with no packages: change a
+            // header, and the targets that have to be rebuilt light up.
+            if (!tgt_seeds.empty()) {
+                emit(impact_json("build_target", {"depends_on"}, generation, baseline, tgt_seeds,
+                                 rgv::watch::reverse_reach(imports.dep_graph_edges(), tgt_seeds,
+                                                           baseline, 8)));
             }
         }
 

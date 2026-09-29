@@ -52,8 +52,10 @@ struct Endpoints {
 
 // -- spatial ------------------------------------------------------------------
 
-// Owner: LayoutSystem. Seeded once at creation near whatever the node connects to,
-// so a package appearing mid-session does not fly in from the origin.
+// Owner: LayoutSystem, and only LayoutSystem -- including the seed an arrival gets
+// before it is placed, so it eases in from beside whatever it connects to rather than
+// flying in from the origin. SceneSyncSystem creates the entity without this; placing
+// things is not a construction detail.
 struct Position { Vec2 p; };
 
 // Where layout wants this node. Positions ease toward it, so a topology change
@@ -75,12 +77,16 @@ struct Extent { Vec2 half{54.0f, 17.0f}; };
 // a distinction the colour and the layout already carry. Owner: SceneSyncSystem.
 struct Prominence { float scale = 1.0f; };
 
-// Dependency depth: 0 = depends on nothing else in view. Owner: LayoutSystem.
-struct Depth { int value = 0; };
-
-// Where a node sits in the concentric dependency layout. Ring 0 is the core -- the
-// nodes the most of the repository transitively depends on -- and the index rises
-// outward as reach falls, so consumers end up on the rim.
+// Where a node sits in the concentric dependency layout, under whichever key the
+// arrangement is currently using. Nothing focused: ring 0 is the core -- what the most
+// of the repository transitively depends on -- and the index rises outward as reach
+// falls, so consumers end up on the rim. Something focused: ring 0 is the selection
+// and the index IS the hop count, so the rings read as distance from the question.
+//
+// Two meanings in one field is a hazard and it has already bitten once, so the key is
+// not inferable from here: `LayoutSystem::ring_index_for` is the single place that
+// knows which is live, and both the placer and the incremental seat ask it rather
+// than computing their own. Do not add a third caller that computes its own.
 //
 // Polar coordinates are kept alongside the position because a drag has to relax in
 // them: the ring is the reading, so radius springs home while the angle is free, the
@@ -106,19 +112,33 @@ struct Disc {
     // label has to clear this, not just the disc, or a directory's own name lands on
     // top of its files.
     float halo = 6.0f;
-    // Radius of the soft glow drawn behind a directory, from the number of files in
-    // its whole subtree rather than from anything it holds directly. Gource sizes a
-    // directory by the mass beneath it and then draws only a bloom, never a disc --
-    // which is how a tree reads as structure at a glance. We draw the disc too, so the
-    // disc stays a node and the glow carries the mass. Zero on a file.
-    float glow = 0.0f;
     // Unit vector pointing away from whatever this node orbits. Labels are placed
     // along it, so the names around a ring fan outward instead of stacking on top of
     // one another. Zero for a node with no parent.
     Vec2 outward{0.0f, 1.0f};
 };
 
-// The user dragged this node. Layout leaves it alone. Owner: DragSystem.
+// What shape this node is DRAWN as, and the geometry drawing needs.
+//
+// The view decides this, not the layout. It used to be inferred from the presence of
+// `Disc` by five separate consumers, which made a layout change the silent channel for
+// restyling an entire view. Now one system reads the mode once and writes this, and
+// everything downstream switches on `form` -- so "why is this node a circle" has one
+// answer and `NodeShape` greps to every consumer. `Disc` goes back to being the
+// packing geometry it is, read by layout and by this system and nobody else.
+//
+// `radius` is the world-space radius of the shape itself; `halo` is the reach of what
+// orbits it, which a label has to clear; `outward` is the direction it orbits away
+// from, so names around a ring fan out instead of stacking. All zero for a box.
+// Owner: ShapeSystem.
+struct NodeShape {
+    enum class Form { Box, Disc };
+    Form  form   = Form::Box;
+    float radius = 0.0f;
+    float halo   = 0.0f;
+    Vec2  outward{0.0f, 1.0f};
+};
+
 // A node that has appeared but has not been given a place yet. Layout claims these,
 // seats them next to whatever they are connected to, and clears the tag -- which is how
 // a filter change costs one node's placement instead of the whole graph's.
@@ -211,5 +231,27 @@ struct Selected {};
 
 // On the dependency path currently being explained in the inspector.
 struct OnExplainedPath { int hop = 0; };
+
+// -- focus --------------------------------------------------------------------
+
+// Hops from the focused node, over the dependency graph read as UNDIRECTED. Direction
+// is the right question for "what breaks if I change this"; it is the wrong one for
+// "what is near what I am looking at", where a thing that imports me is exactly as
+// close as a thing I import.
+//
+// Present on every node and every line whenever something is focused, absent on all of
+// them when nothing is. `hops` is `kUnreached` for what the focus cannot reach at all
+// -- never absent, because the whole point is that nothing is hidden and unreachable
+// is a legitimate, and dim, answer. Owner: FocusSystem.
+inline constexpr int kUnreached = 1 << 20;
+struct FocusDistance { int hops = 0; };
+
+// -- findings -----------------------------------------------------------------
+
+// This node, or this line, is inside a dependency cycle: every other member of the
+// group reaches it and it reaches them. `group` indexes `CycleReport::groups`.
+// Absent on everything that is in no cycle, which is the ordinary case and why this is
+// a tag to look for rather than a field to check. Owner: CycleSystem.
+struct InCycle { int group = 0; };
 
 } // namespace rgv::ecs

@@ -5,10 +5,17 @@
 // drag it, making a particular value impossible to hit. The fix is that the text-size
 // window's own geometry is independent of the scale it edits, and that is exactly what
 // is asserted here.
+//
+// The second half of the file holds a different invariant with the same shape: a panel
+// reads resources and pushes commands, and never writes anything. Most of that is now
+// enforced by the compiler -- `ui::Ui` hands panels const references -- but a const_cast
+// or a second, non-const route to a resource would slip past it, so the behaviour is
+// pinned here too: press a control, and the state must not have moved.
 #include "TestMain.h"
 
 #include "Harness.h"
 
+#include "rgv/ecs/Commands.h"
 #include "rgv/fixture/FixtureSource.h"
 #include "rgv/model/GraphStore.h"
 #include "rgv/ui/Panels.h"
@@ -18,7 +25,9 @@
 #include <imgui_internal.h>
 
 #include <cmath>
+#include <cstring>
 #include <memory>
+#include <variant>
 
 using namespace rgv;
 
@@ -279,3 +288,261 @@ TEST(the_panels_are_not_drawn_at_all_when_hidden) {
     CHECK(bar->LastFrameActive >= frame - 1);
 }
 
+
+// -- panels push, they do not write -----------------------------------------------
+//
+// `ui::Ui` holds every resource by const reference except the command queue, so the
+// rule is mostly a compile error now. What these add is the half a type cannot state:
+// that the control actually pushes the right verb, and that the verb's owner applies
+// it. Five commands -- SetViewMode, SetImpactLevel, SelectEdge, CyclePath and
+// SelectScenario -- were implemented and pushed by nothing at all, because the panel
+// did the work inline instead; a compiler cannot notice that.
+
+namespace {
+
+// One real panel frame at 1x.
+void panel_frame(ecs::World& w) {
+    ImGui::GetIO().FontGlobalScale = 1.0f;
+    ImGui::NewFrame();
+    rgv::ui::draw_panels(w);
+    ImGui::Render();
+}
+
+// ImGui names a child window "Parent/##child_XXXXXXXX", so the transport controls
+// cannot be found by an exact name.
+ImGuiWindow* window_starting_with(const char* prefix) {
+    ImGuiContext& g   = *ImGui::GetCurrentContext();
+    const std::size_t n = std::strlen(prefix);
+    for (ImGuiWindow* w : g.Windows) {
+        if (std::strncmp(w->Name, prefix, n) == 0) return w;
+    }
+    return nullptr;
+}
+
+// Presses a control through the widget's own code. ImGui queues the activation and the
+// item consumes it the next time it is submitted, which is the same path a click takes
+// through ButtonBehavior -- so this drives the real panel, not a stand-in for it.
+// Buttons and checkboxes only: a slider activates into keyboard-entry mode rather than
+// producing a value.
+bool press(ecs::World& w, const char* window_prefix, const char* item) {
+    ImGuiWindow* win = window_starting_with(window_prefix);
+    if (!win) return false;
+    ImGui::ActivateItemByID(win->GetID(item));
+    panel_frame(w);
+    return true;
+}
+
+template <class T>
+const T* queued(ecs::World& w) {
+    for (const auto& c : w.resource<ecs::CommandQueue>().pending) {
+        if (const T* t = std::get_if<T>(&c)) return t;
+    }
+    return nullptr;
+}
+
+} // namespace
+
+TEST(a_toolbar_checkbox_asks_for_the_change_instead_of_making_it) {
+    HeadlessImGui imgui;
+    UiHarness     u(kFixture);
+    panel_frame(u.world());   // the toolbar has to exist before it can be pressed
+
+    CHECK(u.world().resource<ecs::ViewSettings>().show_labels);
+    CHECK(press(u.world(), "##topbar", "Labels"));
+
+    // The frame that drew the click changed nothing.
+    CHECK(u.world().resource<ecs::ViewSettings>().show_labels);
+
+    const auto* cmd = queued<ecs::SetViewToggle>(u.world());
+    CHECK(cmd != nullptr);
+    CHECK(cmd->which == ecs::ViewToggle::ShowLabels);
+    CHECK(!cmd->on);
+
+    // CommandSystem is the single place it lands.
+    u.h.tick();
+    CHECK(!u.world().resource<ecs::ViewSettings>().show_labels);
+}
+
+TEST(a_filter_checkbox_asks_for_the_change_instead_of_writing_filters) {
+    HeadlessImGui imgui;
+    UiHarness     u(kFixture);
+    panel_frame(u.world());
+
+    CHECK(u.world().resource<ecs::Filters>().show_unaffected);
+    CHECK(press(u.world(), "##topbar", "Unaffected"));
+    CHECK(u.world().resource<ecs::Filters>().show_unaffected);
+
+    const auto* cmd = queued<ecs::SetFilterFlag>(u.world());
+    CHECK(cmd != nullptr);
+    CHECK(cmd->which == ecs::FilterFlag::ShowUnaffected);
+    CHECK(!cmd->on);
+
+    u.h.tick();
+    CHECK(!u.world().resource<ecs::Filters>().show_unaffected);
+}
+
+// The mode switch carries three consequences -- the default level, the rebuild, the
+// refit. The toolbar used to spell all three out itself; now it says one word.
+TEST(choosing_a_view_mode_says_so_and_lets_one_system_decide_what_that_means) {
+    HeadlessImGui imgui;
+    UiHarness     u(kFixture);
+    panel_frame(u.world());
+
+    CHECK(u.world().resource<ecs::ViewSettings>().mode == ecs::ViewMode::Architecture);
+    CHECK(press(u.world(), "##topbar", "Filesystem"));
+    CHECK(u.world().resource<ecs::ViewSettings>().mode == ecs::ViewMode::Architecture);
+
+    const auto* cmd = queued<ecs::SetViewMode>(u.world());
+    CHECK(cmd != nullptr);
+    CHECK(cmd->mode == static_cast<int>(ecs::ViewMode::Filesystem));
+
+    u.h.tick();
+    const auto& vs = u.world().resource<ecs::ViewSettings>();
+    CHECK(vs.mode == ecs::ViewMode::Filesystem);
+    CHECK(vs.level == ecs::default_level(ecs::ViewMode::Filesystem));
+}
+
+// The transport panel used to call play() and seek_ms() on the timeline directly,
+// duplicating TransportSystem, which already owned them for the keyboard.
+TEST(the_transport_buttons_ask_transport_system_rather_than_moving_the_timeline) {
+    HeadlessImGui imgui;
+    UiHarness     u(kFixture);
+    panel_frame(u.world());
+
+    Timeline* tl = u.source->timeline();
+    CHECK(tl != nullptr);
+    const bool was_playing = tl->playing();
+
+    CHECK(press(u.world(), "Scenario/##transport", was_playing ? "Pause" : "Play"));
+    CHECK(tl->playing() == was_playing);   // the panel did not touch it
+    CHECK(queued<ecs::TransportPlayPause>(u.world()) != nullptr);
+
+    u.h.tick();
+    CHECK(tl->playing() != was_playing);
+    // Drained by TransportSystem in Input, so CommandSystem never saw it.
+    CHECK(u.world().resource<ecs::CommandQueue>().empty());
+}
+
+// The five that were dead. Each was implemented in its owning system and pushed by
+// nothing, because the panel reached past the queue and did the work inline.
+TEST(the_commands_the_panels_now_push_are_applied_by_their_owners) {
+    HeadlessImGui imgui;
+    UiHarness     u(kFixture);
+    auto&         cmd = u.world().resource<ecs::CommandQueue>();
+
+    cmd.push(ecs::SetImpactLevel{static_cast<int>(Level::File)});
+    u.h.tick();
+    CHECK(u.world().resource<ecs::ViewSettings>().level == Level::File);
+
+    // An edge id from the store, so this is the real selection path rather than a
+    // string round trip.
+    const std::string edge_id = u.h.store().edges().begin()->first;
+    cmd.push(ecs::SelectEdge{edge_id});
+    u.h.tick();
+    CHECK(u.world().resource<ecs::Selection>().edge == edge_id);
+
+    cmd.push(ecs::ClearEdgeSelection{});
+    u.h.tick();
+    CHECK(u.world().resource<ecs::Selection>().edge.empty());
+
+    if (u.source->scenarios().size() > 1) {
+        cmd.push(ecs::SelectScenario{1});
+        u.h.tick();
+        CHECK(u.source->scenario_index() == 1u);
+    }
+
+    // CyclePath lands as a delta; SelectionSystem is what wraps it against the real
+    // number of explanations, so with nothing selected it settles back to zero.
+    cmd.push(ecs::CyclePath{+1});
+    u.h.tick();
+    CHECK(u.world().resource<ecs::Selection>().path_index == 0);
+}
+
+// The backstop for everything a const reference cannot reach: a const_cast, or a
+// second non-const route to a resource. Draw every panel, repeatedly, and nothing the
+// user chose may have moved.
+TEST(drawing_every_panel_changes_no_state_at_all) {
+    HeadlessImGui imgui;
+    UiHarness     u(kFixture);
+    u.world().resource<ecs::ViewSettings>().show_text_settings = true;
+    u.world().resource<ecs::Selection>().node    = u.h.store().nodes().begin()->first;
+    u.world().resource<ecs::Selection>().hovered = u.h.store().nodes().begin()->first;
+    u.world().resource<ecs::Selection>().hover_time = 1.0f;
+
+    const ecs::ViewSettings view_before    = u.world().resource<ecs::ViewSettings>();
+    const ecs::Selection    selection_before = u.world().resource<ecs::Selection>();
+    const auto&             f              = u.world().resource<ecs::Filters>();
+    const bool  unaffected_before = f.show_unaffected;
+    const int   depth_before      = f.max_impact_depth;
+    const float relevance_before  = f.min_relevance;
+    const std::size_t hidden_before = f.hidden.size();
+
+    Timeline*    tl              = u.source->timeline();
+    const bool   playing_before  = tl->playing();
+    const double rate_before     = tl->rate();
+    const double position_before = u.source->status().position_ms;
+
+    ImGuiIO& io = ImGui::GetIO();
+    for (int frame = 0; frame < 8; ++frame) {
+        io.FontGlobalScale = 1.0f;
+        ImGui::NewFrame();
+        rgv::ui::draw_panels(u.world());
+        rgv::ui::draw_graph_overlay(u.world(), ImGui::GetBackgroundDrawList());
+        rgv::ui::draw_hover_card(u.world());
+        rgv::ui::draw_text_settings(u.world());
+        ImGui::Render();
+    }
+
+    const auto& view = u.world().resource<ecs::ViewSettings>();
+    CHECK(view.mode == view_before.mode);
+    CHECK(view.level == view_before.level);
+    CHECK(view.show_panels == view_before.show_panels);
+    CHECK(view.layout_running == view_before.layout_running);
+    CHECK(view.show_labels == view_before.show_labels);
+    CHECK(view.show_arrows == view_before.show_arrows);
+    CHECK(view.show_text_settings == view_before.show_text_settings);
+    CHECK(view.ui_text_scale == view_before.ui_text_scale);
+    CHECK(view.graph_text_scale == view_before.graph_text_scale);
+
+    const auto& selection = u.world().resource<ecs::Selection>();
+    CHECK(selection.node == selection_before.node);
+    CHECK(selection.edge == selection_before.edge);
+    CHECK(selection.path_index == selection_before.path_index);
+
+    CHECK(f.show_unaffected == unaffected_before);
+    CHECK(f.max_impact_depth == depth_before);
+    CHECK(f.min_relevance == relevance_before);
+    CHECK(f.hidden.size() == hidden_before);
+
+    CHECK(tl->playing() == playing_before);
+    CHECK(tl->rate() == rate_before);
+    CHECK(u.source->status().position_ms == position_before);
+
+    // The scene is not rebuilt or re-laid-out by being looked at either.
+    const auto& requests = u.world().resource<ecs::SceneRequests>();
+    CHECK(!requests.rebuild);
+    CHECK(!requests.relayout);
+    CHECK(!requests.revisit);
+    CHECK(!requests.refresh_extents);
+}
+
+// Tab used to reach into ViewSettings from NavigationSystem while F and Escape, two
+// lines below it, went through the queue -- so two of the three keys on one keyboard
+// were applied in one order and the third in another.
+TEST(the_panels_key_goes_through_the_queue_like_every_other_key) {
+    HeadlessImGui imgui;
+    UiHarness     u(kFixture);
+
+    CHECK(u.world().resource<ecs::ViewSettings>().show_panels);
+    u.h.input().panels_pressed = true;
+    u.h.tick();
+    u.h.input().panels_pressed = false;
+    CHECK(!u.world().resource<ecs::ViewSettings>().show_panels);
+
+    // Same frame, not the next one: NavigationSystem pushes in Input and CommandSystem
+    // drains in Sync, so routing it costs nothing in latency.
+    u.h.input().panels_pressed = true;
+    u.h.tick();
+    u.h.input().panels_pressed = false;
+    CHECK(u.world().resource<ecs::ViewSettings>().show_panels);
+}

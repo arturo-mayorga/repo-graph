@@ -16,6 +16,7 @@ Native C++20 / OpenGL frontend for the Live Repository Impact Graph.
 - Run `ctest --test-dir build` before claiming anything works.
 - Encode UX behaviour worth arguing about as a fixture scenario, not a screenshot.
 - Verify GUI changes by actually looking at them.
+- Keep PR Descriptions to a max of 200 words
 
 ## Don't
 

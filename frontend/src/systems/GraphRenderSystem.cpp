@@ -46,10 +46,10 @@ void GraphRenderSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
         const bool emphasised = registry.all_of<ecs::Selected>(e) ||
                                 registry.all_of<ecs::Hovered>(e) ||
                                 registry.all_of<ecs::OnExplainedPath>(e);
-        const auto*           d  = registry.try_get<ecs::Disc>(e);
+        const auto*           ns = registry.try_get<ecs::NodeShape>(e);
         const auto*           sp = registry.try_get<ecs::Spacing>(e);
         const auto*           pr = registry.try_get<ecs::Prominence>(e);
-        const view::DiscShape shape{d ? d->radius : 0.0f, sp ? sp->room : 1e9f};
+        const view::DiscShape shape{ns ? ns->radius : 0.0f, sp ? sp->room : 1e9f};
         return view::node_half(camera.zoom, detail, ext->half, shape,
                                view::dot_px_for(registry.all_of<ecs::Changed>(e),
                                                 registry.all_of<ecs::Impacted>(e), emphasised,
@@ -144,14 +144,10 @@ void GraphRenderSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
     // drawn over instead of cutting across it. And they are produced here, from the
     // store, rather than as entities -- so the layout never learns they exist and
     // hovering moves nothing.
-    if (view.mode == ecs::ViewMode::Filesystem) {
-        const auto& index = world.resource<ecs::EntityIndex>();
-        const auto& store = world.resource<GraphStore>();
-
-        NodeId hovered;
-        for (auto [ent, ref] : registry.view<const ecs::NodeRef, const ecs::Hovered>().each()) {
-            hovered = ref.id;
-        }
+    {
+        const auto& index   = world.resource<ecs::EntityIndex>();
+        const auto& hovers  = world.resource<ecs::HoverLinkSet>();
+        const NodeId hovered = hovers.of;
         const entt::entity src = hovered.empty() ? entt::null : index.node(hovered);
         if (src != entt::null && registry.all_of<ecs::Position>(src)) {
             Vec2 hub{0.0f, 0.0f};
@@ -160,10 +156,7 @@ void GraphRenderSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
                 if (ref.kind == NodeKind::Repository) { hub = pos.p; break; }
             }
 
-            const auto links = view::hover_links(store, hovered, [&](const NodeId& id) {
-                return index.node(id) != entt::null;
-            });
-            for (const auto& link : links) {
+            for (const auto& link : hovers.links) {
                 const entt::entity far = index.node(link.other);
                 if (far == entt::null || !registry.all_of<ecs::Position>(far)) continue;
 
@@ -200,13 +193,13 @@ void GraphRenderSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
          registry.view<const ecs::NodeRef, const ecs::Position, const ecs::Extent,
                        const ecs::Style>().each()) {
         const Vec2  half = half_of(ent);
-        const auto* d  = registry.try_get<ecs::Disc>(ent);
+        const auto* ns = registry.try_get<ecs::NodeShape>(ent);
         const auto* sp = registry.try_get<ecs::Spacing>(ent);
         // A circle is a box whose corners are its own radius, so the corner follows the
         // same morph the size does. Using the plain zoom curve here rounds a circle into
         // a square the moment the graph opens.
         const float shape_t = view::disc_morph(
-            detail, view::DiscShape{d ? d->radius : 0.0f, sp ? sp->room : 1e9f}, ext.half);
+            detail, view::DiscShape{ns ? ns->radius : 0.0f, sp ? sp->room : 1e9f}, ext.half);
         const float radius = 5.0f * shape_t + std::min(half.x, half.y) * (1.0f - shape_t);
 
         // A seed gets a halo: "the agent touched this" must be findable without reading
@@ -237,27 +230,9 @@ void GraphRenderSystem::run(ecs::World& world, const ecs::FrameContext& frame) {
 
         Vec4 fill = style.fill;
         // A dot is mostly outline; without a lift in fill it reads as a hollow ring.
-        if (!d && detail.t < 0.5f) {
+        // Boxes only: a disc collapses to a filled dot and needs no lift.
+        if ((!ns || ns->form == ecs::NodeShape::Form::Box) && detail.t < 0.5f) {
             fill = mix(style.stroke, fill, 0.35f + 0.65f * detail.t * 2.0f);
-        }
-
-        // Directories get a soft halo, the way Gource blooms them -- it is what makes a
-        // dense tree read as structure rather than scattered dots. It fades out as the
-        // node becomes a box, where a halo reads as a second, broken rectangle rather
-        // than a glow.
-        // Gone entirely by the time the node is a box, not merely faint: a halo behind
-        // a rectangle reads as a second, misaligned rectangle rather than a glow.
-        if (d && d->glow > 0.0f && shape_t < 0.5f) {
-            // Sized by everything beneath the node, not by the node -- see Disc::glow.
-            // Alpha comes down as the glow grows so a package holding six hundred files
-            // does not wash the graph out: Gource can hold its intensity constant
-            // because it blends additively into black, and we are compositing.
-            const Vec2 reach = view::disc_half(camera.zoom, d->glow, 6.0f);
-            Vec4       bloom = style.stroke;
-            bloom.a          = 0.16f * (1.0f - shape_t * 2.0f) *
-                      std::clamp(40.0f / std::max(d->glow, 40.0f), 0.3f, 1.0f);
-            renderer_.add_node(pos.p, reach, bloom, Vec4{0, 0, 0, 0}, 0.0f, 0.0f,
-                               std::min(reach.x, reach.y));
         }
 
         renderer_.add_node(pos.p, half, fill, style.stroke, style.stroke_w, style.dash, radius);

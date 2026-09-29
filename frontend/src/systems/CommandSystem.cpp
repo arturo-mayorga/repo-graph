@@ -8,6 +8,7 @@
 #include "rgv/platform/OpenPath.h"
 #include "rgv/view/CameraFit.h"
 
+#include <algorithm>
 #include <cstdio>
 
 namespace rgv::systems {
@@ -18,6 +19,7 @@ void CommandSystem::run(ecs::World& world, const ecs::FrameContext&) {
 
     auto& selection = world.resource<ecs::Selection>();
     auto& view      = world.resource<ecs::ViewSettings>();
+    auto& filters   = world.resource<ecs::Filters>();
     auto& requests  = world.resource<ecs::SceneRequests>();
     auto& camera    = world.resource<ecs::CameraControl>();
     auto& handle    = world.resource<ecs::SourceHandle>();
@@ -45,6 +47,9 @@ void CommandSystem::run(ecs::World& world, const ecs::FrameContext&) {
                 } else if constexpr (std::is_same_v<T, ecs::ClearSelection>) {
                     selection = ecs::Selection{};
 
+                } else if constexpr (std::is_same_v<T, ecs::ClearEdgeSelection>) {
+                    selection.edge.clear();
+
                 } else if constexpr (std::is_same_v<T, ecs::CyclePath>) {
                     // Wrapped against the real path count by SelectionSystem, which is
                     // the only thing that knows how many explanations exist.
@@ -58,6 +63,10 @@ void CommandSystem::run(ecs::World& world, const ecs::FrameContext&) {
                     view::fit_camera(world, c.ids);
                     camera.auto_fit = false;   // the user asked for this framing
 
+                } else if constexpr (std::is_same_v<T, ecs::Relayout>) {
+                    requests.relayout = true;
+                    queue.push(ecs::FitView{});
+
                 } else if constexpr (std::is_same_v<T, ecs::SetViewMode>) {
                     const auto mode = static_cast<ecs::ViewMode>(c.mode);
                     if (mode != view.mode) {
@@ -66,7 +75,87 @@ void CommandSystem::run(ecs::World& world, const ecs::FrameContext&) {
                         view.mode  = mode;
                         view.level = ecs::default_level(mode);
                         requests.rebuild = true;
-                        requests.refit   = true;
+
+                        // Deliberately FitView rather than SceneRequests::refit.
+                        // `refit` was written here and read nowhere in the tree, so the
+                        // framing after a mode switch only ever happened because the
+                        // toolbar pushed FitView itself. Wiring this command without
+                        // choosing would have restored a path with no effect. FitView
+                        // wins because it already has the one owner -- this system --
+                        // and a second, flag-shaped route to the same camera is the
+                        // duplicated state the architecture exists to refuse. Pushed
+                        // rather than applied: SceneSyncSystem rebuilds later this
+                        // frame, so fitting now would frame the scene being discarded.
+                        // SceneRequests::refit is now written by nothing and should be
+                        // deleted; Resources.h is not this change's to edit.
+                        queue.push(ecs::FitView{});
+                    }
+
+                } else if constexpr (std::is_same_v<T, ecs::SetImpactLevel>) {
+                    // Levels coexist, so this is a free switch: no re-query, no lost
+                    // context, and nothing on screen has to move.
+                    view.level = static_cast<Level>(c.level);
+
+                } else if constexpr (std::is_same_v<T, ecs::SetViewToggle>) {
+                    switch (c.which) {
+                        case ecs::ViewToggle::LayoutRunning:    view.layout_running = c.on; break;
+                        case ecs::ViewToggle::ShowLabels:       view.show_labels = c.on; break;
+                        case ecs::ViewToggle::ShowArrows:       view.show_arrows = c.on; break;
+                        case ecs::ViewToggle::ShowPanels:       view.show_panels = c.on; break;
+                        case ecs::ViewToggle::ShowTextSettings: view.show_text_settings = c.on; break;
+                    }
+
+                } else if constexpr (std::is_same_v<T, ecs::SetTextScale>) {
+                    const float v = std::clamp(c.value, config::Settings::kMinTextScale,
+                                               config::Settings::kMaxTextScale);
+                    if (c.which == ecs::TextScale::Ui) {
+                        // Panel geometry is derived from this every frame, so there is
+                        // nothing to invalidate.
+                        view.ui_text_scale = v;
+                    } else {
+                        view.graph_text_scale = v;
+                        // A node box is sized to hold its label, so the footprints go
+                        // stale. Resizing in place, not rearranging: `resettle` is what
+                        // pushes newly-overlapping neighbours apart.
+                        requests.refresh_extents = true;
+                    }
+
+                } else if constexpr (std::is_same_v<T, ecs::SetFilterFlag>) {
+                    switch (c.which) {
+                        case ecs::FilterFlag::ShowUnaffected: filters.show_unaffected = c.on; break;
+                        case ecs::FilterFlag::ShowStale:      filters.show_stale = c.on; break;
+                        case ecs::FilterFlag::ShowHeuristic:  filters.show_heuristic = c.on; break;
+                        case ecs::FilterFlag::ShowExternal:   filters.show_external = c.on; break;
+                    }
+                    // A revisit, never a rebuild: filters are dragged and toggled, and
+                    // clearing the registry would reseed every position mid-gesture.
+                    requests.revisit = true;
+
+                } else if constexpr (std::is_same_v<T, ecs::SetImpactDepth>) {
+                    filters.max_impact_depth = std::clamp(c.depth, 1, 12);
+                    // Depth only decides visibility while unaffected context is hidden;
+                    // otherwise every node is on screen regardless and the difference is
+                    // emphasis, which needs no revisit.
+                    if (!filters.show_unaffected) requests.revisit = true;
+
+                } else if constexpr (std::is_same_v<T, ecs::SetMinRelevance>) {
+                    filters.min_relevance = std::clamp(c.value, 0.0f, 1.0f);
+                    requests.revisit = true;
+
+                } else if constexpr (std::is_same_v<T, ecs::SetFilterText>) {
+                    filters.text     = c.text;
+                    requests.revisit = true;
+
+                } else if constexpr (std::is_same_v<T, ecs::AddHidePattern>) {
+                    // An invalid pattern is kept so the user can see and fix it, and
+                    // hides nothing -- so this is not an error path.
+                    ecs::add_hide_pattern(filters, c.source);
+                    requests.revisit = true;
+
+                } else if constexpr (std::is_same_v<T, ecs::RemoveHidePattern>) {
+                    if (c.index >= 0 && c.index < static_cast<int>(filters.hidden.size())) {
+                        filters.hidden.erase(filters.hidden.begin() + c.index);
+                        requests.revisit = true;
                     }
 
                 } else if constexpr (std::is_same_v<T, ecs::OpenNode>) {
@@ -81,7 +170,10 @@ void CommandSystem::run(ecs::World& world, const ecs::FrameContext&) {
                             std::fprintf(stderr,
                                          "rgv: not opening '%s': no such file inside %s\n",
                                          n->path.c_str(), store.baseline().repo.root.c_str());
-                        } else if (!platform::open_in_default_app(abs, &err)) {
+                        } else if (!platform::open_with(
+                                       abs,
+                                       world.resource<ecs::SettingsResource>().values.open_command,
+                                       &err)) {
                             std::fprintf(stderr, "rgv: could not open '%s': %s\n", abs.c_str(),
                                          err.c_str());
                         }
@@ -96,9 +188,6 @@ void CommandSystem::run(ecs::World& world, const ecs::FrameContext&) {
                             world.registry.emplace<ecs::Pinned>(e);
                         }
                     }
-
-                } else if constexpr (std::is_same_v<T, ecs::SetImpactLevel>) {
-                    view.level = static_cast<Level>(c.level);
 
                 } else if constexpr (std::is_same_v<T, ecs::SelectScenario>) {
                     if (handle.fixtures) {
@@ -118,6 +207,13 @@ void CommandSystem::run(ecs::World& world, const ecs::FrameContext&) {
                     if (!config::save(settings.values, settings.path)) {
                         std::fprintf(stderr, "could not write %s\n", settings.path.c_str());
                     }
+
+                } else if constexpr (ecs::is_transport_command_v<T>) {
+                    // Not ours, and deliberately dropped rather than forwarded.
+                    // TransportSystem runs in Input and takes these off the queue
+                    // before this system ever sees one; arriving here means it is not
+                    // in the schedule, so there is nothing to move and re-queueing
+                    // would just ping-pong the command forever.
                 }
             },
             command);

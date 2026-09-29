@@ -5,6 +5,7 @@
 #include "rgv/ecs/Resources.h"
 #include "rgv/fixture/FixtureSource.h"
 #include "rgv/model/GraphStore.h"
+#include "rgv/view/Focus.h"
 #include "rgv/view/SemanticZoom.h"
 
 #include "rgv/analysis/Specificity.h"
@@ -23,21 +24,44 @@ namespace {
 
 // Gathers the resources the panels touch. Constructed per call rather than stored, so
 // a panel can never hold a reference across a frame boundary.
+//
+// Everything here is const except the command queue, and that is the point: "panels
+// never mutate state" is a type, not a comment. As a comment it was broken at roughly
+// thirty sites -- checkboxes bound straight to ViewSettings fields, Filters written
+// mid-drag, the timeline played and seeked from the panel, five commands implemented
+// and pushed by nothing -- because nothing stopped it. The cost is that every control
+// needs a verb in Commands.h; the gain is that the next one cannot skip it.
+//
+// The source is held as const pointers rather than as the SourceHandle, because a
+// `const SourceHandle&` still hands out a non-const `IGraphSource*` and the rule would
+// survive only as far as the first `->timeline()->play()`.
 struct Ui {
-    ecs::World&          world;
-    GraphStore&          store;
-    ecs::ViewSettings&   view;
-    ecs::Filters&        filters;
-    ecs::Selection&      selection;
-    ecs::Viewport&       viewport;
-    ecs::SceneStats&     stats;
-    ecs::DerivedState&   derived;
-    ecs::EntityIndex&    index;
-    ecs::CommandQueue&   cmd;
-    ecs::SourceHandle&   source;
-    ecs::FixtureLibrary& library;
-    ecs::FrameTiming&    timing;
-    Camera&              camera;
+    const ecs::World&          world;
+    const GraphStore&          store;
+    const ecs::ViewSettings&   view;
+    const ecs::Filters&        filters;
+    const ecs::Selection&      selection;
+    const ecs::Viewport&       viewport;
+    const ecs::SceneStats&     stats;
+    const ecs::DerivedState&   derived;
+    const ecs::EntityIndex&    index;
+    const ecs::FixtureLibrary& library;
+    const ecs::FrameTiming&    timing;
+    const Camera&              camera;
+
+    const IGraphSource*           source   = nullptr;   // status(), baseline()
+    const fixture::FixtureSource* fixtures = nullptr;   // what scenarios exist
+    const Timeline*               timeline = nullptr;   // where it is, not where it goes
+
+    // The one thing a panel may write.
+    ecs::CommandQueue& cmd;
+
+    // Viewport is the exception, and deliberately not a loophole. Its free rectangle
+    // and the toolbar's height are MEASURED while drawing rather than chosen: they do
+    // not exist until the widgets have been laid out, so there is no value a command
+    // could have carried into the frame. Nothing else comes through here -- everything
+    // a user picks, drags or types is a command.
+    ecs::Viewport& measured() { return *measured_; }
 
     explicit Ui(ecs::World& w)
         : world(w),
@@ -49,11 +73,21 @@ struct Ui {
           stats(w.resource<ecs::SceneStats>()),
           derived(w.resource<ecs::DerivedState>()),
           index(w.resource<ecs::EntityIndex>()),
-          cmd(w.resource<ecs::CommandQueue>()),
-          source(w.resource<ecs::SourceHandle>()),
           library(w.resource<ecs::FixtureLibrary>()),
           timing(w.resource<ecs::FrameTiming>()),
-          camera(w.resource<Camera>()) {}
+          camera(w.resource<Camera>()),
+          cmd(w.resource<ecs::CommandQueue>()),
+          measured_(&w.resource<ecs::Viewport>()) {
+        // The single place the handle's non-const pointers are narrowed. Done once,
+        // here, so no panel has to be trusted to do it.
+        auto& handle = w.resource<ecs::SourceHandle>();
+        source       = handle.source;
+        fixtures     = handle.fixtures;
+        timeline     = handle.source ? handle.source->timeline() : nullptr;
+    }
+
+private:
+    ecs::Viewport* measured_;
 };
 
 
@@ -220,8 +254,8 @@ void draw_top_bar(ecs::World& world) {
                      ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
                      ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoSavedSettings);
 
-    auto& vs = ui.view;
-    auto& f  = ui.filters;
+    const auto& vs = ui.view;
+    const auto& f  = ui.filters;
 
     Flow flow;
     flow.right = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
@@ -240,14 +274,10 @@ void draw_top_bar(ecs::World& world) {
         const bool  active = vs.mode == m;
         flow.item(button_w(name));
         if (active) ImGui::PushStyleColor(ImGuiCol_Button, to_v4(Vec4{0.26f, 0.30f, 0.39f, 1.0f}));
-        if (ImGui::Button(name) && !active) {
-            // Selection is deliberately preserved across the switch (FR-30). Only the
-            // visible node set changes.
-            vs.mode           = m;
-            vs.level          = ecs::default_level(m);
-            ui.world.resource<ecs::SceneRequests>().rebuild = true;
-            ui.cmd.push(ecs::FitView{});
-        }
+        // What a mode switch entails -- the default level, the rebuild, the refit --
+        // lives in CommandSystem now. The toolbar used to spell all three out here,
+        // which is how the keyboard and the panel came to switch modes differently.
+        if (ImGui::Button(name) && !active) ui.cmd.push(ecs::SetViewMode{static_cast<int>(m)});
         if (active) ImGui::PopStyleColor();
         flow.placed();
     }
@@ -259,9 +289,7 @@ void draw_top_bar(ecs::World& world) {
         ImGui::SetNextItemWidth(w);
         int lvl = static_cast<int>(vs.level);
         if (ImGui::Combo("##level", &lvl, "package\0build target\0file\0symbol\0")) {
-            // Levels coexist, so this is a free switch: no re-query, no lost context.
-            vs.level = static_cast<Level>(lvl);
-            
+            ui.cmd.push(ecs::SetImpactLevel{lvl});
         }
         flow.placed();
         if (ImGui::IsItemHovered()) {
@@ -279,10 +307,7 @@ void draw_top_bar(ecs::World& world) {
     // rather than something that happens to them. Nodes coming and going are seated
     // where they belong and left to the relaxation instead.
     flow.item(button_w("Re-layout"));
-    if (ImGui::Button("Re-layout")) {
-        ui.world.resource<ecs::SceneRequests>().relayout = true;
-        ui.cmd.push(ecs::FitView{});
-    }
+    if (ImGui::Button("Re-layout")) ui.cmd.push(ecs::Relayout{});
     flow.placed();
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("Lay the whole graph out again from scratch.\n\n"
@@ -301,21 +326,21 @@ void draw_top_bar(ecs::World& world) {
     }
     flow.placed();
 
-    flow.item(checkbox_w("Layout"));
-    ImGui::Checkbox("Layout", &vs.layout_running);
-    flow.placed();
+    // Each of these used to be a Checkbox bound straight to the field it names, which
+    // is the shortest possible way to write the bug this refactor removes. The copy is
+    // the whole mechanism: ImGui edits it, the resource is reached only by command, and
+    // the box redraws from the applied value one frame later.
+    auto view_toggle = [&](const char* name, ecs::ViewToggle which, bool current) {
+        flow.item(checkbox_w(name));
+        bool value = current;
+        if (ImGui::Checkbox(name, &value)) ui.cmd.push(ecs::SetViewToggle{which, value});
+        flow.placed();
+    };
 
-    flow.item(checkbox_w("Labels"));
-    ImGui::Checkbox("Labels", &vs.show_labels);
-    flow.placed();
-
-    flow.item(checkbox_w("Arrows"));
-    ImGui::Checkbox("Arrows", &vs.show_arrows);
-    flow.placed();
-
-    flow.item(checkbox_w("Panels"));
-    ImGui::Checkbox("Panels", &vs.show_panels);
-    flow.placed();
+    view_toggle("Layout", ecs::ViewToggle::LayoutRunning, vs.layout_running);
+    view_toggle("Labels", ecs::ViewToggle::ShowLabels, vs.show_labels);
+    view_toggle("Arrows", ecs::ViewToggle::ShowArrows, vs.show_arrows);
+    view_toggle("Panels", ecs::ViewToggle::ShowPanels, vs.show_panels);
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("The session, inspector and scenario panels. Off gives the\n"
                           "graph the whole window. Tab toggles it.");
@@ -323,17 +348,18 @@ void draw_top_bar(ecs::World& world) {
 
     // -- filters (FR-35)
     label("FILTER");
-    struct Toggle { const char* name; bool* value; const char* tip; };
+    struct Toggle { const char* name; ecs::FilterFlag flag; bool value; const char* tip; };
     const Toggle toggles[] = {
-        {"Unaffected", &f.show_unaffected,
+        {"Unaffected", ecs::FilterFlag::ShowUnaffected, f.show_unaffected,
          "Off: show only what the agent touched plus affected context."},
-        {"Stale", &f.show_stale, nullptr},
-        {"Heuristic", &f.show_heuristic, nullptr},
-        {"External", &f.show_external, nullptr},
+        {"Stale", ecs::FilterFlag::ShowStale, f.show_stale, nullptr},
+        {"Heuristic", ecs::FilterFlag::ShowHeuristic, f.show_heuristic, nullptr},
+        {"External", ecs::FilterFlag::ShowExternal, f.show_external, nullptr},
     };
     for (const auto& tg : toggles) {
         flow.item(checkbox_w(tg.name));
-        if (ImGui::Checkbox(tg.name, tg.value)) ui.world.resource<ecs::SceneRequests>().revisit = true;
+        bool value = tg.value;
+        if (ImGui::Checkbox(tg.name, &value)) ui.cmd.push(ecs::SetFilterFlag{tg.flag, value});
         flow.placed();
         if (tg.tip && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tg.tip);
     }
@@ -342,10 +368,11 @@ void draw_top_bar(ecs::World& world) {
         const float w = 150.0f * vs.ui_text_scale;
         flow.item(w);
         ImGui::SetNextItemWidth(w);
-        if (ImGui::SliderInt("depth", &f.max_impact_depth, 1, 12)) {
-            
-            if (!f.show_unaffected) ui.world.resource<ecs::SceneRequests>().revisit = true;
-        }
+        // Dragged through a copy, so the resource moves one frame behind the grab. The
+        // slider is positioned from the pointer while it is held, not from the value
+        // handed in, so the lag is invisible -- and it is what the invariant costs.
+        int depth = f.max_impact_depth;
+        if (ImGui::SliderInt("depth", &depth, 1, 12)) ui.cmd.push(ecs::SetImpactDepth{depth});
         flow.placed();
 
         // Architectural specificity, borrowed from inverse document frequency: a
@@ -353,10 +380,9 @@ void draw_top_bar(ecs::World& world) {
         // the change through one carry little information.
         flow.item(w);
         ImGui::SetNextItemWidth(w);
-        if (ImGui::SliderFloat("relevance", &f.min_relevance, 0.0f, 1.0f, "%.2f")) {
-            // Visibility depends on this now, not just emphasis. A revisit rather than
-            // a rebuild: this is dragged, so what stays visible must not move.
-            ui.world.resource<ecs::SceneRequests>().revisit = true;
+        float relevance = f.min_relevance;
+        if (ImGui::SliderFloat("relevance", &relevance, 0.0f, 1.0f, "%.2f")) {
+            ui.cmd.push(ecs::SetMinRelevance{relevance});
         }
         flow.placed();
         if (ImGui::IsItemHovered()) {
@@ -376,8 +402,7 @@ void draw_top_bar(ecs::World& world) {
         char buf[128];
         std::snprintf(buf, sizeof(buf), "%s", f.text.c_str());
         if (ImGui::InputTextWithHint("##search", "filter by name or path", buf, sizeof(buf))) {
-            f.text              = buf;
-            ui.world.resource<ecs::SceneRequests>().revisit = true;
+            ui.cmd.push(ecs::SetFilterText{buf});
         }
         flow.placed();
     }
@@ -391,9 +416,10 @@ void draw_top_bar(ecs::World& world) {
         if (ImGui::InputTextWithHint("##hide", "hide /regex/ + enter", hide_buf, sizeof(hide_buf),
                                      ImGuiInputTextFlags_EnterReturnsTrue)) {
             if (hide_buf[0] != '\0') {
-                ecs::add_hide_pattern(f, hide_buf);
+                // `hide_buf` is the widget's own scratch, not application state: what
+                // has been typed but not yet committed belongs to the control.
+                ui.cmd.push(ecs::AddHidePattern{hide_buf});
                 hide_buf[0] = '\0';
-                ui.world.resource<ecs::SceneRequests>().revisit = true;
             }
         }
         flow.placed();
@@ -412,9 +438,8 @@ void draw_top_bar(ecs::World& world) {
             if (!hp.valid) ImGui::PopStyleColor();
             flow.placed();
             if (remove) {
-                f.hidden.erase(f.hidden.begin() + static_cast<long>(i));
-                ui.world.resource<ecs::SceneRequests>().revisit = true;
-                break;
+                ui.cmd.push(ecs::RemoveHidePattern{static_cast<int>(i)});
+                break;   // the list is about to change shape; finish it next frame
             }
         }
     }
@@ -430,7 +455,10 @@ void draw_top_bar(ecs::World& world) {
                       static_cast<double>(vs.ui_text_scale),
                       static_cast<double>(vs.graph_text_scale));
         flow.item(button_w(label));
-        if (ImGui::Button(label)) vs.show_text_settings = !vs.show_text_settings;
+        if (ImGui::Button(label)) {
+            ui.cmd.push(
+                ecs::SetViewToggle{ecs::ViewToggle::ShowTextSettings, !vs.show_text_settings});
+        }
         flow.placed();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("UI and graph text size.");
     }
@@ -448,7 +476,7 @@ void draw_top_bar(ecs::World& world) {
     // Measured now, used to size the window on the next frame. Read at the top of this
     // function, written here: the toolbar wraps, so its height is only knowable after
     // its contents have been laid out.
-    ui.viewport.top_bar_height = ImGui::GetCursorPosY() + ImGui::GetStyle().WindowPadding.y;
+    ui.measured().top_bar_height = ImGui::GetCursorPosY() + ImGui::GetStyle().WindowPadding.y;
 
     ImGui::End();
 }
@@ -632,6 +660,34 @@ void draw_node_inspector(Ui& ui, const Node& n) {
         }
     }
 
+    // The finding, said in words. The colour is the at-a-glance channel and cannot
+    // say WHO the entanglement is with -- and "who" is the whole question, because
+    // breaking a cycle means choosing which of its members gives way.
+    {
+        const auto&        cycles = ui.world.resource<ecs::CycleReport>();
+        const entt::entity ent    = ui.world.resource<ecs::EntityIndex>().node(n.id);
+        const auto*        in =
+            ent == entt::null ? nullptr : ui.world.registry.try_get<ecs::InCycle>(ent);
+        if (in && in->group >= 0 && in->group < static_cast<int>(cycles.groups.size())) {
+            ImGui::Spacing();
+            ImGui::TextColored(to_v4(theme().cycle), "IN A DEPENDENCY CYCLE");
+            ImGui::TextWrapped(
+                "These depend on each other, directly or through a chain. None of them "
+                "can be read, tested or replaced without the rest.");
+            for (const auto& id : cycles.groups[static_cast<std::size_t>(in->group)].nodes) {
+                if (id == n.id) continue;
+                const Node* other = ui.store.node(id);
+                ImGui::Bullet();
+                ImGui::SameLine();
+                if (ImGui::SmallButton(other ? other->name.c_str() : id.c_str())) {
+                    ui.cmd.push(ecs::SelectNode{id});
+                }
+            }
+            ImGui::Spacing();
+            ImGui::Separator();
+        }
+    }
+
     // How much information "something depends on this" carries.
     {
         const auto& idx  = ui.derived.specificity;
@@ -714,23 +770,20 @@ void draw_node_inspector(Ui& ui, const Node& n) {
             ImGui::TextDisabled("seed node -- nothing to explain");
         } else {
             const int count = static_cast<int>(in->paths.size());
-            ui.selection.path_index = std::clamp(ui.selection.path_index, 0, count - 1);
+            // Clamped for reading only. The stored index is wrapped by SelectionSystem,
+            // which is the one place that knows how many explanations exist; the panel
+            // used to clamp the resource itself and so quietly owned it too.
+            const int shown = std::clamp(ui.selection.path_index, 0, count - 1);
 
             ImGui::Spacing();
             ImGui::Text("Why:");
             ImGui::SameLine();
             if (count > 1) {
-                if (ImGui::SmallButton("<")) {
-                    ui.selection.path_index = (ui.selection.path_index + count - 1) % count;
-                    
-                }
+                if (ImGui::SmallButton("<")) ui.cmd.push(ecs::CyclePath{-1});
                 ImGui::SameLine();
-                ImGui::Text("path %d/%d", ui.selection.path_index + 1, count);
+                ImGui::Text("path %d/%d", shown + 1, count);
                 ImGui::SameLine();
-                if (ImGui::SmallButton(">")) {
-                    ui.selection.path_index = (ui.selection.path_index + 1) % count;
-                    
-                }
+                if (ImGui::SmallButton(">")) ui.cmd.push(ecs::CyclePath{+1});
             } else {
                 ImGui::TextDisabled("1 path");
             }
@@ -742,7 +795,7 @@ void draw_node_inspector(Ui& ui, const Node& n) {
             // The chain, hop by hop. Every hop is clickable and opens the evidence
             // behind that specific relationship -- the difference between a claim and
             // an explanation.
-            const auto& path = in->paths[ui.selection.path_index].edges;
+            const auto& path = in->paths[static_cast<std::size_t>(shown)].edges;
             NodeId      cur  = n.id;
             for (std::size_t hop = 0; hop < path.size(); ++hop) {
                 const Edge* e = ui.store.edge(path[hop]);
@@ -761,7 +814,7 @@ void draw_node_inspector(Ui& ui, const Node& n) {
                     select_node(ui, e->to);
                 }
                 ImGui::SameLine();
-                if (ImGui::SmallButton("evidence")) ui.selection.edge = e->id;
+                if (ImGui::SmallButton("evidence")) ui.cmd.push(ecs::SelectEdge{e->id});
                 if (e->confidence != Confidence::Exact || e->freshness != Freshness::Current) {
                     ImGui::SameLine();
                     chip(e->freshness != Freshness::Current
@@ -919,13 +972,15 @@ void draw_inspector(ecs::World& world) {
 
     if (!ui.selection.edge.empty()) {
         if (const Edge* e = ui.store.edge(ui.selection.edge)) {
-            if (ImGui::SmallButton("< back to node")) ui.selection.edge.clear();
+            if (ImGui::SmallButton("< back to node")) ui.cmd.push(ecs::ClearEdgeSelection{});
             ImGui::Separator();
             draw_edge_inspector(ui, *e);
             ImGui::End();
             return;
         }
-        ui.selection.edge.clear();
+        // The selected edge was deleted by an event. Asked for rather than repaired
+        // here: this frame falls through to the node, and the id is gone by the next.
+        ui.cmd.push(ecs::ClearEdgeSelection{});
     }
 
     if (ui.selection.node.empty()) {
@@ -956,7 +1011,7 @@ void draw_inspector(ecs::World& world) {
         // the disappearance is itself information about what the agent did.
         ImGui::TextColored(to_v4(theme().removed), "%s", ui.selection.node.c_str());
         ImGui::TextDisabled("This node no longer exists in the current generation.");
-        if (ImGui::SmallButton("clear selection")) ui.selection.node.clear();
+        if (ImGui::SmallButton("clear selection")) ui.cmd.push(ecs::ClearSelection{});
     }
     ImGui::End();
 }
@@ -973,7 +1028,10 @@ void draw_timeline(ecs::World& world) {
                  ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings);
 
-    Timeline* tl = ui.source.source->timeline();
+    // Const: this panel reads where the timeline is and asks TransportSystem to move
+    // it. It used to call play(), seek_ms() and set_rate() itself, duplicating the
+    // system that already owned them.
+    const Timeline* tl = ui.timeline;
 
     ImGui::BeginChild("##transport", ImVec2(ImGui::GetContentRegionAvail().x * 0.56f, 0), false);
 
@@ -981,7 +1039,7 @@ void draw_timeline(ecs::World& world) {
         // A live backend has no timeline. The panel degrades to a status readout
         // rather than disappearing, so the layout does not jump when sources swap.
         ImGui::TextDisabled("live source -- no timeline");
-        ImGui::Text("%s", ui.source.source->status().description.c_str());
+        ImGui::Text("%s", ui.source->status().description.c_str());
     } else {
         if (!ui.library.names.empty()) {
             ImGui::SetNextItemWidth(220.0f * ui.view.ui_text_scale);
@@ -992,17 +1050,21 @@ void draw_timeline(ecs::World& world) {
             if (ImGui::Combo("##fixture", &fx, items.c_str())) ui.cmd.push(ecs::SelectFixture{fx});
             ImGui::SameLine();
         }
-        if (ui.source.fixtures) {
+        if (ui.fixtures) {
             ImGui::SetNextItemWidth(280.0f * ui.view.ui_text_scale);
-            int  idx = static_cast<int>(ui.source.fixtures->scenario_index());
+            int  idx = static_cast<int>(ui.fixtures->scenario_index());
             std::string items;
-            for (const auto& s : ui.source.fixtures->scenarios()) {
+            for (const auto& s : ui.fixtures->scenarios()) {
                 items += s.name;
                 items.push_back('\0');
             }
             items.push_back('\0');
+            // SelectScenario was implemented in CommandSystem and pushed by nothing,
+            // because the panel reached past it into the source. Switching a scenario
+            // rewinds to the baseline, which is a session-wide event and belongs on the
+            // one ordered log rather than in the middle of a draw.
             if (ImGui::Combo("##scenario", &idx, items.c_str())) {
-                ui.source.fixtures->select_scenario(static_cast<std::size_t>(idx));
+                ui.cmd.push(ecs::SelectScenario{idx});
             }
             ImGui::SameLine();
             if (ImGui::Button("Reload")) ui.cmd.push(ecs::ReloadFixture{});
@@ -1010,26 +1072,26 @@ void draw_timeline(ecs::World& world) {
                 ImGui::SetTooltip("Re-read the fixture files from disk.\n"
                                   "Edit a scenario in an editor, hit this, watch it run.");
             }
-            if (!ui.source.fixtures->scenario().description.empty()) {
-                ImGui::TextDisabled("%s", ui.source.fixtures->scenario().description.c_str());
+            if (!ui.fixtures->scenario().description.empty()) {
+                ImGui::TextDisabled("%s", ui.fixtures->scenario().description.c_str());
             }
         }
 
-        const SourceStatus st = ui.source.source->status();
+        const SourceStatus st = ui.source->status();
 
-        if (ImGui::Button("|<")) tl->restart();
+        if (ImGui::Button("|<")) ui.cmd.push(ecs::TransportRestart{});
         ImGui::SameLine();
         if (ImGui::Button(tl->playing() ? "Pause" : "Play")) {
-            tl->playing() ? tl->pause() : tl->play();
+            ui.cmd.push(ecs::TransportPlayPause{});
         }
         ImGui::SameLine();
-        if (ImGui::Button("Step >|")) tl->step_event();
+        if (ImGui::Button("Step >|")) ui.cmd.push(ecs::TransportStep{});
         ImGui::SameLine();
         ImGui::SetNextItemWidth(120.0f * ui.view.ui_text_scale);
         float rate = static_cast<float>(tl->rate());
         if (ImGui::SliderFloat("##rate", &rate, 0.25f, 8.0f, "%.2fx",
                                ImGuiSliderFlags_Logarithmic)) {
-            tl->set_rate(rate);
+            ui.cmd.push(ecs::TransportRate{rate});
         }
         ImGui::SameLine();
         ImGui::TextDisabled("g%llu   event %d/%d",
@@ -1042,8 +1104,7 @@ void draw_timeline(ecs::World& world) {
         float       pos = static_cast<float>(st.position_ms);
         ImGui::SetNextItemWidth(-1);
         if (ImGui::SliderFloat("##scrub", &pos, 0.0f, dur, "%.0f ms")) {
-            tl->pause();
-            tl->seek_ms(pos);
+            ui.cmd.push(ecs::TransportSeek{pos});
         }
 
         const ImVec2 bar_min = ImGui::GetItemRectMin();
@@ -1115,9 +1176,11 @@ void draw_panels(ecs::World& world) {
     Ui                   ui(world);
     const PanelMetrics   m = panel_metrics(ui);
 
-    ui.viewport.free_origin = Vec2{vp->WorkPos.x + m.left, vp->WorkPos.y + m.top};
-    ui.viewport.free_size   = Vec2{std::max(1.0f, vp->WorkSize.x - m.left - m.right),
-                                   std::max(1.0f, vp->WorkSize.y - m.top - m.bottom)};
+    // The measured exception, and the only other place it is used: what the panels
+    // leave for the graph is known only once they have been drawn.
+    ui.measured().free_origin = Vec2{vp->WorkPos.x + m.left, vp->WorkPos.y + m.top};
+    ui.measured().free_size   = Vec2{std::max(1.0f, vp->WorkSize.x - m.left - m.right),
+                                     std::max(1.0f, vp->WorkSize.y - m.top - m.bottom)};
 }
 
 // ------------------------------------------------------------------ overlay
@@ -1145,8 +1208,7 @@ void draw_graph_overlay(ecs::World& world, ImDrawList* dl) {
     // in step with the space between nodes, so crowding never eases however far you
     // zoom; screen-space text stays put while the nodes spread apart beneath it.
     if (vs.show_labels) {
-        ImFont*     font    = ImGui::GetFont();
-        const float outside_px = rgv::view::kBaseFontPx * vs.graph_text_scale;
+        ImFont* font = ImGui::GetFont();
 
         for (auto [ent, pos, ext, ref, label] :
              reg.view<const ecs::Position, const ecs::Extent, const ecs::NodeRef,
@@ -1161,12 +1223,12 @@ void draw_graph_overlay(ecs::World& world, ImDrawList* dl) {
 
             const bool  changed = reg.all_of<ecs::Changed>(ent);
             const auto* imp     = reg.try_get<ecs::Impacted>(ent);
-            const auto* disc    = reg.try_get<ecs::Disc>(ent);
+            const auto* ns      = reg.try_get<ecs::NodeShape>(ent);
             const auto* space   = reg.try_get<ecs::Spacing>(ent);
             const auto* prom    = reg.try_get<ecs::Prominence>(ent);
             const float pscale  = prom ? prom->scale : 1.0f;
 
-            const rgv::view::DiscShape shape{disc ? disc->radius : 0.0f,
+            const rgv::view::DiscShape shape{ns ? ns->radius : 0.0f,
                                              space ? space->room : 1e9f};
             const Vec2  half = rgv::view::node_half(
                 cam.zoom, detail, ext.half, shape,
@@ -1177,6 +1239,16 @@ void draw_graph_overlay(ecs::World& world, ImDrawList* dl) {
             Vec4 col = t.node_text;
             if (changed) col = t.changed;
             else if (imp) col = impact_color(imp->distance);
+
+            // A name recedes with the node it belongs to. Left at full strength it is
+            // the loudest thing on a dim node and the falloff reads as a rendering
+            // glitch rather than as distance. Exempt when the agent touched it, for
+            // the same reason the node itself is.
+            if (!changed) {
+                const float fb = rgv::view::focus_brightness(
+                    reg.try_get<ecs::FocusDistance>(ent), rgv::view::kFocusTextFloor);
+                col = Vec4{col.r * fb, col.g * fb, col.b * fb, col.a};
+            }
 
             if (inside) {
                 // A prominent node's box is bigger because it matters, so its name grows
@@ -1263,6 +1335,12 @@ void draw_graph_overlay(ecs::World& world, ImDrawList* dl) {
     // for a state nothing is in is just clutter.
     if (ui.stats.muted > 0) {
         rows.push_back({"muted: only via a hub", t.pending, true});
+    }
+    // Same rule, and the reason the finding needs no panel of its own: a healthy
+    // repository never sees this row, and an entangled one cannot miss it.
+    const auto& cycles = ui.world.resource<ecs::CycleReport>();
+    if (!cycles.groups.empty()) {
+        rows.push_back({"in a dependency cycle", t.cycle, false});
     }
     // The legend's glyphs come from the global font, so its box follows the UI scale.
     const float  us   = vs.ui_text_scale;
@@ -1425,7 +1503,7 @@ void draw_hover_card(ecs::World& world) {
 
 void draw_text_settings(ecs::World& world) {
     Ui ui(world);
-    auto& vs = ui.view;
+    const auto& vs = ui.view;
     if (!vs.show_text_settings) return;
 
     const ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -1462,14 +1540,20 @@ void draw_text_settings(ecs::World& world) {
 
     ImGui::TextUnformatted("Text size");
     ImGui::SameLine(298.0f);
-    if (ImGui::SmallButton("close")) vs.show_text_settings = false;
+    if (ImGui::SmallButton("close")) {
+        ui.cmd.push(ecs::SetViewToggle{ecs::ViewToggle::ShowTextSettings, false});
+    }
     ImGui::Separator();
     ImGui::Spacing();
 
-    // Returns true when the value moved; sets `commit` when it should reach disk.
-    auto row = [&](const char* name, const char* id, const char* help, float* value,
-                   bool* commit) {
+    // Edits a copy of `current` and leaves the result in `value`. Returns true when it
+    // moved; sets `commit` when it should reach disk. The clamp is duplicated in
+    // CommandSystem, which is the one that binds -- this one only keeps the number
+    // under the cursor honest between the drag and the next frame.
+    auto row = [&](const char* name, const char* id, const char* help, float current,
+                   float* value, bool* commit) {
         bool moved = false;
+        *value     = current;
         *commit    = false;
 
         ImGui::TextUnformatted(name);
@@ -1504,22 +1588,29 @@ void draw_text_settings(ecs::World& world) {
         return moved;
     };
 
-    bool commit = false;
+    bool  commit = false;
+    float value  = 1.0f;
 
-    // Panel geometry is derived from this every frame, so there is nothing to
-    // invalidate -- the next frame simply lays out at the new size.
-    row("UI text", "ui", "Panels, inspector, event log. Larger leaves less room for the graph.",
-        &vs.ui_text_scale, &commit);
+    // SaveSettings is pushed after the scale it saves, and CommandSystem applies a
+    // batch in order, so what reaches disk is what was just set rather than the value
+    // from before the drag.
+    if (row("UI text", "ui",
+            "Panels, inspector, event log. Larger leaves less room for the graph.",
+            vs.ui_text_scale, &value, &commit)) {
+        ui.cmd.push(ecs::SetTextScale{ecs::TextScale::Ui, value});
+    }
     if (commit) ui.cmd.push(ecs::SaveSettings{});
 
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
 
+    // Node boxes are sized to hold their label, so this one also refreshes extents --
+    // in CommandSystem, where the request belongs, not from here.
     if (row("Graph text", "graph",
             "Node labels, and so node sizes. Larger means fewer nodes fit on screen.",
-            &vs.graph_text_scale, &commit)) {
-        ui.world.resource<ecs::SceneRequests>().refresh_extents = true;   // node boxes are sized to hold their label
+            vs.graph_text_scale, &value, &commit)) {
+        ui.cmd.push(ecs::SetTextScale{ecs::TextScale::Graph, value});
     }
     if (commit) ui.cmd.push(ecs::SaveSettings{});
 
@@ -1528,9 +1619,8 @@ void draw_text_settings(ecs::World& world) {
     ImGui::Spacing();
 
     if (ImGui::Button("Reset both")) {
-        vs.ui_text_scale        = 1.0f;
-        vs.graph_text_scale     = 1.0f;
-        ui.world.resource<ecs::SceneRequests>().refresh_extents = true;
+        ui.cmd.push(ecs::SetTextScale{ecs::TextScale::Ui, 1.0f});
+        ui.cmd.push(ecs::SetTextScale{ecs::TextScale::Graph, 1.0f});
         ui.cmd.push(ecs::SaveSettings{});
     }
     ImGui::SameLine();

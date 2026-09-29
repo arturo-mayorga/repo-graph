@@ -33,13 +33,22 @@ Sync/SpecificitySystem      IDF over in-degree, plus hub alerts
 Sync/SceneSyncSystem        store deltas -> entities. The only creator/destroyer.
 Simulate/ImpactStateSystem  Changed / Impacted / HubSeed
 Simulate/SelectionSystem    Selected / Hovered / OnExplainedPath
-Simulate/LayoutSystem       depth, row ordering, easing
+Simulate/FocusSystem        FocusDistance: one BFS from the selection, read by layout and style
+Simulate/LayoutSystem       ring or tree placement, ordering, easing
+Simulate/ShapeSystem        NodeShape: the only place the view mode becomes a drawn shape
+Simulate/CycleSystem        InCycle / CycleReport, over what is drawn rather than the store
 Simulate/StyleSystem        derives Style. The renderer reads it verbatim.
+Simulate/LabelSystem        decides which names are drawn, and where
 Render/UiSystem             panels first: they decide how much room the graph gets
 Render/GraphRenderSystem    three instanced draw calls
 Render/OverlaySystem        labels, legend, hover card
 Present/PresentSystem       swap
 ```
+
+The order and membership above are not maintained by hand. `docs/schedule.txt` is the
+golden copy, and the `schedule` test runs `rgv --schedule` and fails if the two differ
+-- which is what stops this table quietly describing a schedule the application no
+longer has. The table adds what each system is *for*; the golden file is what runs.
 
 `main.cpp` is the world, the schedule, and the loop. Adding a capability is adding a
 system; attaching live data is constructing a different `IGraphSource`. Neither touches
@@ -59,6 +68,23 @@ That bug is now unrepresentable, and `test_scene.cpp` holds the line.
 
 **Panels never mutate.** They read resources and push commands. `CommandSystem` is the
 single place anything is applied, so there is one order in which things happen.
+
+This is a type rather than a rule. `ui::Ui` gathers the resources a panel touches and
+holds every one of them by const reference except the command queue, so a panel that
+writes state does not compile. It had to become one: as a comment it was broken at
+roughly thirty sites — checkboxes bound straight to `ViewSettings` fields, `Filters`
+written mid-drag, the timeline played and seeked from the transport panel — and five
+commands had been implemented and were pushed by nothing at all, because the panel was
+doing the work inline instead. The cost is that every control needs a verb in
+`Commands.h` and a control's value lags the resource by one frame; sliders are
+positioned from the pointer while held, so the lag does not show.
+
+Two owners are named rather than assumed. `TransportSystem` drains the transport
+commands itself, in `Input`, before `CommandSystem` runs — the timeline is its to move,
+and the panel's buttons take the same road the keys already did. `Viewport` is the one
+resource a panel writes, through a separate accessor with its own comment: the free
+rectangle and the toolbar height are *measured* while drawing, not chosen, so no command
+could have carried them.
 
 **Nothing derived is cached without a reason.** Most Simulate systems run every frame
 as linear passes with no allocation after warm-up. Only `SpecificitySystem`, the one

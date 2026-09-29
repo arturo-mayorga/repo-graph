@@ -31,6 +31,12 @@ struct Package {
     std::string id;         // "pkg:<name>"
     std::string name;       // what dependents refer to it by
     std::string rel;        // repo-relative directory; "" when the repo root is a package
+    // Where the package's code actually sits, which is not always where its manifest
+    // sits: a `src` layout declares `src/demo` from a pyproject.toml at the root. `rel`
+    // is what a module path is resolved against; `home` is what the package node's
+    // containment is built from, so the node stands over its code and not over the
+    // repository. Equal to `rel` unless something knows better.
+    std::string home;
     std::string manifest;   // repo-relative manifest path
     std::string provider;   // npm | python
     std::string version;

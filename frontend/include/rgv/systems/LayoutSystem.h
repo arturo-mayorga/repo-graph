@@ -2,15 +2,15 @@
 //
 // Two strategies, picked by view mode:
 //
-//   * File graph -- concentric. Reach fixes the ring; ordering within a ring is
-//     solved by barycentre sweeps (the ordering phase of a Sugiyama layout). Deterministic,
-//     nothing to settle, and legible at thousands of files. A spring simulation was
-//     tried first and produced a hairball that never stopped drifting.
+//   * The dependency views (architecture, file graph) -- concentric. A ring fixes
+//     how far out a node sits, and ordering within a ring is solved by barycentre
+//     sweeps (the ordering phase of a Sugiyama layout). Deterministic, nothing to
+//     settle, and legible at thousands of files. A spring simulation was tried first
+//     and produced a hairball that never stopped drifting.
 //
-//   * Architecture -- the same radial tree, driven by imports instead of containment.
-//     The foundation sits at the centre, each ring outward is code built on the ring
-//     inside it, and a node's orbiting children are the modules that import it. See
-//     `tree_parents`.
+//     What the ring MEANS depends on whether anything is selected: reach at rest,
+//     hops from the selection when there is one. `ring_index_for` is the single place
+//     that knows which, and both the placer and the incremental seat ask it.
 //
 //   * Filesystem -- a radial tree, inspired by Gource. Directories are discs whose
 //     radius is set by how many files they hold, files ring the directory that owns
@@ -25,11 +25,13 @@
 // where they already are, so adding a node cannot reshuffle the picture.
 #pragma once
 
+#include "rgv/contract/Types.h"
 #include "rgv/ecs/System.h"
 
 #include <entt/entt.hpp>
 
 #include <cstdint>
+#include <string>
 #include <unordered_map>
 
 namespace rgv::systems {
@@ -69,11 +71,6 @@ struct LayoutParams {
     float orbit_gap       = 2.0f;    // clearance between a directory and its file ring
     float dir_gap         = 6.0f;    // clearance between a subtree and its neighbours
 
-    // A directory's glow, as a multiple of a file dot times the square root of the
-    // files beneath it. Gource's `sqrt(dir_area) * 1.5`, with the area written out:
-    // sqrt(pi) * 1.5 = 2.66.
-    float glow_scale      = 2.66f;
-
     // Live relaxation, which runs only while a node is being dragged.
     //
     // The layout itself has no forces -- it is structural packing, deliberately, so
@@ -101,8 +98,18 @@ public:
 
 private:
     void reset(ecs::World& world);
-    void assign_depths(ecs::World& world);
     void concentric_place(ecs::World& world);
+    // Whether this view packs a containment tree. Asked of `ViewSettings` every time
+    // rather than cached: the cached copy was refreshed only inside `reset()`, so on
+    // the frame a mode change arrived every other reader saw the previous view's
+    // answer -- which cost a second full relayout on the frame after.
+    static bool  tree_mode(const ecs::World& world);
+    // Which ring a node belongs on, under whichever key the current arrangement uses.
+    // One function because two callers need the same answer: the placer chooses the
+    // radii, and `seat_newcomers` drops arrivals into them. A newcomer seated by a
+    // different rule lands in an annulus meant for a different question, and
+    // `relax_rings` then springs it home to that wrong radius and holds it there.
+    int  ring_index_for(ecs::World& world, entt::entity e, int rings) const;
     std::unordered_map<std::uint32_t, entt::entity> tree_parents(ecs::World& world) const;
     void radial_tree(ecs::World& world);
     void measure_spacing(ecs::World& world);
@@ -110,17 +117,27 @@ private:
     void relax(ecs::World& world, float dt);
     void relax_rings(ecs::World& world, float dt);
     bool seat_newcomers(ecs::World& world);
+    // Gives an arrival somewhere to ease FROM. Without it a node appearing mid-session
+    // flies in from the origin, which reads as the graph lurching rather than as
+    // something arriving. Here rather than in SceneSyncSystem because Position has one
+    // owner and this is a placement, not a construction detail.
+    void seed_unplaced(ecs::World& world);
     void capture_rest_lengths(ecs::World& world);
 
     LayoutParams params_;
     float        energy_     = 1e9f;
-    int          depth_span_ = 1;
-    bool         tree_mode_  = false;
+    // The selection the current arrangement was keyed on. When it changes the layers
+    // are re-seated -- the node set is untouched, so this is a move, never a rebuild.
+    NodeId       focus_;
+    bool         focus_primed_ = false;
 
     // The radius each ring was placed at. A dependency drag relaxes within the rings
     // rather than freely: the ring is the reach reading, so a node that drifts off its
     // own stops telling the truth about how much of the repository is behind it.
     std::unordered_map<int, float> ring_radius_;
+    // What `ring_radius_` was keyed on. Read back by `seat_newcomers`, which runs long
+    // after the placer and cannot otherwise know which question the rings answer.
+    bool rings_keyed_on_focus_ = false;
 
     // Live-relaxation state. `rest_` is captured when a drag starts, so the springs
     // pull toward what the structural layout produced rather than toward a guess.

@@ -540,19 +540,32 @@ TEST(a_single_distribution_shows_its_python_packages_as_architecture) {
     CHECK(store.node("dir:src/demo/api") == nullptr);   // the package replaces the directory
 
     // The file that IS each package, so a real `from demo import x` can be told apart
-    // from a reach into some module that merely lives inside it.
-    CHECK_EQ(demo->attrs.at("module_file"), std::string("src/demo/__init__.py"));
-    CHECK_EQ(api->attrs.at("module_file"), std::string("src/demo/api/__init__.py"));
+    // from a reach into some module that merely lives inside it. Node ids, not paths:
+    // the frontend must never build an id out of an attribute, because the next
+    // provider to id a file by anything but its path would then have every package
+    // shadowed by a duplicate box with nothing to signal it (contract 2, 6.4).
+    CHECK_EQ(demo->attrs.at("module_nodes"), std::string("file:src/demo/__init__.py"));
+    CHECK_EQ(api->attrs.at("module_nodes"), std::string("file:src/demo/api/__init__.py"));
+    CHECK(store.node(demo->attrs.at("module_nodes")) != nullptr);   // and they resolve
+
+    // The distribution stands where its code stands. `pyproject.toml` is at the repo
+    // root, but the package it declares is `src/demo`, and seating the node on the
+    // manifest's directory instead makes it the repository wearing a package's name --
+    // it swallows `tests/`, `docs/` and every other top-level directory, and every
+    // import out of them is then attributed to the architecture.
+    CHECK_EQ(demo->path, std::string("src/demo"));
+    CHECK_EQ(demo->parent, std::string("dir:src"));
 
     // Files are owned by the innermost package, which is what FR-11 projects through.
     CHECK_EQ(store.ancestor_of_kind("file:src/demo/api/routes.py", NodeKind::Package),
              std::string("pypkg:src/demo/api"));
-    // Everything outside a sub-package belongs to the distribution: the tests, and the
-    // modules that sit directly in its own directory.
-    CHECK_EQ(store.ancestor_of_kind("file:tests/test_db.py", NodeKind::Package),
-             std::string("pkg:demo"));
+    // The modules sitting directly in the distribution's own directory belong to it.
     CHECK_EQ(store.ancestor_of_kind("file:src/demo/app.py", NodeKind::Package),
              std::string("pkg:demo"));
+    // The test suite does not. It is outside the package directory, so no package owns
+    // it and its imports are not the architecture's edges.
+    CHECK_EQ(store.ancestor_of_kind("file:tests/test_db.py", NodeKind::Package),
+             std::string(""));
 
     // The edges between them, aggregated from the imports that cross the boundary.
     auto dep = [&](const std::string& from, const std::string& to) -> const Edge* {
@@ -566,9 +579,12 @@ TEST(a_single_distribution_shows_its_python_packages_as_architecture) {
     CHECK_EQ(api_core->provider, std::string("python-imports"));
     CHECK(api_core->confidence == Confidence::Exact);
     CHECK_EQ(api_core->evidence->artifact, std::string("src/demo/api/routes.py"));
-    CHECK(dep("pkg:demo", "pypkg:src/demo/api") != nullptr);
-    CHECK(dep("pkg:demo", "pypkg:src/demo/core") != nullptr);
+    CHECK(dep("pkg:demo", "pypkg:src/demo/api") != nullptr);   // app.py imports it
     CHECK(dep("pypkg:src/demo/core", "pypkg:src/demo/api") == nullptr);
+    // `tests/test_db.py` is the only thing that imports `core` from outside, and it is
+    // not in the package. Attributing it to the distribution is what turns a layered
+    // graph into a hub -- and, where a test imports something above it, into a cycle.
+    CHECK(dep("pkg:demo", "pypkg:src/demo/core") == nullptr);
 
     // Change db.py: api is directly impacted, the distribution too, and the answer
     // agrees with the frontend's own traversal.
@@ -580,7 +596,8 @@ TEST(a_single_distribution_shows_its_python_packages_as_architecture) {
     std::map<std::string, int> dist;
     for (const auto& n : pkg->impacted_nodes) dist[n.node_id] = n.min_distance;
     CHECK_EQ(dist["pypkg:src/demo/api"], 1);
-    CHECK_EQ(dist["pkg:demo"], 1);
+    // The distribution reaches `core` through `api` now, not directly through a test.
+    CHECK_EQ(dist["pkg:demo"], 2);
 
     const auto mine = sim::compute(store, sim::seeds_for_level(store, Level::Package),
                                    Level::Package, pkg->filters);
@@ -588,6 +605,42 @@ TEST(a_single_distribution_shows_its_python_packages_as_architecture) {
     for (const auto& n : pkg->impacted_nodes) theirs.insert(n.node_id);
     for (const auto& n : mine.impacted_nodes) ours.insert(n.node_id);
     CHECK(theirs == ours);
+}
+
+// -- what the walk descends into ---------------------------------------------
+//
+// The graph is only as true as the file list under it. Pointing the viewer at this
+// repository reported 24 packages and every one of them came out of `build-headless/`,
+// a directory the hardcoded skip list did not name and the repository's own
+// `.gitignore` did. A derived tree is not noise in the graph; it is a second graph.
+
+TEST(a_build_tree_the_repository_ignores_never_reaches_the_graph) {
+    PyRepo r("provider-gitignore");
+    r.write(".gitignore", "build-*/\nout.json\n");
+    r.write("src/app.py", "x = 1\n");
+    // What git ignores: a whole generated tree, and one generated file.
+    r.write("build-headless/tmp/pyproject.toml", "[project]\nname = \"phantom\"\n");
+    r.write("build-headless/tmp/phantom/__init__.py", "");
+    r.write("out.json", "{}\n");
+    // ... and what it does not. A prefix match on `build` would swallow both of these,
+    // which is why the skip rule is patterns and names, never a prefix.
+    r.write("builder/rules.py", "y = 2\n");
+    r.write("buildings/plan.py", "z = 3\n");
+
+    live::LiveSource src({RGV_WATCH_BIN, "--root", r.root}, 5000.0);
+    GraphStore       store;
+    store.reset(src.baseline());
+    settle(src, store);
+
+    for (const auto& [id, n] : store.nodes()) {
+        CHECK(n.path.rfind("build-headless", 0) != 0);
+        CHECK(n.kind != NodeKind::Package);   // the phantom distribution came with it
+    }
+    CHECK(store.node("file:out.json") == nullptr);
+
+    CHECK(store.node("file:builder/rules.py") != nullptr);
+    CHECK(store.node("file:buildings/plan.py") != nullptr);
+    CHECK(store.node("file:src/app.py") != nullptr);
 }
 
 // Dropping an `__init__.py` into a directory makes it a package. The directory node
@@ -755,3 +808,185 @@ TEST(the_typescript_provider_resolves_node_style_imports) {
     CHECK(announced);
 }
 
+
+// -- the C++ extractor, end to end --------------------------------------------
+//
+// Through the real provider and the real parser again. What is worth checking here is
+// the half that is not the import scanner: C++ has no packaging, so the unit above the
+// file is the build target read out of CMakeLists.txt, and the containment it implies
+// is what the architecture view folds an import along.
+
+namespace {
+
+// A library with its headers in an `include/` tree no build file mentions, and an
+// application that links it. The shape nearly every C++ repository has.
+PyRepo cpp_repo(const char* name) {
+    PyRepo r(name);
+    r.write("CMakeLists.txt",
+            "add_library(core STATIC\n"
+            "  lib/src/core.cpp\n"
+            "  lib/src/util.cpp\n"
+            ")\n"
+            "add_executable(app app/main.cpp)\n");
+    r.write("lib/include/lib/core.h", "#pragma once\n#include \"lib/util.h\"\nvoid core();\n");
+    r.write("lib/include/lib/util.h", "#pragma once\nint util();\n");
+    r.write("lib/src/core.cpp", "#include \"lib/core.h\"\n#include <vector>\nvoid core() {}\n");
+    r.write("lib/src/util.cpp", "#include \"lib/util.h\"\nint util() { return 1; }\n");
+    r.write("app/main.cpp",
+            "#include <lib/core.h>\n"
+            "#include <string>\n"
+            "// #include <lib/util.h>\n"
+            "int main() { core(); }\n");
+    return r;
+}
+
+} // namespace
+
+TEST(the_cpp_provider_resolves_includes_and_makes_targets_the_architecture) {
+    PyRepo           r = cpp_repo("provider-cpp");
+    live::LiveSource src({RGV_WATCH_BIN, "--root", r.root}, 5000.0);
+    GraphStore       store;
+    store.reset(src.baseline());
+
+    // An angled include against the include directory, and a quoted one that is not
+    // beside its file and falls through to the same place.
+    const Edge* e = import_edge(store, "app/main.cpp", "lib/include/lib/core.h");
+    CHECK(e != nullptr);
+    CHECK_EQ(e->provider, std::string("cpp-imports"));
+    CHECK(e->confidence == Confidence::Exact);
+    CHECK(e->evidence.has_value());
+    CHECK_EQ(e->evidence->artifact, std::string("app/main.cpp"));
+    CHECK_EQ(e->evidence->line, 1);
+    CHECK_EQ(e->evidence->snippet, std::string("#include <lib/core.h>"));
+
+    // A header including a header, and a source including its own header: two nodes and
+    // a real edge, not a pair to be folded away.
+    CHECK(import_edge(store, "lib/include/lib/core.h", "lib/include/lib/util.h") != nullptr);
+    CHECK(import_edge(store, "lib/src/core.cpp", "lib/include/lib/core.h") != nullptr);
+
+    // `<vector>`, `<string>` and the commented-out line are not in the repository, so
+    // those four are all there is.
+    int imports = 0;
+    for (const auto& [id, edge] : store.edges()) {
+        if (edge.kind == EdgeKind::Imports) ++imports;
+    }
+    CHECK_EQ(imports, 4);
+
+    const Node* core = store.node("tgt:core");
+    const Node* app  = store.node("tgt:app");
+    CHECK(core != nullptr && app != nullptr);
+    CHECK(core->kind == NodeKind::BuildTarget);
+    CHECK_EQ(core->attrs.at("type"), std::string("library"));
+    CHECK_EQ(core->attrs.at("manifest"), std::string("CMakeLists.txt"));
+    CHECK_EQ(core->path, std::string("lib"));   // where its code is: src/ and include/
+
+    // The files that ARE the target, and why the attribute is plural: a C++ module is
+    // a header and a translation unit, and `core.h` is the one other code includes.
+    CHECK_EQ(core->attrs.at("module_nodes"),
+             std::string("file:lib/include/lib/core.h,file:lib/src/core.cpp"));
+    // `app` is built from `main.cpp`. Nothing in a C++ repository says that file is the
+    // target, and naming it anyway would fold away a real edge, so nothing is emitted.
+    CHECK_EQ(app->attrs.count("module_nodes"), 0u);
+
+    // The containment the architecture view needs. The headers are in no build file at
+    // all, and the target owns them because its sources reach them -- without that the
+    // only line a C++ repository could draw would end at the repository node.
+    CHECK_EQ(store.ancestor_of_kind("file:lib/include/lib/util.h", NodeKind::BuildTarget),
+             std::string("tgt:core"));
+    CHECK_EQ(store.ancestor_of_kind("file:lib/src/core.cpp", NodeKind::BuildTarget),
+             std::string("tgt:core"));
+    CHECK_EQ(store.ancestor_of_kind("file:app/main.cpp", NodeKind::BuildTarget),
+             std::string("tgt:app"));
+
+    // And the edge between the targets, aggregated from the include that crosses.
+    const Edge* dep = nullptr;
+    for (const auto& [id, edge] : store.edges()) {
+        if (edge.kind == EdgeKind::DependsOn && edge.from == "tgt:app" && edge.to == "tgt:core") {
+            dep = &edge;
+        }
+    }
+    CHECK(dep != nullptr);
+    CHECK_EQ(dep->provider, std::string("cpp-imports"));
+    CHECK_EQ(dep->evidence->artifact, std::string("app/main.cpp"));
+
+    settle(src, store);
+    bool announced = false;
+    for (const auto& a : store.adapters()) {
+        if (a.name == "cpp-imports") announced = true;
+    }
+    CHECK(announced);
+}
+
+// The product, for C++: touch a header and the targets that have to be rebuilt light up.
+TEST(saving_a_header_lights_up_what_includes_it_and_the_targets_above) {
+    PyRepo           r = cpp_repo("provider-cpp-impact");
+    live::LiveSource src({RGV_WATCH_BIN, "--root", r.root}, 5000.0);
+    GraphStore       store;
+    store.reset(src.baseline());
+    settle(src, store);
+
+    { std::ofstream(r.root + "/lib/include/lib/util.h", std::ios::app) << "int more();\n"; }
+
+    CHECK(wait_for(src, store, [&] { return store.impact(Level::File) != nullptr; }));
+    const ImpactResult* file = store.impact(Level::File);
+    CHECK_EQ(file->seed_nodes.size(), 1u);
+    CHECK_EQ(file->seed_nodes[0], std::string("file:lib/include/lib/util.h"));
+
+    std::map<std::string, int> dist;
+    for (const auto& n : file->impacted_nodes) dist[n.node_id] = n.min_distance;
+    CHECK_EQ(dist["file:lib/include/lib/core.h"], 1);
+    CHECK_EQ(dist["file:lib/src/util.cpp"], 1);
+    CHECK_EQ(dist["file:app/main.cpp"], 2);   // through core.h
+
+    // Same answer as the frontend's own reverse closure over the same store.
+    const auto mine = sim::compute(store, sim::seeds_for_level(store, Level::File), Level::File,
+                                   file->filters);
+    std::set<std::string> theirs, ours;
+    for (const auto& n : file->impacted_nodes) theirs.insert(n.node_id);
+    for (const auto& n : mine.impacted_nodes) ours.insert(n.node_id);
+    CHECK(theirs == ours);
+
+    // And one level up, where C++ has build targets instead of packages.
+    CHECK(wait_for(src, store, [&] { return store.impact(Level::BuildTarget) != nullptr; }));
+    const ImpactResult* tgt = store.impact(Level::BuildTarget);
+    CHECK_EQ(tgt->seed_nodes.size(), 1u);
+    CHECK_EQ(tgt->seed_nodes[0], std::string("tgt:core"));
+    const ImpactedNode* hit = nullptr;
+    for (const auto& n : tgt->impacted_nodes) {
+        if (n.node_id == "tgt:app") hit = &n;
+    }
+    CHECK(hit != nullptr);
+    CHECK_EQ(hit->min_distance, 1);
+    CHECK(store.edge(hit->paths[0].edges[0]) != nullptr);
+}
+
+// Two build files naming one file is the multi-owner case the contract has `owns` for:
+// one containment parent, and an edge for the claim that did not become the parent.
+TEST(a_source_two_targets_build_has_one_parent_and_an_owns_edge) {
+    PyRepo r("provider-cpp-owns");
+    r.write("CMakeLists.txt",
+            "add_executable(tool tools/dump.cpp shared/helper.cpp)\n"
+            "add_executable(probe probe/main.cpp shared/helper.cpp)\n");
+    r.write("shared/helper.cpp", "#include \"helper.h\"\n");
+    r.write("shared/helper.h", "void help();\n");
+    r.write("tools/dump.cpp", "int main() {}\n");
+    r.write("probe/main.cpp", "int main() {}\n");
+
+    live::LiveSource src({RGV_WATCH_BIN, "--root", r.root}, 5000.0);
+    GraphStore       store;
+    store.reset(src.baseline());
+
+    const Node* helper = store.node("file:shared/helper.cpp");
+    CHECK(helper != nullptr);
+    const std::string parent = store.ancestor_of_kind(helper->id, NodeKind::BuildTarget);
+    CHECK(parent == "tgt:probe" || parent == "tgt:tool");
+
+    // The other claim is an `owns` edge, never a second parent.
+    const Edge* owns = nullptr;
+    for (const auto& [id, e] : store.edges()) {
+        if (e.kind == EdgeKind::Owns && e.to == "file:shared/helper.cpp") owns = &e;
+    }
+    CHECK(owns != nullptr);
+    CHECK(owns->from != parent);
+    CHECK_EQ(owns->evidence->artifact, std::string("CMakeLists.txt"));
+}

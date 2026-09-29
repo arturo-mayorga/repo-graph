@@ -29,10 +29,10 @@ entt::entity pick(ecs::World& world, Vec2 screen) {
          registry.view<const ecs::NodeRef, const ecs::Position, const ecs::Extent>().each()) {
         const bool  changed  = registry.all_of<ecs::Changed>(ent);
         const bool  impacted = registry.all_of<ecs::Impacted>(ent);
-        const auto* d  = registry.try_get<ecs::Disc>(ent);
+        const auto* ns = registry.try_get<ecs::NodeShape>(ent);
         const auto* sp = registry.try_get<ecs::Spacing>(ent);
         const auto* pr = registry.try_get<ecs::Prominence>(ent);
-        const view::DiscShape shape{d ? d->radius : 0.0f, sp ? sp->room : 1e9f};
+        const view::DiscShape shape{ns ? ns->radius : 0.0f, sp ? sp->room : 1e9f};
         Vec2 half = view::node_half(camera.zoom, detail, ext.half, shape,
                                     view::dot_px_for(changed, impacted, false,
                                                      pr ? pr->scale : 1.0f));

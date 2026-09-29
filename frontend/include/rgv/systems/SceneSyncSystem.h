@@ -10,6 +10,7 @@
 #include "rgv/ecs/System.h"
 
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace rgv::systems {
@@ -30,6 +31,7 @@ private:
     bool hidden(const ecs::World& world, const Node& n) const;
     NodeId representative(const ecs::World& world, NodeId id) const;
     void   choose_drawn_edges(ecs::World& world);
+    void   choose_module_altitude(ecs::World& world);
     void   sync_containment(ecs::World& world);
     // The change itself, or a seed everything else is explained against. Exempt from
     // every filter -- hiding either would remove the thing the view is about.
@@ -40,7 +42,6 @@ private:
     void upsert_edge(ecs::World& world, const Edge& e);
     void drop_node(ecs::World& world, const NodeId& id);
     void drop_edge(ecs::World& world, const EdgeId& id);
-    void seed_position(ecs::World& world, entt::entity e, const Node& n);
 
     ecs::ViewMode built_mode_ = ecs::ViewMode::Architecture;
     // Architecture view: the store edges that are drawn, and the nodes each one is
@@ -48,6 +49,12 @@ private:
     std::unordered_map<EdgeId, std::pair<NodeId, NodeId>> drawn_;
     // How many contract edges each drawn line stands for.
     std::unordered_map<EdgeId, int> weights_;
+    // The node(s) that ARE each package or build target, by that unit's id. Ids, taken
+    // verbatim from `attrs.module_nodes` -- never reconstructed from a path, because
+    // contract 2 says an id is opaque and the frontend that parses one works by luck
+    // until a provider spells its ids differently. Plural because a C++ module is a
+    // header and a source; Python's single `__init__.py` is the special case.
+    std::unordered_map<NodeId, std::vector<NodeId>> package_modules_;
     bool          primed_     = false;
 };
 

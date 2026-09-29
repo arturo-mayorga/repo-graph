@@ -254,7 +254,8 @@ std::vector<Package> scan_packages(const fs::path&                    root,
     for (const auto& rel : dirs) {
         Package p;
         if (read_package_json(root, rel, p) || read_pyproject(root, rel, p)) {
-            p.id = "pkg:" + p.name;
+            p.id   = "pkg:" + p.name;
+            p.home = p.rel;   // until something that reads the code knows better
             out.push_back(std::move(p));
         }
     }
